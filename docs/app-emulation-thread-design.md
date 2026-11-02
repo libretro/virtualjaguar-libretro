@@ -90,12 +90,60 @@ The UI never waits on emulation.
   along the take grid (under 0.2 ms a frame: 60.05 Hz on 60, 120 or 59.94 Hz panels). At ratios like 50.08 Hz on 60 Hz,
   every few frames straddle a take point by construction (5:6 judder), and only mode B can change that.
   `--pace-steer off` turns steering off for A/B runs.
+- *Amended 2026-10-20 (#1026): the UI thread's wake-ups.* The late latch's wait must end on time, or the build starts
+  late and the swap misses its vblank. On macOS two things made it end late. First, a launch from a terminal (and every
+  ssh-run benchmark) starts the main thread at the default QoS rather than user-interactive, so any CPU load leaves it
+  runnable but not running. Second, `SDL_WaitEventTimeout`'s timeout is the Cocoa run loop's own timeout, which Core
+  Foundation delivers from a dispatch worker at `qos_class_main()`, the main thread's QoS at launch. Raising the thread
+  later does not change that worker, which runs 3-20 ms late under load while the UI thread sleeps past its deadline. So
+  the UI thread now runs at user-interactive QoS however it was launched (`platform_macos.mm`). Its timed event waits
+  (the latch's and the threaded nap's) end on a wake event that `LatchWaker` (`app/src/latch_waker.h`) pushes from its
+  own user-interactive thread, with SDL's timeout kept as a 5 ms backstop. A `CFRunLoopTimer` on the main run loop was
+  tried instead, and from a terminal launch it fired ~3 ms late every time. `--latch-wake plain` restores the old wait
+  for A/B runs (the QoS raise stays), and with `VJ_PERF_TRACE` the stall probe (`app/src/stall_probe.h`) writes every
+  wait that ends over 3 ms late to `<prefix>-stall.txt`, with the run state, CPU time, run-loop transitions and sampled
+  stacks.
+- *Amended 2026-11-01: the emulation thread's scheduling class* (`app/src/thread_realtime.h`). The thread is a periodic
+  deadline job and asks the OS to schedule it as one when it starts: macOS `THREAD_TIME_CONSTRAINT_POLICY` (period one
+  frame, computation 30%, constraint 60%, preemptible; real-time threads run ahead of every QoS class and on performance
+  cores, so it replaces the user-interactive QoS raise, which stays as the fallback), Windows
+  `THREAD_PRIORITY_TIME_CRITICAL` plus the MMCSS "Games" task, Linux `SCHED_RR` at a low real-time priority where
+  `RLIMIT_RTPRIO` or rtkit allows it. Why: on an M2 Max at a 1-minute load of 250-950 the same Doom frame cost 5.4 ms
+  with a performance core of its own and 18-20 ms without one (58-86 involuntary context switches a frame; the game ran
+  at 54.6 fps). Never fatal; the log's `[emu] emulation thread on; scheduling ...` line says what the thread got.
+  `--emu-priority normal` skips it for one run (A/B); `EmuThread::realtimeNote()` and `emu_thread_unit`'s
+  `testRealtimeNote` cover it.
 
 ### Mode B: display lock
 - The main thread sends a tick after each swap; the emulation thread runs one frame per tick (one per k ticks when the
-  display is close to a whole multiple of the core rate, e.g. 120/144 Hz). The audio rate is nudged ±0.5% to match
+  display is close to a whole multiple of the core rate, e.g. 120 Hz; see the amendment below). The audio rate is nudged ±0.5% to match
   (today's `AudioOut::update` controller).
 - If the display rate is not close to a whole multiple of the core rate, show a notice and fall back to mode A.
+- *Amended 2026-10-30 (phase 4 plan, #1038):* 144 Hz is **not** a lock case (144 / 60.05 = 2.40). Lock when
+  |display/k − core| / core < 0.3% with k = round(display / core), measured from the vblank period: 60 / 59.94 / 120 /
+  119.88 Hz lock NTSC, 50 / 100 Hz lock PAL, everything else falls back. Mode A is also forced while link play is
+  active, and in mode B the UI's latch wait ends when the tick's frame is published. Plan:
+  [app-emulation-thread-plan-phase4.md](app-emulation-thread-plan-phase4.md).
+- *As built (phase 4b, #1038):*
+  - **The measured period** is `LateLatch::measuredPeriodNs()`: the tracked vblank phase's travel over 2-20 s spans,
+    counted vblank by vblank, so a 59.94 Hz panel announced as 60 Hz reads 16.683 ms. Mode B waits for it.
+  - **Ticks count vblanks, not swaps.** The UI publishes one snapshot after each blocking swap (tick, its vblank time,
+    the measured period, k, the base ratio) under a mutex, after handing over the input that arrived while it built
+    and swapped, so the tick's frame polls it, as in the single-thread loop. A UI iteration that misses a vblank moves
+    the tick by two, and the emulation thread runs the frame it owes.
+  - **The emulation thread does not depend on the UI swapping.** When the UI's next tick is 2 ms late, the thread
+    starts the frame on the snapshot's grid by itself; when the snapshot is 250 ms old (a modal, a live resize, a
+    sleeping display), it runs mode A until the UI ticks again. One non-blocking swap leaves mode B at once.
+  - **Wake on publish, then the last chance.** The UI's latch wait ends when the tick's frame is published (an SDL
+    event from the emulation thread). Past the latch's padded wake time it goes on waiting for that frame only, until
+    the vblank minus the build estimate without the pad (`LateLatch::lastChanceNs`): a 14 ms frame (Cybermorph)
+    finishes after the padded wake time but still fits the period, as it does inline. The pipeline model
+    (`late_latch_unit`) puts mode B at 24.7 ms event to present for 5, 12 and 14 ms frames, against inline's 25.0;
+    without the last chance a 14 ms frame takes 41.3 ms.
+  - **Audio**: one controller at a time, switched at a frame boundary: mode B sets `AudioOut::setBaseRatio((display /
+    k) / core)` and trims around it with `update(true)`; mode A sets the base back to 1 and passes `update(false)`. The
+    base is republished only when the measurement moves it by more than 0.02% (each set restarts the trim).
+  - **Notices**: one per lasting (2 s) change of a fallback reason; settling and fast-forward never show one.
 
 ### Shared rules
 - **Fast-forward:** unthrottled or a set multiple, audio dropped (as today).
@@ -128,6 +176,22 @@ Callbacks that write app state today change to:
 **Debug views.** Each open debug window registers a request: a memory range, registers, the object list, the blitter
 log head, textures, the scope. After each frame the emulation thread copies just those into that tool's double buffer.
 Closed windows cost nothing. The `g` singletons in `app/src/debug/*_ui.cpp` read only their published buffers.
+*Amended 2026-10-23 (phase 3d review): one exception.* Neuro's `watch` values are copied by the emulation thread after each
+frame with no window open: with Neuro on (enabled, not hardcore, content loaded, a profile with watches) and watches more than
+64 KiB apart, the copier reads the whole 2 MiB of RAM about 10 times a second, connected or not (`docs/neuro.md`).
+*Amended 2026-10-20 (phase 3a): the debug lane and `DebugViews`.* The command queue gets a second lane,
+`EmuCommands::Lane::Debug`, that the emulation thread drains at every frame boundary and from inside a halt; the
+frame lane is never drained while halted. `EmuThread::debugCall` / `debugPost` carry the one-shot actions (poke,
+set_reg, breakpoints, OP arm, blit-log enable, pack reload, attach/detach). The periodic reads are `ViewRequest`s
+(memory range, DRAM, registers, a disassembly window, the OP snapshot, the blit-log tail) in `DebugViews`
+(`app/src/debug/debug_views.h`), keyed by an id the window keeps: `set()` with an equal request changes nothing (windows
+re-state theirs every draw), a different one clears that buffer and is pending at the same serial, and `fill(iface, serial)`
+serves every request whose buffer carries another serial, installing an answer only against the request revision it
+copied (a `set()` made during the fill wins). `fill()` runs after each frame at `DebugSession::kRefreshHz` while running, on every
+pump iteration whose serial changed while halted, and on the same thread inline, so the windows have one code path. A
+content switch bumps the views' epoch and every buffer is unreadable until refilled. `DebugCore`
+(`app/src/debug/debug_core.h`) is the emulation-thread owner of the interface; `DebugSession` stays the UI's object and
+reaches it through `coreCall` / `corePost`.
 
 **Achievements.** `rc_client_do_frame` runs on the emulation thread after each frame. Unlock, progress and leaderboard
 events go to the main thread through the snapshot. The HTTP worker is unchanged.
@@ -150,10 +214,59 @@ While halted, see section 6.
 `App::haltedFrame` and its nested event loop are removed; the UI runs normally. Commands that cannot run mid-frame
 (load, unload, reset, save/load state, option changes) are held until Continue, and the UI says "applies after
 Continue". Hardcore mode still detaches the debugger.
+*Amended 2026-10-20 (phase 3): the pump is bounded.* `GDBHalt()` (`src/debug/gdbtarget.c`) keeps its own loop:
+socket pump, the app's `halt_pump`, the halt timeout, a 2 ms sleep. The core is not changed, so the app's pump
+(`DebugCore::pump`) serves the debug lane, waits at most `kPumpWait` (4 ms) for a verdict or a debug post, and returns
+`VJ_DBG_RESUME_NONE`; the core calls it again. Verdicts are an atomic the UI writes, honoured only for the halt they
+were written against (a serial). `onHalt` / `onResume` fire on the emulation thread for emulation-side effects (audio
+pause); the UI mirrors the `HaltState` once per frame (`DebugSession::syncHalt`) and fires its own `onHaltUi` for the
+toast and the halt bar. `DebugCore::frameEnded()`, after every `retro_run`, closes a halt the core left without one of
+the app's verdicts (gdb continued, the socket dropped, the halt timeout), which today leaves the app "halted" for good. `App::haltedFrame` runs only
+inline, until phase 5 retires the old loop. Held commands: frame-lane posts wait in the queue by construction; save /
+load state and boot refuse with a toast while halted (the app has no frame-advance command; the Objects window's step is simply
+unavailable while halted, `opStepFor` in `app/src/debug/op_view.cpp`); open / close / reset / disc insert / drop / quit
+detach first (a detach clears every breakpoint, so the next frame cannot re-halt) and then proceed. `EmuThread::call`
+takes a give-up predicate so a call posted an instant before a halt returns instead of hanging the UI behind the spinner.
+*Amended 2026-10-22 (phase 3b): as shipped.* The verdict the UI writes is tagged with the halt serial it mirrored and the
+pump drops one for any other halt; `frameEnded()` also closes a STEP the core never re-halted (`stepping_`), which would
+otherwise leave the mirror "halted" and wedge inline F9 / Detach. `EmuThread::advance()` has the same give-up as `call()`: its
+frame budget rides the debug lane, the wait ends when a halt begins, and `advance(0)` resumes the wait after Continue. `beginQuit()`
+is the shutdown entry: it sets `quitting_`, `abortHalt` answers CONTINUE within one pump wait (the host stays attached, so a gdb breakpoint hit again before the frame ends comes back to the pump instead of parking with no host), and only then does the app save,
+flush and unload.
+*Amended 2026-10-23 (phase 3d review): waits and bounds the text did not state.* The UI thread does wait on the emulation
+thread for one-shot debug actions: `EmuThread::debugCall` has no give-up, by design (`emu_thread.h`), because the Tools
+windows and `Achievements::coreCall` capture locals by reference or must not have a reply cancelled; only frame-lane `call()`
+and `advance()` carry the halt give-up. The bounds: the pump waits at most `kPumpWait` (4 ms) per iteration
+(`debug_core.h`); `beginQuit()` polls at most 200 ms (100 x 2 ms) for the core to leave a halt; after that every wait on the core is
+bounded (`autoSave` 1.5 s, the unload `callFor` 3 s, the `stop` join 3 s), and a wedge exits with status 3 (`std::_Exit(3)`) instead
+of hanging. The silent gdb host is not hardcore-gated (it never halts anything by itself; the app's own `attach()` and `breakNow()`
+stay gated by `DebugSession::enabled()`), and `attachGdbHostOnCore` re-attaches it before each frame it is missing.
+
+*Amended 2026-10-24 (#1069, #1081): leaving a halt.* The app never answers the pump with DETACH: inside `GDBHalt()` a dropped
+host lets a gdb client's still-armed `Z0` park the core again with nobody to pump (threaded, every frame-lane call then waits for
+gdb; inline, the window freezes).  Every release is a CONTINUE with the host kept.  Detach disarms and drops the app's breakpoint
+list and defers the host drop to `DebugCore::frameEnded()` (outside `retro_run()`; a new halt before then cancels it); Reset,
+Open, Close and the disc commands (`App::releaseForCall`) disarm the enabled breakpoints for the release and re-arm them before
+the first frame after the command, so the list survives a Reset.  The give-up predicate of the call that follows fires only on a
+halt newer than the released one (`releaseSerial()`).  The periodic frame-lane posts (SRAM autosave, achievements idle) are
+coalesced to one in flight, so a long halt leaves the queue bounded; `rc_client_idle` does not run while halted.
+`docs/app-debug-tools.md`, "One rule for leaving a halt".
 
 **GDB TCP stub.** `GDBHalt`'s socket loop runs on the emulation thread, so a gdb session that holds the target halted no
 longer freezes the window (fixes the freeze found in #936). If both gdb and the app debugger are attached, the first
 verdict wins, as today. The halt timeout is unchanged.
+*Amended 2026-10-20 (phase 3): a host behind every halt.* Without an app host the app cannot see a gdb halt: a
+`call()` would block until gdb continues and quit would wait out the join. So the app attaches a silent host whenever
+`virtualjaguar_gdb_stub` is `enabled` and content is loaded (one stored pointer), the halt bar says "HALTED by gdb",
+and quit resumes the core with the host kept attached. `attach()` needs the tools enabled,
+so RetroAchievements hardcore locks the stub to `disabled`, as it does cheats. Both are proposed decisions (phase 3
+plan, "Decisions to confirm").
+*Amended 2026-10-22 (phase 3b): as shipped.* The silent host is attached on the core side (the emulation thread) inside the
+load call, before any frame runs, and again before each frame it is missing (a user Detach drops it; the lane runs a posted
+Detach before a later attach), so a gdb breakpoint is never halted without a pump; Detach also clears the app's breakpoints.
+`virtualjaguar_gdb_wait` parks the boot without a client (the UI live, F9 or Detach continues; a client that connects later asks
+`?`). Turning hardcore on while the stub is enabled reloads the game, the only way the lock reaches the core's socket. A headless
+run that gdb holds halted waits for the client or a quit signal, and SIGINT / SIGTERM end it cleanly (a second signal kills).
 
 **Link play.** The core's peer wait inside `retro_run` (`src/jerry/jlink.c`) now blocks only the emulation thread. Its
 frame budget assumes one `retro_run` per frontend period, which mode A provides. Its 3 ms frontend margin becomes
@@ -188,6 +301,21 @@ reach the core as commands. The restart bounce that a mode change needs is count
 - Settings > Interface > "Emulation thread" (On/Off). Releases default Off, nightlies default On (nightly build flag).
   Amended 2026-10-16: every build defaults Off through phase 2; the nightly default and its build flag arrive in
   phase 3.
+  *Amended 2026-10-20 (phase 3): the flag.* `VJ_BUILD_CHANNEL` (CMake cache string: `release` | `nightly` | `dev`,
+  default `dev`) sets `VJ_EMU_THREAD_DEFAULT` (1 for `nightly`). `app-package.yml` passes the channel from its
+  `release_tag` (`nightly` -> nightly, `v*` -> release, else dev); the flatpak job stamps it into the manifest's
+  `config-opts`. The default applies only while `ui.emu_thread` is unwritten (`emuThreadEffective(pref, default)`):
+  an explicit Off stays Off in nightlies and an explicit On stays On in releases. Headless runs stay inline whatever
+  the default. It ships last, in its own PR, after nothing is switched off while threaded.
+  *Shipped (phase 3d, 2026-10):* as above; the default is `nightly` only, `dev` is Off, `prerelease` builds are `dev`. The channel
+  is a workflow env beside the TV default; the flatpak job rewrites the manifest's committed `-DVJ_BUILD_CHANNEL=release` because
+  its `config-opts` are committed. The bar that lets it ship is `no_threaded_limits` (static, in CI) plus the Studio gate
+  `app/tests/emu_thread_gate_check.sh`.
+  *Shipped (phase 5c, 2026-11-01):* **every channel defaults On** (`emuThreadDefaultFor` is true for `release`, `nightly`
+  and `dev`; `VJ_EMU_THREAD_DEFAULT_VALUE` is 1 for all three). The maintainer called the flip before gates G4 and G5 of
+  the phase 5 plan were met (the windowed evidence is the Studio's 60 Hz panel; see the plan's evidence table). Unchanged:
+  a stored `ui.emu_thread` wins, `--emu-thread off` runs one start inline, a failed thread start falls back inline, and
+  headless runs stay inline unless `--emu-thread on`. An unknown channel string still defaults Off.
 - The old loop stays selectable until a release ships with the setting defaulting On and no regressions; then it is
   removed.
 
@@ -220,6 +348,11 @@ Each step is its own PR, with the setting Off by default:
    reset, pause, fast-forward, save/load state).
 2. Option/message/event snapshots; achievements; cheats; netplay `afterFrame`.
 3. Debugger halt redesign; debug-view requests; the gdb stub path; default On in nightlies (amended 2026-10-16).
+   *Amended 2026-10-20: four PRs.* 3a debug views on the emulation thread (the debug lane, `DebugViews`, every
+   Tools window; halts still off); 3b the bounded halt pump, calls while halted, the gdb stub unlocked; 3c Neuro
+   through the input snapshot's agent program and `DebugViews` watches; 3d `VJ_BUILD_CHANNEL` and the nightly
+   default. 3b and 3c run in parallel after 3a; 3d merges last, after a Studio gate with every tool, gdb and Neuro on.
+   3d merged after a green Studio gate (tracking issue #1079).
 4. Mode B.
 5. Measure the nightly feedback; then default On in a release and remove the old loop.
 

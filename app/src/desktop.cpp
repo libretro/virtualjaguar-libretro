@@ -6,6 +6,7 @@
 #include "platform/platform.h"
 #include "platform/viewports.h"
 #include "theme.h"
+#include "tv/tv_shell.h"
 #include "ui_util.h"
 
 namespace vj {
@@ -31,8 +32,8 @@ platform::MenuState App::menuState() {
     s.vsync = vsync;
     s.homeLibrary = homeLibrary;
     s.tvMode = tvMode.active();
-    s.tvAvailable = tv::effectiveSetting(tvSetting) != tv::TvSetting::Off;
-    s.libraryOpen = homeVisible() || library.show;
+    s.tvAvailable = tvSetting != tv::TvSetting::Off;
+    s.libraryOpen = homeVisible() || library.show || (tvMode.active() && tvShell().showingLibrary());
     if (s.gameLoaded) {
         DiscInfo d = host.discInfo();
         s.disc.available = d.available;
@@ -80,12 +81,9 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         }
         void bootBiosCd() override { a.bootBios(bios::Cd); }
         void bootBiosCart() override { a.bootBios(bios::CartBoot); }
-        void showBiosSettings() override {
-            a.showSettings = true;
-            a.devSelectTab = "BIOS";
-        }
+        void showBiosSettings() override { a.openBiosSettings(); }
         void newWindow() override { a.newWindow(); }
-        void toggleLibrary() override { a.toggleLibrary(); }
+        void toggleLibrary() override { a.openLibrary(); }   // (the TV Library while TV mode is on)
         void closeGame() override { a.closeContent(); }
         void revealGame() override { platform::revealFile(a.host.contentPath()); }
         void quit() override { a.quit = true; }
@@ -101,10 +99,10 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             DiscInfo d = a.host.discInfo();
             if (d.available && d.count > 0) {   // an empty list (the CD BIOS with no disc) has nothing to insert
                 const bool eject = !d.ejected;
-                a.emu.call([&app = a, eject] { app.host.discSetEject(eject); });
+                a.callReleased([&app = a, eject] { app.host.discSetEject(eject); });
             }
         }
-        void selectDisc(int i) override { a.emu.call([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }); }
+        void selectDisc(int i) override { a.callReleased([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }); }
         void addDisc() override { a.showDiscDialog(); }
         void toggleFullscreen() override { a.setFullscreen(!a.fullscreen); }
         void toggleIntegerScale() override { a.present.integerScale = !a.present.integerScale; }
@@ -124,7 +122,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         }
         void toggleHomeLibrary() override { a.homeLibrary = !a.homeLibrary; }
         void toggleTvMode() override { a.toggleTvMode(); }
-        void showSettings() override { a.showSettings = true; }
+        void showSettings() override { a.openSettings(); }
         void toggleMute() override {
             a.mute = !a.mute;
             a.applyAudioSettings();

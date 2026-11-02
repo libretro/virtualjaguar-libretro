@@ -1,3 +1,4 @@
+#include "platform/file_access.h"
 // Settings > Video > Shader: library status, preset picker, parameters.
 #include <SDL3/SDL.h>
 
@@ -12,6 +13,7 @@
 #include "imgui.h"
 #include "present_util.h"
 #include "shaders.h"
+#include "shaders_ui.h"
 #include "ui_util.h"
 
 namespace vj {
@@ -68,19 +70,6 @@ std::string lowerStr(std::string s) {
     return s;
 }
 
-void applyPreset(App& app, const std::string& path) {
-    std::string err;
-    ShaderChain& sc = app.video.shader;
-    if (sc.usePreset(path, err)) {
-        g_presetError.clear();
-        sc.enabled = true;
-        sc.retry();
-    } else {
-        g_presetError = err;
-        app.toast("Shader preset not used: " + err, 6.0, 3);
-    }
-}
-
 void drawList(App& app, Listing& l, const char* id, float height) {
     std::string f = lowerStr(g_filter);
     if (ImGui::BeginListBox(id, ImVec2(-FLT_MIN, height))) {
@@ -98,7 +87,7 @@ void drawList(App& app, Listing& l, const char* id, float height) {
                                       app.video.shader.glVersionText().c_str());
                 continue;
             }
-            if (ImGui::Selectable(rel.c_str(), sel)) applyPreset(app, full);
+            if (ImGui::Selectable(rel.c_str(), sel)) applyShaderPreset(app, full);
             if (sel) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndListBox();
@@ -106,6 +95,34 @@ void drawList(App& app, Listing& l, const char* id, float height) {
 }
 
 }  // namespace
+
+void applyShaderPreset(App& app, const std::string& path) {
+    std::string err;
+    ShaderChain& sc = app.video.shader;
+    if (sc.usePreset(path, err)) {
+        g_presetError.clear();
+        sc.enabled = true;
+        sc.retry();
+    } else {
+        g_presetError = err;
+        app.toast("Shader preset not used: " + err, 6.0, 3);
+    }
+}
+
+std::vector<std::string> shaderPresetPaths(App& app) {
+    ShaderChain& sc = app.video.shader;
+    const std::string bd = builtinDir();
+    if (!g_builtin.valid && !bd.empty()) rescan(g_builtin, bd);
+    if (!sc.folder.empty() && (!g_user.valid || g_user.root != sc.folder)) rescan(g_user, sc.folder);
+    std::vector<std::string> out;
+    auto add = [&](const Listing& l) {
+        for (const std::string& rel : l.items)
+            if (sc.glHasArraysOfArrays() || !presetNeedsArraysOfArrays(rel)) out.push_back(l.root + rel);
+    };
+    if (g_builtin.valid) add(g_builtin);
+    if (!sc.folder.empty() && g_user.valid) add(g_user);
+    return out;
+}
 
 void shaderFrameHook(App& app) {
     std::string p, f;
@@ -119,7 +136,7 @@ void shaderFrameHook(App& app) {
         app.video.shader.folder = f;
         g_user.valid = false;
     }
-    if (!p.empty()) applyPreset(app, p);
+    if (!p.empty()) applyShaderPreset(app, p);
     std::string note;
     if (app.video.shader.takeNotice(note)) app.toast(note, 6.0, 2);
 }
@@ -182,7 +199,7 @@ void drawShaderSettings(App& app) {
     ImGui::TextWrapped("%s", sc.preset.empty() ? "(none)" : sc.preset.c_str());
     if (ImGui::Button("Load preset file...") && app.window()) {
         static SDL_DialogFileFilter flt[2] = {{"Slang presets", "slangp"}, {"All files", "*"}};
-        SDL_ShowOpenFileDialog(presetDialogDone, nullptr, app.window(), flt, 2,
+        vj::files::openFile(presetDialogDone, nullptr, app.window(), flt, 2,
                                sc.folder.empty() ? nullptr : sc.folder.c_str(), false);
     }
     ImGui::SameLine();
@@ -221,7 +238,7 @@ void drawShaderSettings(App& app) {
     }
     if (oneRow) ImGui::SameLine();
     if (ImGui::Button("Browse...") && app.window())
-        SDL_ShowOpenFolderDialog(folderDialogDone, nullptr, app.window(),
+        vj::files::openFolder(folderDialogDone, nullptr, app.window(),
                                  sc.folder.empty() ? nullptr : sc.folder.c_str(), false);
     ImGui::SameLine();
     if (ImGui::Button("Rescan")) g_user.valid = false;

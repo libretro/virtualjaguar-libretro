@@ -3,25 +3,43 @@
 # these (ctest -L emu_thread).
 #
 #   frame_exchange_unit   FrameExchange: newest wins, the reader's slot is never written, no tearing, content epochs
-#   emu_commands_unit     EmuCommands: FIFO per producer, timed waits, close-and-drain, errors
-#   pacing_clock_unit     PacingClock mode A against a fake clock and a fake 512-frame-chunk audio device
-#   emu_thread_unit       EmuThread: inline vs threaded, call/post ordering, pause/advance, stop/join timeout, shutdown races
+#   emu_commands_unit     EmuCommands: FIFO per producer, the frame and debug lanes, timed waits, close-and-drain, errors
+#   pacing_clock_unit     PacingClock modes A and B against a fake clock, fake vblank ticks and a fake 512-frame-chunk audio device
+#   display_lock_unit     DisplayLock (#1038): which displays lock, each fallback reason, the hysteresis
+#   emu_thread_unit       EmuThread: inline vs threaded, call/post/debugCall ordering, pause/advance, stop/join timeout, shutdown races
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 #   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
+#   perf_trace_unit       VJ_PERF_TRACE -emu.csv: fill_ns is the last column and never negative
 #   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock
+#   swap_guard_unit       SwapGuard: no vsync swap while the display sleeps, none at all after a context made asleep (#1081)
+#   latch_waker_unit      LatchWaker (macOS): the UI thread's timed event waits end on its wake event, on time (#1026)
 #   core_events_unit      CoreEventQueue: order, bounded log lines, content switch, two threads
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
+#   debug_views_threaded  the Tools windows' data paths with the REAL core on the emulation thread
+#   debug_e2e_threaded    the debugger halt on the emulation thread, REAL core, rig wired as App: break / step / continue / detach /
+#                         hardcore / quit from a UI thread that never blocks over 50 ms; the 3 s join while halted
+#   gdb_threaded_halt     a gdb client finds the threaded headless app halted at boot, reads memory, continues; SIGTERM mid-halt exits 0
+#   gdb_inline_halt       the same four steps with the emulation thread off (the headless loop syncs the halt after each frame)
+#   gdb_inline_halt_hardcore  inline: the client continues a boot halt, then a hardcore sign-in reloads the game (needs the halt mirror synced)
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
+#   smoke_{cd,boot_cart_rom,bad_option,locked_option,disc_insert_cart_hidden}_threaded  the rest of the smoke set, same expectations
+#   controls_overlay_*_threaded / cheat_{state,apply_control,persist_*,tempest_*,community_install}_threaded  (VJSmokeTests / VJCheatTests)
+#                         the controls overlay and cheat tests with --emu-thread on, each on its own data dir; netplay_pair_shared_threaded
 #   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
-#   emu_thread_start_fallback  a failed thread start lifts the debugger/GDB limits and runs inline
-#   *_threaded limits     the debugger and the GDB stub are off while threaded
+#   smoke_quit_during_call_threaded  SIGTERM while that slow call is in flight: the call finishes, exit 0, no owner violation
+#   emu_thread_start_fallback  a failed thread start runs inline (nothing to lift any more)
+#   debug_on_threaded / gdb_enabled(_threaded)  nothing is off while threaded; the silent gdb host attaches at load
+#   emu_thread_default_unit  build channel -> emulation-thread default; a stored choice always wins
+#   emu_thread_default_smoke_{unset,false,true,flag}  the stored choice vs the channel default through the real app (headless, inline; _flag threaded)
+#   no_threaded_limits    the Phase 3 bar, static: no threaded-only gate, text or limit test; "am I threaded?" only where allowed
+#   gdb_hardcore_locked_* / gdb_hardcore_flip_*  hardcore locks the stub to disabled at load; a mid-game flip reloads to apply it
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
 function(vj_emu_thread_warnings target)
@@ -52,6 +70,12 @@ target_include_directories(vj_pacing_clock_test PRIVATE src)
 vj_emu_thread_warnings(vj_pacing_clock_test)
 add_test(NAME pacing_clock_unit COMMAND vj_pacing_clock_test)
 set_tests_properties(pacing_clock_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_display_lock_test tests/display_lock_test.cpp)
+target_include_directories(vj_display_lock_test PRIVATE src)
+vj_emu_thread_warnings(vj_display_lock_test)
+add_test(NAME display_lock_unit COMMAND vj_display_lock_test)
+set_tests_properties(display_lock_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 add_executable(vj_emu_thread_test tests/emu_thread_test.cpp src/emu_thread.cpp)
 target_include_directories(vj_emu_thread_test PRIVATE src)
@@ -99,6 +123,63 @@ vj_emu_thread_warnings(vj_emu_thread_e2e)
 add_test(NAME emu_thread_e2e COMMAND vj_emu_thread_e2e "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_e2e PROPERTIES TIMEOUT 600 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# The Tools windows' data paths with the REAL core on the emulation thread (#967 phase 3a): the session wired as App wires it.
+add_executable(vj_debug_views_threaded tests/debug_views_threaded.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp
+               src/emu_thread.cpp src/paths.cpp)
+target_include_directories(vj_debug_views_threaded PRIVATE src)
+target_link_libraries(vj_debug_views_threaded PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_debug_views_threaded PRIVATE ws2_32 iphlpapi)
+endif()
+vj_emu_thread_warnings(vj_debug_views_threaded)
+add_test(NAME debug_views_threaded
+    COMMAND vj_debug_views_threaded "${VJ_ROMS}/yarc.j64" "${VJ_ROMS}/jagniccc.j64")
+set_tests_properties(debug_views_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+    FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
+
+# The debugger halt with the REAL core on the emulation thread (#967 phase 3b): the rig is wired the way App wires it.
+add_executable(vj_debug_e2e_threaded tests/debug_e2e_threaded.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp
+               src/emu_thread.cpp src/paths.cpp)
+target_include_directories(vj_debug_e2e_threaded PRIVATE src src/debug)
+target_link_libraries(vj_debug_e2e_threaded PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_debug_e2e_threaded PRIVATE ws2_32 iphlpapi)
+endif()
+vj_emu_thread_warnings(vj_debug_e2e_threaded)
+add_test(NAME debug_e2e_threaded COMMAND vj_debug_e2e_threaded "${VJ_ROMS}/yarc.j64")
+set_tests_properties(debug_e2e_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread RESOURCE_LOCK vj_gdb_port
+                     FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
+
+# 3b: a gdb client finds the app halted at boot (gdb_wait) with the emulation thread on; the app's silent host saw it,
+# memory is served while halted, continue finishes the run, and a SIGTERM while gdb still holds the halt exits 0 within 3 s.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME gdb_threaded_halt
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_threaded_halt PROPERTIES TIMEOUT 120 LABELS emu_thread RESOURCE_LOCK vj_gdb_port
+        PASS_REGULAR_EXPRESSION "PASS: gdb halt on the emulation thread"
+        FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
+    # The same client script inline: the halt sits on the UI thread inside retro_run(), the headless loop releases an app halt
+    # but keeps a gdb one, and a SIGTERM mid-halt still ends the run.
+    add_test(NAME gdb_inline_halt
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off)
+    set_tests_properties(gdb_inline_halt PROPERTIES TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
+        PASS_REGULAR_EXPRESSION "PASS: gdb halt on the UI thread \\(inline\\)"
+        FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
+    # A gdb halt that ended must not stay "live" in the UI mirror: Achievements::pump retries the hardcore reload only when no
+    # halt holds the core (the headless inline loop closes and syncs the halt after each frame).
+    add_test(NAME gdb_inline_halt_hardcore
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off "${VJ_RA_FIX}")
+    set_tests_properties(gdb_inline_halt_hardcore PROPERTIES TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
+        PASS_REGULAR_EXPRESSION "PASS: gdb halt on the UI thread \\(inline\\), continue, then the hardcore reload"
+        FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
+else()
+    message(STATUS "Python3 interpreter not found: gdb_threaded_halt, gdb_inline_halt and gdb_inline_halt_hardcore are not registered "
+                   "(the headless SIGINT / SIGTERM handlers and the gdb-over-socket halt paths go untested)")
+endif()
+
 add_test(NAME emu_thread_flag_rejects COMMAND virtualjaguar --headless --emu-thread maybe "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_REGULAR_EXPRESSION "--emu-thread wants on or off"
     FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
@@ -110,9 +191,15 @@ vj_emu_thread_warnings(vj_perf_csv_test)
 add_test(NAME perf_csv_unit COMMAND vj_perf_csv_test "${CMAKE_CURRENT_BINARY_DIR}")
 set_tests_properties(perf_csv_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
+add_executable(vj_perf_trace_test tests/perf_trace_test.cpp)
+target_include_directories(vj_perf_trace_test PRIVATE src)
+vj_emu_thread_warnings(vj_perf_trace_test)
+add_test(NAME perf_trace_unit COMMAND vj_perf_trace_test "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(perf_trace_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
 # The headless smoke tests (VJSmokeTests.cmake) again with --emu-thread on: the same hashes as inline, nothing on the
 # UI thread calling into the core, and the run really threaded (the OK line says so only then).
-set(_vj_threaded_ok "headless: OK \\([0-9]+ load\\(s\\), emulation thread\\)")
+# (_vj_threaded_ok, the OK line of a threaded run, is set in VJSmokeTests.cmake.)
 add_test(NAME smoke_yarc_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames ${VJ_SMOKE_FRAMES} ${_yarc_hash_args}
             "${VJ_ROMS}/yarc.j64")
@@ -127,20 +214,52 @@ add_test(NAME smoke_boot_cd_bios_threaded
 add_test(NAME cheat_apply_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 60 --cheat 001F0000:AB --expect-ram 1F0000=AB
             "${VJ_ROMS}/yarc.j64")
+add_test(NAME smoke_cd_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 120 --allow-blank "${VJ_ROMS}/synth_jagcd.chd")
+add_test(NAME smoke_boot_cart_rom_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 400 --boot-bios cart --expect-bios cart:builtin
+            --expect-hash 3cc9c43e)
 set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threaded smoke_boot_cd_bios_threaded
-                     cheat_apply_threaded PROPERTIES
+                     smoke_cd_threaded smoke_boot_cart_rom_threaded cheat_apply_threaded PROPERTIES
     TIMEOUT 300 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
 
-# A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline and the
-# debugger tools and the GDB stub come back on.
+# The negative controls threaded: they pass by failing for the stated reason (the inline originals' PASS lines), and must
+# not trip an owner violation on the way.
+add_test(NAME smoke_bad_option_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5
+            --option virtualjaguar_no_such_option=1 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_bad_option_threaded PROPERTIES PASS_REGULAR_EXPRESSION "rejected by the core")
+add_test(NAME smoke_locked_option_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5
+            --option virtualjaguar_alt_inputs=enabled "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_locked_option_threaded PROPERTIES PASS_REGULAR_EXPRESSION "locked by the app.*rejected by the core")
+add_test(NAME smoke_disc_insert_cart_hidden_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 30 --allow-blank --boot-bios cart
+            --disc-insert "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_insert_cart_hidden_threaded PROPERTIES
+    PASS_REGULAR_EXPRESSION "headless: FAIL --disc-insert: the disc menu is hidden")
+set_tests_properties(smoke_bad_option_threaded smoke_locked_option_threaded smoke_disc_insert_cart_hidden_threaded PROPERTIES
+    TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
+
+# A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline.  Nothing
+# is switched off while threaded any more, so there is nothing to give back (the old "are back on" line must be gone).
 add_test(NAME emu_thread_start_fallback
     COMMAND ${CMAKE_COMMAND} -E env VJ_TEST_EMU_START_FAIL=1
             $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_start_fallback PROPERTIES TIMEOUT 120 LABELS emu_thread
-    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are back on .the emulation thread did not start."
-    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+    PASS_REGULAR_EXPRESSION "could not start the emulation thread; running emulation on the UI thread.*headless: OK"
+    FAIL_REGULAR_EXPRESSION "are back on|are off while|headless: FAIL|ThreadSanitizer|owner violation")
+
+# The Phase 3 bar (#967): turning the emulation thread on switches nothing off.  A static check over the tree
+# (tests/no_threaded_limits.sh), so it also keeps the bar from coming back (docs/agent/testing.md).  macOS and Linux only.
+find_program(VJ_BASH bash)
+if(VJ_BASH AND NOT WIN32)
+    add_test(NAME no_threaded_limits
+        COMMAND ${VJ_BASH} "${CMAKE_CURRENT_LIST_DIR}/../tests/no_threaded_limits.sh" "${VJ_ROOT}")
+    set_tests_properties(no_threaded_limits PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+endif()
 
 # The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the
 # staged-BIOS record), and the menus read the disc list from the pinned snapshot.
@@ -166,8 +285,7 @@ set_tests_properties(smoke_disc_insert_bios_threaded PROPERTIES TIMEOUT 300 LABE
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
 # The Pro Controller (#1017) through the app itself: a config naming it on Jaguar port 2 must hand the core
-# virtualjaguar_p2_device = pad_pro after the load, inline and threaded (on the emulation thread the option lock is
-# limitFeaturesForEmuThread()'s, and refreshLocks() runs on the owner).  The data dirs are written at configure time;
+# virtualjaguar_p2_device = pad_pro after the load, inline and threaded (on the emulation thread refreshLocks() runs on the owner).  The data dirs are written at configure time;
 # a headless run keeps input.port.1.
 foreach(_m on off)
     set(_pd "${CMAKE_CURRENT_BINARY_DIR}/pro-controller-${_m}")
@@ -191,23 +309,164 @@ set_tests_properties(smoke_m3u_playlist_threaded PROPERTIES TIMEOUT 300 LABELS e
     PASS_REGULAR_EXPRESSION "DISC list 2: synth_jagcd\\.chd, synth_jagcd_multi\\.chd; content synth_jagcd -> synth_jagcd_multi, save RAM synth_jagcd_set \\(emulation thread\\)"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
-add_test(NAME emu_thread_limits
+# 3b: nothing is switched off while threaded.  The old "are off" line must be gone, the thread on, the run OK.
+add_test(NAME debug_on_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
-set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are off while the emulation thread is on"
-    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
-add_test(NAME gdb_locked_threaded
-    COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
-            "${VJ_ROMS}/yarc.j64")
-set_tests_properties(gdb_locked_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core"
-    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
+set_tests_properties(debug_on_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "\\[emu\\] emulation thread on.*${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "are off while the emulation thread is on|ThreadSanitizer|owner violation")
+# Decision 3: whenever the stub is enabled the app attaches a silent host behind every halt, inline and threaded.  The port
+# comes from the OS at run time (tests/with_free_port.py substitutes {PORT}): the typed option rejects 0, hard-coded ports
+# collide between parallel runs (a Windows "failed to open port" is not that: it was the app never starting Winsock,
+# platform::initNetworking), and a port the core cannot open disables the stub for the session
+# (the FAIL regex catches that, so a failure is loud, not a vacuous pass).  RESOURCE_LOCK vj_gdb_port serialises the gdb
+# tests that bind one, closing the window between the wrapper's bind-0 probe and the core's own bind.
+if(Python3_Interpreter_FOUND)
+set(_vj_free_port ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/with_free_port.py")
+add_test(NAME gdb_enabled
+    COMMAND ${_vj_free_port} -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread off --frames 5
+            --option virtualjaguar_gdb_stub=enabled --option virtualjaguar_gdb_port={PORT} "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_enabled PROPERTIES TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
+    PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*headless: OK"
+    FAIL_REGULAR_EXPRESSION "locked by the app|rejected by the core|failed to open port|headless: FAIL")
+add_test(NAME gdb_enabled_threaded
+    COMMAND ${_vj_free_port} -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 5
+            --option virtualjaguar_gdb_stub=enabled --option virtualjaguar_gdb_port={PORT} "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_enabled_threaded PROPERTIES LABELS emu_thread TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
+    PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "locked by the app|rejected by the core|failed to open port|headless: FAIL|ThreadSanitizer|owner violation")
+else()
+    message(STATUS "Python3 interpreter not found: gdb_enabled, gdb_enabled_threaded and the gdb_hardcore_flip* tests are not "
+                   "registered (they need a run-time free port)")
+endif()
+# Decision 2: RetroAchievements hardcore locks the stub to disabled at load.  A SAVED setting (config.ini), not --option:
+# an --option on a locked key is reported as an error by design (checkOverrides).
+foreach(_m off on)
+    set(_gd "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-${_m}")
+    file(MAKE_DIRECTORY "${_gd}")
+    file(WRITE "${_gd}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\n")
+    add_test(NAME gdb_hardcore_locked_${_m}
+        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 10 --verbose --data-dir "${_gd}"
+                --ra-mock "${VJ_RA_FIX}" --ra-hardcore "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_hardcore_locked_${_m} PROPERTIES TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
+        FAIL_REGULAR_EXPRESSION "gdb host attached|headless: FAIL|ThreadSanitizer|owner violation")
+    # A hardcore flip mid-game (late sign-in at frame 40) with the stub OPEN: the app reloads so the lock reaches the core
+    # (it reads the stub options at load only).  The attach line proves the stub was open before the flip.
+    # The saved setting (config.ini) is written by tests/with_free_port.py at run time with a port from the OS.
+    set(_gf "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-flip-${_m}")
+    if(Python3_Interpreter_FOUND)
+    add_test(NAME gdb_hardcore_flip_${_m}
+        COMMAND ${_vj_free_port} --config-ini "${_gf}" -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread ${_m}
+                --frames 120 --verbose --data-dir "${_gf}"
+                --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40 --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_hardcore_flip_${_m} PROPERTIES TIMEOUT 180 RESOURCE_LOCK vj_gdb_port
+        PASS_REGULAR_EXPRESSION "gdb host attached \\(silent\\).*\\[ach\\] hardcore on: reloading the game to close the GDB stub.*\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|failed to open port|ThreadSanitizer|owner violation")
+    endif()
+endforeach()
+set_tests_properties(gdb_hardcore_locked_on PROPERTIES LABELS emu_thread)
+if(Python3_Interpreter_FOUND)
+    set_tests_properties(gdb_hardcore_flip_on PROPERTIES LABELS emu_thread)
+endif()
+
+# The hardcore restart that gives up (the core halted again: a gdb breakpoint still armed) must stay pending and retry, not be
+# dropped with hardcore on and the stub still open.  A headless run cannot stage that re-halt (the core only runs when the loop
+# advances it), so VJ_TEST_RESTART_GIVEUPS=2 makes the first two restarts report what a give-up reports.  Pinned: the retry
+# line once (not per pump), the reload line once, the stub closes in the end, and --ra-expect-reset 1 (one restart counted).
+foreach(_m off on)
+    set(_gg "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-giveup-${_m}")
+    if(Python3_Interpreter_FOUND)
+    add_test(NAME gdb_hardcore_flip_giveup_${_m}
+        COMMAND ${_vj_free_port} --config-ini "${_gg}" -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread ${_m}
+                --frames 120 --verbose --data-dir "${_gg}"
+                --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40 --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_hardcore_flip_giveup_${_m} PROPERTIES TIMEOUT 180 RESOURCE_LOCK vj_gdb_port
+        ENVIRONMENT "VJ_TEST_RESTART_GIVEUPS=2"
+        PASS_REGULAR_EXPRESSION "gdb host attached \\(silent\\).*\\[ach\\] hardcore on: reloading the game to close the GDB stub.*\\[ach\\] hardcore on: the restart gave up \\(core halted\\), retrying.*\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|failed to open port|ThreadSanitizer|owner violation|close the GDB stub.*close the GDB stub|gave up \\(core halted\\), retrying.*gave up \\(core halted\\), retrying")
+    endif()
+endforeach()
+# The same without the stub: hardcore turns on late, the plain reset gives up twice, and the third try restarts the game once.
+foreach(_m off on)
+    add_test(NAME ra_hardcore_reset_giveup_${_m}
+        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 120 --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40
+                --ra-expect-hardcore --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(ra_hardcore_reset_giveup_${_m} PROPERTIES TIMEOUT 180 ENVIRONMENT "VJ_TEST_RESTART_GIVEUPS=2"
+        PASS_REGULAR_EXPRESSION "\\[ach\\] hardcore on: the restart gave up \\(core halted\\), retrying.*headless: OK"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|ThreadSanitizer|owner violation|close the GDB stub|gave up \\(core halted\\), retrying.*gave up \\(core halted\\), retrying")
+endforeach()
+set_tests_properties(ra_hardcore_reset_giveup_on PROPERTIES LABELS emu_thread)
+if(Python3_Interpreter_FOUND)
+    set_tests_properties(gdb_hardcore_flip_giveup_on PROPERTIES LABELS emu_thread)
+endif()
 
 add_executable(vj_late_latch_test tests/late_latch_test.cpp)
 target_include_directories(vj_late_latch_test PRIVATE src)
 vj_emu_thread_warnings(vj_late_latch_test)
 add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
 set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# SwapGuard (#1081): the swap interval is 0 while the display sleeps, and for good when the context was made asleep.
+add_executable(vj_swap_guard_test tests/swap_guard_test.cpp)
+target_include_directories(vj_swap_guard_test PRIVATE src)
+vj_emu_thread_warnings(vj_swap_guard_test)
+add_test(NAME swap_guard_unit COMMAND vj_swap_guard_test)
+set_tests_properties(swap_guard_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The build channel's default rule (#967 phase 3d): a stored choice always wins; only "never chosen" follows the channel.
+# The target links vj_build_channel, so it sees the defines the app was configured with.
+add_executable(vj_emu_thread_default_test tests/emu_thread_default_test.cpp)
+target_include_directories(vj_emu_thread_default_test PRIVATE src)
+target_link_libraries(vj_emu_thread_default_test PRIVATE vj_build_channel)
+vj_emu_thread_warnings(vj_emu_thread_default_test)
+add_test(NAME emu_thread_default_unit COMMAND vj_emu_thread_default_test)
+set_tests_properties(emu_thread_default_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The default rule through the real app (Review Focus 4): the data dir's ui.emu_thread decides "wanted"; only an unset key
+# follows the configured channel.  Headless stays inline unless --emu-thread says otherwise, so "this run" is off; the
+# stored-choice line is what pins the rule.  One data dir per test (ctest -j runs them in parallel).
+# Every channel defaults On since the 4.0 flip (#1039 5c); CMakeLists.txt validated the channel name already.
+set(_vj_chan_def on)
+foreach(_p unset false true)
+    set(_d "${CMAKE_CURRENT_BINARY_DIR}/emu-default-${_p}")
+    file(MAKE_DIRECTORY "${_d}")
+    file(REMOVE "${_d}/config.ini")
+    if(NOT _p STREQUAL "unset")
+        file(WRITE "${_d}/config.ini" "ui.emu_thread=${_p}\n")
+    endif()
+    if(_p STREQUAL "unset")
+        set(_w "${_vj_chan_def}")
+        set(_s unset)
+    elseif(_p STREQUAL "true")
+        set(_w on)
+        set(_s on)
+    else()
+        set(_w off)
+        set(_s off)
+    endif()
+    add_test(NAME emu_thread_default_smoke_${_p}
+        COMMAND virtualjaguar --headless --frames 5 --data-dir "${_d}" "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(emu_thread_default_smoke_${_p} PROPERTIES TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "\\[emu\\] channel=${VJ_BUILD_CHANNEL}, emulation thread default ${_vj_chan_def}, this run off.*\\[emu\\] ui\\.emu_thread ${_s} -> wanted ${_w}"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+endforeach()
+# --emu-thread on wins over the stored choice for one run; the stored choice itself is reported unchanged.
+set(_d "${CMAKE_CURRENT_BINARY_DIR}/emu-default-flag")
+file(MAKE_DIRECTORY "${_d}")
+file(WRITE "${_d}/config.ini" "ui.emu_thread=false\n")
+add_test(NAME emu_thread_default_smoke_flag
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5 --data-dir "${_d}" "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_default_smoke_flag PROPERTIES TIMEOUT 120 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "this run on.*\\[emu\\] ui\\.emu_thread off -> wanted off.*${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+add_executable(vj_latch_waker_test tests/latch_waker_test.cpp)
+target_include_directories(vj_latch_waker_test PRIVATE src)
+target_link_libraries(vj_latch_waker_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
+vj_emu_thread_warnings(vj_latch_waker_test)
+add_test(NAME latch_waker_unit COMMAND vj_latch_waker_test)
+set_tests_properties(latch_waker_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 add_executable(vj_core_events_test tests/core_events_test.cpp)
 target_include_directories(vj_core_events_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
@@ -234,3 +493,14 @@ add_test(NAME smoke_busy_threaded
 set_tests_properties(smoke_busy_threaded PROPERTIES TIMEOUT 120 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "\\[emu\\] busy: a call has taken over 250 ms"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+# A quit (SIGTERM) while that same slow call is in flight: the call completes, the frame loops are skipped, the app exits 0
+# and the thread stops.  A script sends the signal once the busy line shows (so the UI thread is inside the call); not on Windows.
+if(Python3_Interpreter_FOUND AND NOT WIN32)
+    add_test(NAME smoke_quit_during_call_threaded
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/quit_during_call.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(smoke_quit_during_call_threaded PROPERTIES TIMEOUT 120 LABELS emu_thread
+        PASS_REGULAR_EXPRESSION "PASS: quit during a slow call"
+        FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
+endif()

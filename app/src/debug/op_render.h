@@ -33,6 +33,10 @@ enum class OpColorMode {
 
 struct OpRenderOptions {
     OpColorMode color = OpColorMode::Auto;
+    // Raw bitmap viewer: tightly packed byte rows and an exclusive range end; zero keeps OP phrase fetching.
+    unsigned rowStrideBytes = 0;
+    unsigned sourceEnd = 0;
+    unsigned clutAddress = 0xF00400;
     bool honorTrans = true;      // TRANS objects get alpha 0 where the raw value is 0
     bool honorReflect = true;    // mirror REFLECT objects
     unsigned maxW = 4096;        // the preview is clamped (garbage lists are common)
@@ -60,6 +64,9 @@ struct OpImage {
 OpColorMode opResolveColorMode(const vj_debug_iface* iface, OpColorMode requested);
 // Physical colour -> 0x00RRGGBB, the way the core's renderer converts it (tom.c RGB16ToRGB32 / CRY16ToRGB32).
 uint32_t opColorToRgb(const vj_debug_iface* iface, OpColorMode mode, unsigned v16);
+// The same maths from a prebuilt 65536-entry CRY table (DebugSession::buildCryTable, 0x00RRGGBB), for the UI thread:
+// a null or wrong-sized table reads CRY as black.
+uint32_t opColorToRgb(const std::vector<uint32_t>* cryTable, OpColorMode mode, unsigned v16);
 
 // Renders `o`.  False (with `err`) when it is not a drawable bitmap or the iface cannot read memory.
 bool opRender(const vj_debug_iface* iface, const OpObject& o, const OpRenderOptions& opt, OpImage& out, std::string& err);

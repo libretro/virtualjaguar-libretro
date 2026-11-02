@@ -1,0 +1,172 @@
+# Community cheats for Bubsy - Fractured Furry Tails (1994); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_bubsy.c
+# Source SHA256: 9638e480dbef9af2ba3672cbe37706bb17b302677dbd65cfa64f1ff94979339f
+# Omitted: "Start Level With Filled In Password: 0" (scripts/cheat_bubsy.c): no writes activated (check ROM revision/hash)
+# Omitted: "Start Level With Filled In Password: 1" (scripts/cheat_bubsy.c): no writes activated (check ROM revision/hash)
+# Overlap: cheat4 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat17 write the same bytes; later wins (app order).
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "2E17D5DA"
+cheats = 18
+
+cheat0_desc = "Infinite Lives"
+cheat0_code = "0002D163:08"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Time"
+cheat1_code = "0002D13E:0111"
+cheat1_enable = false
+
+cheat2_desc = "Invincible To Enemy Hits"
+cheat2_code = "0002D10E:7FFF"
+cheat2_enable = false
+
+cheat3_desc = "Shadow Invincible To Object Hits"
+cheat3_code = "0002D110:7FFF"
+cheat3_enable = false
+
+cheat4_desc = "Start Level With Filled In Password: 2"
+cheat4_code = "0002EFFB:32+0002EFFA:35+0002EFF9:36+0002EFF8:32+0002EFF7:39+0002EFF6:33"
+cheat4_enable = false
+
+cheat5_desc = "Start Level With Filled In Password: 3"
+cheat5_code = "0002EFFB:37+0002EFFA:32+0002EFF9:32+0002EFF8:38+0002EFF7:35+0002EFF6:34"
+cheat5_enable = false
+
+cheat6_desc = "Start Level With Filled In Password: 4"
+cheat6_code = "0002EFFB:36+0002EFFA:33+0002EFF9:39+0002EFF8:38+0002EFF7:35+0002EFF6:39"
+cheat6_enable = false
+
+cheat7_desc = "Start Level With Filled In Password: 5"
+cheat7_code = "0002EFFB:34+0002EFFA:39+0002EFF9:32+0002EFF8:39+0002EFF7:33+0002EFF6:37"
+cheat7_enable = false
+
+cheat8_desc = "Start Level With Filled In Password: 6"
+cheat8_code = "0002EFFB:32+0002EFFA:39+0002EFF9:37+0002EFF8:34+0002EFF7:38+0002EFF6:31"
+cheat8_enable = false
+
+cheat9_desc = "Start Level With Filled In Password: 7"
+cheat9_code = "0002EFFB:35+0002EFFA:31+0002EFF9:36+0002EFF8:32+0002EFF7:31+0002EFF6:38"
+cheat9_enable = false
+
+cheat10_desc = "Start Level With Filled In Password: 8"
+cheat10_code = "0002EFFB:37+0002EFFA:36+0002EFF9:33+0002EFF8:31+0002EFF7:38+0002EFF6:37"
+cheat10_enable = false
+
+cheat11_desc = "Start Level With Filled In Password: 9"
+cheat11_code = "0002EFFB:32+0002EFFA:31+0002EFF9:37+0002EFF8:36+0002EFF7:32+0002EFF6:31"
+cheat11_enable = false
+
+cheat12_desc = "Start Level With Filled In Password: 10"
+cheat12_code = "0002EFFB:31+0002EFFA:32+0002EFF9:37+0002EFF8:36+0002EFF7:33+0002EFF6:32"
+cheat12_enable = false
+
+cheat13_desc = "Start Level With Filled In Password: 11"
+cheat13_code = "0002EFFB:37+0002EFFA:36+0002EFF9:31+0002EFF8:33+0002EFF7:37+0002EFF6:36"
+cheat13_enable = false
+
+cheat14_desc = "Start Level With Filled In Password: 12"
+cheat14_code = "0002EFFB:33+0002EFFA:32+0002EFF9:33+0002EFF8:32+0002EFF7:39+0002EFF6:37"
+cheat14_enable = false
+
+cheat15_desc = "Start Level With Filled In Password: 13"
+cheat15_code = "0002EFFB:38+0002EFFA:32+0002EFF9:33+0002EFF8:32+0002EFF7:37+0002EFF6:36"
+cheat15_enable = false
+
+cheat16_desc = "Start Level With Filled In Password: 14"
+cheat16_code = "0002EFFB:39+0002EFFA:38+0002EFF9:33+0002EFF8:32+0002EFF7:38+0002EFF6:37"
+cheat16_enable = false
+
+cheat17_desc = "Start Level With Filled In Password: 15"
+cheat17_code = "0002EFFB:35+0002EFFA:34+0002EFF9:33+0002EFF8:32+0002EFF7:37+0002EFF6:36"
+cheat17_enable = false

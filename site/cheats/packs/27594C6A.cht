@@ -1,0 +1,703 @@
+# Community cheats for Defender 2000 (1996); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_d2k_2000.c
+# Source SHA256: 35ce0943e13eec6bfa6e3ec2647330fba8cb85fc01a0e2afd23fabf30ef53ba2
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_d2k_plus_n_classic.c
+# Source SHA256: 7b1e664dbd279c03cdd2425e2960b927e25039e089d908c905fc38a0f5cf7995
+# Omitted: "Enable Plasma Pong" (scripts/cheat_d2k_2000.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Enable Flossie Plus Mode" (scripts/cheat_d2k_2000.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Enable Beest Cheat (3 and 6 Keys)" (scripts/cheat_d2k_2000.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Difficulty And Levels" (scripts/cheat_d2k_2000.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Num Enemies For Orb Release: 0" (scripts/cheat_d2k_2000.c): no writes activated (check ROM revision/hash)
+# Omitted: "Start At Level" (scripts/cheat_d2k_plus_n_classic.c): parameter setting exceeds 64-value limit
+# Overlap: cheat3 and cheat4 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat8 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat7 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat9 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat8 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat10 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat9 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat11 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat10 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat12 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat11 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat13 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat12 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat14 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat13 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat15 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat14 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat16 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat15 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat17 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat16 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat18 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat17 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat19 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat18 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat20 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat19 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat21 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat20 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat22 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat21 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat23 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat22 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat24 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat23 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat25 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat24 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat26 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat25 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat27 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat26 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat28 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat27 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat28 and cheat29 write the same bytes; later wins (app order).
+# Overlap: cheat28 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat28 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat28 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat28 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat28 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat28 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat29 and cheat30 write the same bytes; later wins (app order).
+# Overlap: cheat29 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat29 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat29 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat29 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat29 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat30 and cheat31 write the same bytes; later wins (app order).
+# Overlap: cheat30 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat30 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat30 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat30 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat31 and cheat32 write the same bytes; later wins (app order).
+# Overlap: cheat31 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat31 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat31 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat32 and cheat33 write the same bytes; later wins (app order).
+# Overlap: cheat32 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat32 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat33 and cheat34 write the same bytes; later wins (app order).
+# Overlap: cheat33 and cheat35 write the same bytes; later wins (app order).
+# Overlap: cheat34 and cheat35 write the same bytes; later wins (app order).
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "27594C6A"
+cheats = 40
+
+cheat0_desc = "Infinite Lives"
+cheat0_code = "001AF14B:05"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Bombs"
+cheat1_code = "001AF149:0B"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Shields"
+cheat2_code = "001AF0CD:02"
+cheat2_enable = false
+
+cheat3_desc = "Num Enemies For Orb Release: 1"
+cheat3_code = "000B6F2D:00"
+cheat3_enable = false
+
+cheat4_desc = "Num Enemies For Orb Release: 2"
+cheat4_code = "000B6F2D:01"
+cheat4_enable = false
+
+cheat5_desc = "Num Enemies For Orb Release: 3"
+cheat5_code = "000B6F2D:02"
+cheat5_enable = false
+
+cheat6_desc = "Num Enemies For Orb Release: 4"
+cheat6_code = "000B6F2D:03"
+cheat6_enable = false
+
+cheat7_desc = "Num Enemies For Orb Release: 5"
+cheat7_code = "000B6F2D:04"
+cheat7_enable = false
+
+cheat8_desc = "Num Enemies For Orb Release: 6"
+cheat8_code = "000B6F2D:05"
+cheat8_enable = false
+
+cheat9_desc = "Num Enemies For Orb Release: 7"
+cheat9_code = "000B6F2D:06"
+cheat9_enable = false
+
+cheat10_desc = "Num Enemies For Orb Release: 8"
+cheat10_code = "000B6F2D:07"
+cheat10_enable = false
+
+cheat11_desc = "Num Enemies For Orb Release: 9"
+cheat11_code = "000B6F2D:08"
+cheat11_enable = false
+
+cheat12_desc = "Num Enemies For Orb Release: 10"
+cheat12_code = "000B6F2D:09"
+cheat12_enable = false
+
+cheat13_desc = "Num Enemies For Orb Release: 11"
+cheat13_code = "000B6F2D:0A"
+cheat13_enable = false
+
+cheat14_desc = "Num Enemies For Orb Release: 12"
+cheat14_code = "000B6F2D:0B"
+cheat14_enable = false
+
+cheat15_desc = "Num Enemies For Orb Release: 13"
+cheat15_code = "000B6F2D:0C"
+cheat15_enable = false
+
+cheat16_desc = "Num Enemies For Orb Release: 14"
+cheat16_code = "000B6F2D:0D"
+cheat16_enable = false
+
+cheat17_desc = "Num Enemies For Orb Release: 15"
+cheat17_code = "000B6F2D:0E"
+cheat17_enable = false
+
+cheat18_desc = "Num Enemies For Orb Release: 16"
+cheat18_code = "000B6F2D:0F"
+cheat18_enable = false
+
+cheat19_desc = "Num Enemies For Orb Release: 17"
+cheat19_code = "000B6F2D:10"
+cheat19_enable = false
+
+cheat20_desc = "Num Enemies For Orb Release: 18"
+cheat20_code = "000B6F2D:11"
+cheat20_enable = false
+
+cheat21_desc = "Num Enemies For Orb Release: 19"
+cheat21_code = "000B6F2D:12"
+cheat21_enable = false
+
+cheat22_desc = "Num Enemies For Orb Release: 20"
+cheat22_code = "000B6F2D:13"
+cheat22_enable = false
+
+cheat23_desc = "Num Enemies For Orb Release: 21"
+cheat23_code = "000B6F2D:14"
+cheat23_enable = false
+
+cheat24_desc = "Num Enemies For Orb Release: 22"
+cheat24_code = "000B6F2D:15"
+cheat24_enable = false
+
+cheat25_desc = "Num Enemies For Orb Release: 23"
+cheat25_code = "000B6F2D:16"
+cheat25_enable = false
+
+cheat26_desc = "Num Enemies For Orb Release: 24"
+cheat26_code = "000B6F2D:17"
+cheat26_enable = false
+
+cheat27_desc = "Num Enemies For Orb Release: 25"
+cheat27_code = "000B6F2D:18"
+cheat27_enable = false
+
+cheat28_desc = "Num Enemies For Orb Release: 26"
+cheat28_code = "000B6F2D:19"
+cheat28_enable = false
+
+cheat29_desc = "Num Enemies For Orb Release: 27"
+cheat29_code = "000B6F2D:1A"
+cheat29_enable = false
+
+cheat30_desc = "Num Enemies For Orb Release: 28"
+cheat30_code = "000B6F2D:1B"
+cheat30_enable = false
+
+cheat31_desc = "Num Enemies For Orb Release: 29"
+cheat31_code = "000B6F2D:1C"
+cheat31_enable = false
+
+cheat32_desc = "Num Enemies For Orb Release: 30"
+cheat32_code = "000B6F2D:1D"
+cheat32_enable = false
+
+cheat33_desc = "Num Enemies For Orb Release: 31"
+cheat33_code = "000B6F2D:1E"
+cheat33_enable = false
+
+cheat34_desc = "Num Enemies For Orb Release: 32"
+cheat34_code = "000B6F2D:1F"
+cheat34_enable = false
+
+cheat35_desc = "Num Enemies For Orb Release: 33"
+cheat35_code = "000B6F2D:20"
+cheat35_enable = false
+
+cheat36_desc = "Prevent Orbs Initiating Bonus Round"
+cheat36_code = "000B6F2F:03"
+cheat36_enable = false
+
+cheat37_desc = "Infinite Lives (Defender 2K - + N Classic)"
+cheat37_code = "001AF0DF:05"
+cheat37_enable = false
+
+cheat38_desc = "Infinite Bombs (Defender 2K - + N Classic)"
+cheat38_code = "001AF0E1:0B"
+cheat38_enable = false
+
+cheat39_desc = "+ Mode Infinite Lightning"
+cheat39_code = "001AF0F5:0E"
+cheat39_enable = false

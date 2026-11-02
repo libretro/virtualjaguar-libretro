@@ -20,8 +20,11 @@ on:
       - 'docker/jaguar-toolchain.Dockerfile'
       - 'docker/jaguar-toolchain.Dockerfile.dockerignore'
       - '.github/workflows/jaguar-toolchain.yml'
+  # develop is deliberately absent: it is reached through PRs that already ran
+  # this workflow (see c-cpp.yml for the full rationale).  The GHCR image
+  # publish is a separate workflow, jaguar-toolchain-image.yml, and stays.
   push:
-    branches: [develop, master]
+    branches: [master]
     paths:
       - 'tools/jaguar-toolchain/**'
       - 'docker/jaguar-toolchain.Dockerfile'

@@ -55,7 +55,7 @@ static std::string slurp(const fs::path& p) {
 static void fill(Config& c) {
     const char* keys[] = {
         // Video (+ Shader)
-        "video.integer", "video.linear", "video.stretch", "video.aspect", "video.vsync", "ui.show_fps", "ui.theme",
+        "video.integer", "video.linear", "video.stretch", "video.aspect", "video.vsync", "video.pacing", "ui.show_fps", "ui.theme",
         "shader.enabled", "shader.preset", "shader.folder",
         // Audio
         "audio.volume", "audio.mute", "audio.target_ms",
@@ -93,6 +93,7 @@ static std::set<std::string> klass(const Config& c, KeyClass k) {
 
 static void testClassify() {
     CHECK(classifyKey("video.vsync") == KeyClass::Video);
+    CHECK(classifyKey("video.pacing") == KeyClass::Video);   // Frame pacing (#1038)
     CHECK(classifyKey("ui.show_fps") == KeyClass::Interface);   // #933: the Interface tab owns the app's own look and behaviour
     CHECK(classifyKey("ui.theme") == KeyClass::Interface);      // Reset on that tab returns the theme to System
     CHECK(classifyKey("ui.controls.autoshow") == KeyClass::Interface);

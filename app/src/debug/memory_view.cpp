@@ -261,6 +261,12 @@ bool SearchJob::matchAt(const uint8_t* p) const {
 }
 
 bool SearchJob::step(unsigned budget) {
+    if (done_) return true;
+    s_.callCore([this, budget] { stepOnCore(budget); });
+    return done_;
+}
+
+void SearchJob::stepOnCore(unsigned budget) {
     const unsigned len = (unsigned)needle_.size();
     std::vector<uint8_t> buf;
     while (!done_ && budget > 0) {
@@ -293,7 +299,6 @@ bool SearchJob::step(unsigned budget) {
         scanned_ += c;
         budget -= c;
     }
-    return done_;
 }
 
 float SearchJob::progress() const {
@@ -454,6 +459,19 @@ bool CryCodec::build(const vj_debug_iface* iface) {
     for (unsigned v = 0; v < 0x10000; v++) table_[v] = iface->cry_to_rgb(v) & 0xFFFFFFu;
     built_ = iface;
     return true;
+}
+
+bool CryCodec::buildFrom(DebugSession& s) {
+    const uint64_t ep = s.views().epoch();
+    if (ep == epoch_) return !refused_ && !table_.empty();
+    std::vector<uint32_t> t;
+    const bool ok = s.buildCryTable(t) && t.size() == 0x10000;
+    epoch_ = ep;
+    refused_ = !ok;
+    built_ = nullptr;   // build()'s identity check no longer describes this table
+    if (ok) table_.swap(t);
+    else table_.clear();
+    return ok;
 }
 
 unsigned CryCodec::encode(uint32_t rgb) const {

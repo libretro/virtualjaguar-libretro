@@ -1,0 +1,26 @@
+# Community cheats for Wolfenstein 3D (1994); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_wolfenstein.c
+# Source SHA256: da236a46384620be84ea4abd608ad5b5e0b50e287e04faacd8ca94f0cbefe2c4
+# Omitted: "Level Select: 1, 3, 7, 9 simul at main menu" (scripts/cheat_wolfenstein.c): no writes activated (check ROM revision/hash)
+# Omitted: "Next Level: 4, 7, 8 then 6 during gameplay" (scripts/cheat_wolfenstein.c): no writes activated (check ROM revision/hash)
+# Omitted: "Prev Level: 4, 6, 9, then 6 during gameplay" (scripts/cheat_wolfenstein.c): no writes activated (check ROM revision/hash)
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "E91BD644"
+cheats = 4
+
+cheat0_desc = "Infinite Health"
+cheat0_code = "00021948:00000001"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Ammo"
+cheat1_code = "00021970:0000022B+00021974:0000022B+00021978:0000022B+0002197C:0000022B"
+cheat1_enable = false
+
+cheat2_desc = "Unlock All Weapons"
+cheat2_code = "00021980:00000001+00021984:00000001+00021988:00000001+0002198C:00000001"
+cheat2_enable = false
+
+cheat3_desc = "Unlock All Keys"
+cheat3_code = "0002196C:00000003"
+cheat3_enable = false

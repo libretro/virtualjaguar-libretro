@@ -22,6 +22,7 @@ public:
     bool menuPause(std::string& why) override;
     void menuResume() override;
     bool netplayActive() const override;
+    bool menuRunsOn() const override;
     bool canLoadState() const override;
     std::vector<SlotInfo> slots() override;
     bool saveState(int slot) override;
@@ -43,6 +44,7 @@ public:
     bool desktopWindowOpen() const override;
     bool libraryScanning() const override;
     std::vector<GameRef> games(List l) override;
+    bool hasGames() const override;
     Art art(const GameRef& g) override;
     std::vector<StateRef> states(const GameRef& g) override;
     Art stateThumb(const GameRef& g, const StateRef& state) override;
@@ -50,6 +52,17 @@ public:
     void launchState(const GameRef& g, const StateRef& state) override;
     bool isFavorite(const GameRef& g) override;
     void setFavorite(const GameRef& g, bool on) override;
+    std::vector<SettingRow> settingRows() override;
+    void setSetting(const std::string& id, int index) override;
+    void openMoreSettings() override;
+    AchHeader achHeader() override;
+    std::vector<AchItem> achItems() override;
+    std::vector<AchGame> achGames() override;
+    Art achImage(const std::string& url) override;
+    void achPlay(uint32_t gameId) override;
+    uint32_t achGameId(const GameRef& g) override;
+    std::vector<ToggleRow> overlayRows() override;
+    void toggleOverlay(const std::string& id) override;
 
     // Every SDL event, before anything can consume it (App::handleEvent): remembers which device was used last, so
     // glyph() follows what the player is actually pressing -- including the buttons the shell itself consumes, which
@@ -59,7 +72,11 @@ public:
 private:
     const lib::Entry* entryFor(const GameRef& g) const;
 
+    const std::vector<std::string>& themeNames();   // the saved custom themes, listed once a second (the folder is read)
+
     App& app_;
+    std::vector<std::string> themeNames_;
+    double themeListedAt_ = -100.0;
     bool lastWasPad_ = false;        // the last real input was a pad button / a pushed stick, not a key
     SDL_JoystickID lastPad_ = 0;     // ... on this pad
 };

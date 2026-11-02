@@ -48,6 +48,10 @@ public:
     const char* id() const override { return "home"; }
 
     void intent(Intent in) override {
+        if (in == Intent::Aux) {   // Y: the Achievements section, tile or no tile
+            shell_.setSection(Section::Achievements);
+            return;
+        }
         if (!built_) refresh();
         if (shelves_.empty()) return;
         LinearFocus& f = tile_[shelves_[(size_t)cur_].kind];
@@ -168,10 +172,13 @@ public:
     }
 
     std::vector<widgets::Hint> hints() const override {
-        if (shelves_.empty()) return {};   // Back on Home does nothing: no way out to hint
-        std::vector<widgets::Hint> h = {{host_.glyph(Intent::Accept), "Play"}};
-        if (resumeOk_) h.push_back({host_.glyph(Intent::Alt), "Resume state"});
-        h.push_back({host_.glyph(Intent::Menu), "Details"});
+        std::vector<widgets::Hint> h;   // Back on Home does nothing: no way out to hint
+        if (!shelves_.empty()) {
+            h.push_back({host_.glyph(Intent::Accept), "Play"});
+            if (resumeOk_) h.push_back({host_.glyph(Intent::Alt), "Resume state"});
+            h.push_back({host_.glyph(Intent::Menu), "Details"});
+        }
+        h.push_back({host_.glyph(Intent::Aux), "Achievements"});
         return h;
     }
 
@@ -235,8 +242,7 @@ private:
     void play() {
         const GameRef* g = focused();
         if (!g) return;
-        host_.launch(*g);
-        shell_.launched();
+        shell_.requestLaunch(*g, nullptr);
     }
 
     // Start / a right-click: Game details of the focused game.  Back from there lands on this tile again.
@@ -252,8 +258,8 @@ private:
         if (!g || !host_.canLoadState()) return;
         const std::vector<StateRef> st = host_.states(*g);
         if (st.empty()) return;
-        host_.launchState(*g, st[0]);
-        shell_.launched();
+        const StateRef newest = st[0];
+        shell_.requestLaunch(*g, &newest);
     }
 
     widgets::TileArgs tileArgs(const GameRef& g) {
@@ -270,10 +276,18 @@ private:
     void drawEmpty(const DrawCtx& c) {
         const Metrics& m = c.m;
         const float u = m.u, w = std::min(1100 * u, c.size.x - 2 * m.safeX), pad = 48 * u;
-        // The first scan of a new install (or of an empty cache) is still running: the library is not empty yet.
-        const std::string msg = host_.libraryScanning()
-                                    ? "Scanning your library..."
-                                    : "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+        // Games but no shelves (a new player: nothing played, no favorites, no discs) is not an empty library: the Library
+        // section lists them.  Otherwise the first scan of a new install (or of an empty cache) may still be running.
+        std::string msg;
+        if (host_.hasGames()) {
+            std::string next = host_.glyph(Intent::SectionNext);   // the button the section bar shows
+            if (next.empty()) next = "RB";
+            msg = "Nothing to continue yet. Press " + next + " for your Library.";
+        } else {
+            msg = host_.libraryScanning()
+                      ? "Scanning your library..."
+                      : "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+        }
         const ImVec2 ts = widgets::textSize(m.body, msg, w - 2 * pad);
         const ImVec2 size(w, ts.y + 2 * pad);
         const ImVec2 pos(c.pos.x + (c.size.x - size.x) * 0.5f, c.pos.y + (c.size.y - size.y) * 0.5f);

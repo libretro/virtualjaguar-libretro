@@ -2,7 +2,9 @@ name: Release
 
 # Three publication paths share one build matrix:
 #   push tag v*        -> the `release` job: a real, permanent GitHub release
-#   push to develop    -> the `nightly` job, tag `nightly`
+#   push to develop    -> the `nightly` job, tag `nightly`, after a 10 minute
+#                         debounce (see the `guard` job) so a burst of merges
+#                         builds once, for the last one
 #   push to release/** -> the same job, tag `prerelease` (issue #507)
 # The build/vita-build/switch-build jobs below are trigger-agnostic; only the
 # final publishing job differs.  Neither rolling tag is named v-anything, so a
@@ -33,9 +35,10 @@ permissions:
 # Tag pushes always run to completion — a release build must never be
 # cancelled.  Develop pushes cancel superseded runs, because only the newest
 # commit's binaries matter for a rolling prerelease and an in-flight build of
-# an older tip is pure waste.  This deliberately differs from c-cpp.yml /
-# acid-test.yml, which let develop pushes finish so there is a green-or-red
-# record per commit: that record is their job, not this one's.
+# an older tip is pure waste.  The `guard` job's debounce sleep makes the cancel
+# land while a burst of merges is still asleep, before any build starts.
+# c-cpp.yml / acid-test.yml no longer run on develop pushes at all (their PR runs
+# already covered the tree), so this is the only per-merge workflow on develop.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/release/') }}
@@ -50,6 +53,17 @@ jobs:
     name: Check dispatch ref
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
+      # Debounce for the rolling nightly.  A burst of merges to develop would
+      # otherwise start one 24-target build per merge and cancel it when the next
+      # lands.  Every build job needs this job, so the whole matrix waits here;
+      # a newer develop push cancels this run (concurrency below) while it is still
+      # asleep, at the cost of one idle ubuntu runner, and only the last push of a
+      # burst goes on to build.  Only develop pushes wait: tags, release/** and
+      # manual dispatches start immediately.
+      - name: Wait for the develop burst to settle
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+        run: sleep 600
+
       - name: Refuse a dispatch that would publish nothing
         if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
         run: |
@@ -261,7 +275,11 @@ jobs:
             make_platform: 'tvos-arm64'
 
     name: build-${{ matrix.config.platform }}
-    runs-on: ${{ matrix.config.os }}
+    # Only the unsigned iOS/tvOS rows of the develop nightly lane run on the Mac Studio self-hosted
+    # runner.  macOS rows sign + notarize (fixed-name keychain, 25-45 min notary waits); tags and
+    # release/** (whose ci-core intermediates C/C++ CI reuses) always build on clean hosted runners.
+    # Kill switch: repository variable VJ_STUDIO_RUNNER=off.
+    runs-on: ${{ matrix.config.os == 'macos-latest' && matrix.config.make_platform && github.ref == 'refs/heads/develop' && vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","studio","vj"]') || matrix.config.os }}
 
     defaults:
       run:

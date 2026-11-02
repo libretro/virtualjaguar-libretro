@@ -6,6 +6,7 @@
 #include "desktop_nav_popup.h"
 #include "imgui.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 
 namespace vj {
 
@@ -21,6 +22,22 @@ bool deskPadActive(App& app) {
     // A popup the pad did not open (a right-click menu, a menu-bar menu, the Lists popup, a combo, a modal) is the mouse's:
     // the pad must not launch a game behind it.  No ImGui context (headless) means no popup.
     return !deskForeignPopupOpen(app.deskPad.padPopup);
+}
+
+// The one-time TV mode hint (approval E): the first pad press the desktop library takes under Manual says how to reach TV mode,
+// in this pad's own words.  Stored before it shows, and flagged for the run, so it can never show twice; Auto and Off never see it
+// (Auto's switching press returned before getting here).  A Settings > Reset of Interface clears the key and it may show once more.
+static void tvMaybeShowHint(App& app, SDL_JoystickID pad) {
+    if (app.tvSetting != tv::TvSetting::Manual || app.tvHintShownThisRun_ || app.cfg.getBool("ui.tv_hint_shown", false)) return;
+    app.tvHintShownThisRun_ = true;
+    app.cfg.setBool("ui.tv_hint_shown", true);
+    app.saveConfig();
+#ifdef __APPLE__
+    const bool macOS = true;
+#else
+    const bool macOS = false;
+#endif
+    app.toast(tv::firstUseHint(app.input.tvMenuBindingText(pad), app.input.tvMenuKeyText(), macOS), 6.0);
 }
 
 bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
@@ -58,6 +75,7 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
             d.seq++;
         }
         d.in.padIntent(e.gbutton.which, e.gbutton.button, in, down, ms);
+        if (down) tvMaybeShowHint(app, e.gbutton.which);
         return down;   // a release is fed (it ends a repeat, or fires a tap) but still reaches the app
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
@@ -127,7 +145,9 @@ void deskPadFrame(App& app, uint64_t ms) {
 }
 
 void deskPadBeforeNewFrame(App& app) {
-    deskSetPopupNav(popupLive(app));
+    const bool more = tvMoreSettingsLive(app);   // "More settings" from TV mode: the pad drives its window like a popup, and the keyboard too
+    deskSetPopupNav(popupLive(app) || more);
+    deskSetKeyboardNav(more);
 }
 
 }  // namespace vj

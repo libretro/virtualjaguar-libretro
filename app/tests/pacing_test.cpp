@@ -16,6 +16,7 @@
 #include <functional>
 
 using vj::Pacer;
+using vj::SwapGrid;
 
 namespace {
 
@@ -49,6 +50,11 @@ struct Scenario {
     bool vsync;      // vsync wanted
     double jitter = 0;                       // +- uniform noise on every cost (frame, UI), s
     std::function<double(long)> cost = nullptr;   // optional: cost of emulated frame #i (overrides c)
+    // A blocking swap returns this long after its vblank: swapMin + swapSpread * u^2 (u uniform in [0, 1)), and one in
+    // 50 a further swapLate (a compositor hiccup).  Real inline traces (#1141): 0.3-1 ms, positive-skewed.
+    double swapMin = 0, swapSpread = 0, swapLate = 0;
+    bool grid = false;        // book steps on the vblank grid (SwapGrid), as App::stepEmulation does
+    double gridRefresh = 0;   // the refresh period SwapGrid is told (0 = the display's true one)
 };
 
 struct Result {
@@ -59,6 +65,10 @@ struct Result {
     double slept = 0;      // fraction of real time spent in sleep
     int toggles = 0;       // swap-interval changes
     bool syncEnd = false;  // the swap interval is 1 when the run ends
+    double uneven = 0;     // per minute, vsync locked: a new image after more (or fewer) refreshes than the core's
+                           // period rounds to (a repeat at 60 Hz)
+    double dropped = 0;    // per minute: emulated frames never shown (all but the last of a multi-frame step)
+    bool gridLocked = false;
 };
 
 // Seconds until the next vblank boundary at/after t.
@@ -72,16 +82,20 @@ double frameCost(const Scenario& s, long i, Rng& r) {
 Result simulateNew(const Scenario& s, double secs) {
     Pacer p;
     p.resetSwap(s.vsync);
+    SwapGrid g;
     Rng rng;
-    double now = 0, last = 0, sleptT = 0;
-    long frames = 0, steps = 0, imgs = 0, multi = 0, sleeps = 0;
+    double now = 0, last = 0, sleptT = 0, shownAt = -1;
+    long frames = 0, steps = 0, imgs = 0, multi = 0, sleeps = 0, uneven = 0, dropped = 0;
+    const long want = s.vblank > 0 ? std::max(1L, std::lround(s.period / s.vblank)) : 1;
     Result res;
     while (now < secs) {
         double dt = now - last;
         last = now;
-        int n = p.plan(dt, s.period);
+        const double c = s.grid ? g.correct(now) : 0;
+        int n = p.plan(dt + c, s.period);
         for (int i = 0; i < n; i++) now += frameCost(s, frames + i, rng);
         frames += n;
+        if (n > 1) dropped += n - 1;
         if (n > 0) {
             p.charge(now - last, s.period);
             last = now;
@@ -91,7 +105,22 @@ Result simulateNew(const Scenario& s, double secs) {
             p.behind = false;
         }
         now += std::max(0.0, s.u + s.jitter * rng.next());
-        if (p.swapSync && s.vblank > 0) now = nextVblank(now, s.vblank);   // SDL_GL_SwapWindow blocks
+        if (p.swapSync && s.vblank > 0) {   // SDL_GL_SwapWindow blocks
+            const double begin = now, v = nextVblank(now, s.vblank);
+            now = v + s.swapMin;
+            if (s.swapSpread > 0 || s.swapLate > 0) {   // (no draws otherwise: the other scenarios keep their stream)
+                const double u = 0.5 * (1.0 + rng.next());
+                now += s.swapSpread * u * u + (rng.next() > 0.96 ? s.swapLate : 0.0);
+            }
+            if (s.grid) g.onSwap(begin, now, s.gridRefresh > 0 ? s.gridRefresh : s.vblank);
+            if (n > 0) {
+                if (shownAt >= 0 && std::lround((v - shownAt) / s.vblank) != want) uneven++;
+                shownAt = v;
+            }
+        } else {
+            if (s.grid) g.reset();
+            shownAt = -1;
+        }
         if (p.updateSwap(s.vsync)) res.toggles++;
         steps++;
         if (!p.swapSync) {
@@ -104,6 +133,9 @@ Result simulateNew(const Scenario& s, double secs) {
         }
     }
     res.syncEnd = p.swapSync;
+    res.gridLocked = g.locked();
+    res.uneven = 60.0 * (double)uneven / now;
+    res.dropped = 60.0 * (double)dropped / now;
     res.fps = (double)frames / now;
     res.images = (double)imgs / now;
     res.multi = imgs ? (double)multi / (double)imgs : 0;
@@ -302,6 +334,74 @@ int main() {
         CHECK(n.toggles == 0, "a 250 ms stall and a 3-frame 40 ms hitch, %.0f Hz: %d toggles", 1.0 / v, n.toggles);
     }
 
+    // ---- swap-return jitter, inline + vsync (#1141) ---------------------------------------------------------
+    // A blocking swap returns a little after its vblank, by a varying amount (Studio traces: residual sd 0.3-0.5 ms, a
+    // few ms late now and then on a loaded host).  On real time the backlog's phase then flips takes near a period
+    // boundary: bursts of repeats and dropped frames.  Booked on the vblank grid, the 60.05 Hz core slips once per
+    // crossing: (60.05 - 60) x 60 = 3 frames a minute on a 60 Hz display (dropped), 6.6 at 59.94 Hz.  A slip may cost a
+    // repeat too where two frames do not fit in one refresh (7 ms of work), never more.  At 120 Hz a step owes half a
+    // period, so the pacer has two boundaries per period and an image comes one refresh early twice as often.  The grid
+    // must not slow the game down.
+    struct Disp {
+        const char* name;
+        double vblank, told;   // the display's true refresh, and the one SwapGrid is told (0 = the true one)
+        double slip;           // slips a minute a 60.05 Hz core has to make on it
+        double maxUneven;      // uneven images a minute allowed on the grid
+    };
+    const Disp disps[] = {{"60 Hz", V60, 0, 3.0, 4.0},
+                          {"59.94 Hz", V5994, 0, 6.6, 7.6},
+                          {"59.94 Hz announced as 60", V5994, V60, 6.6, 7.6},
+                          {"120 Hz", V120, 0, 3.0, 7.0}};
+    for (const Disp& d : disps) {
+        for (double c : {0.0035, 0.007}) {
+            // (7 ms of work + the UI is a whole 120 Hz refresh: whether a frame makes the next vblank is the frame cost's
+            // jitter, not the pacer's)
+            if (c > 0.005 && d.vblank < 0.01) continue;
+            for (int noisy = 0; noisy < 2; noisy++) {
+                Scenario s{P, c, 0.0015, d.vblank, true, 0.0003};
+                s.swapMin = 0.0002;
+                s.swapSpread = noisy ? 0.0016 : 0.0012;
+                s.swapLate = noisy ? std::min(0.004, 0.25 * d.vblank) : 0.0;   // (later than half a refresh is the next vblank's)
+                s.gridRefresh = d.told;
+                Result r = simulateNew(s, kLong);
+                s.grid = true;
+                Result n = simulateNew(s, kLong);
+                char what[96];
+                std::snprintf(what, sizeof what, "%s swap jitter, %s, core %.1f ms", noisy ? "noisy" : "quiet", d.name,
+                              c * 1000);
+                std::printf("  %-52s real time: uneven %5.1f dropped %5.1f /min -> grid: uneven %4.1f dropped %4.1f "
+                            "/min, %.3f fps\n",
+                            what, r.uneven, r.dropped, n.uneven, n.dropped, n.fps);
+                CHECK(n.gridLocked, "%s: the grid never locked", what);
+                // (noisy at 120 Hz: a swap returning 2-4 ms late leaves too little of an 8.3 ms refresh for the next
+                // step's work, and that frame misses its vblank whatever the pacing)
+                const double allowed = noisy ? std::max(d.maxUneven, 0.25 * r.uneven) : d.maxUneven;
+                CHECK(n.uneven <= allowed, "%s: %.1f uneven images a minute on the grid, want <= %.1f", what, n.uneven,
+                      allowed);
+                CHECK(n.dropped <= d.slip + 1.5, "%s: %.1f dropped frames a minute on the grid, want ~%.1f", what, n.dropped,
+                      d.slip);
+                CHECK(n.fps >= r.fps - 0.04 && n.fps < 1.0 / P + 0.04, "%s: %.3f fps on the grid, %.3f on real time", what,
+                      n.fps, r.fps);
+                CHECK(n.toggles == 0, "%s: %d swap-interval toggles", what, n.toggles);
+                if (!noisy) CHECK(r.uneven >= 5.0, "%s: only %.1f uneven a minute on real time (the point of the test)", what,
+                                  r.uneven);
+            }
+        }
+    }
+    {   // PAL (50.08 Hz) on a 60 Hz display: one refresh in six repeats whatever the pacing; the grid changes nothing
+        Scenario s{1.0 / 50.08, 0.004, 0.0015, V60, true, 0.0003};
+        s.swapMin = 0.0002;
+        s.swapSpread = 0.0012;
+        Result r = simulateNew(s, kLong);
+        s.grid = true;
+        Result n = simulateNew(s, kLong);
+        std::printf("  %-52s real time: %.3f fps %.1f img/s dropped %.1f /min -> grid: %.3f fps %.1f img/s dropped %.1f\n",
+                    "PAL on 60 Hz, quiet swap jitter", r.fps, r.images, r.dropped, n.fps, n.images, n.dropped);
+        CHECK(std::fabs(n.fps - r.fps) < 0.01 && std::fabs(n.fps - 50.08) < 0.05, "PAL: %.3f fps on the grid", n.fps);
+        CHECK(n.images >= r.images - 0.05, "PAL: %.2f img/s on the grid, %.2f on real time", n.images, r.images);
+        CHECK(n.dropped <= r.dropped + 0.5, "PAL: %.1f dropped a minute on the grid", n.dropped);
+    }
+
     // ---- the pieces ---------------------------------------------------------------------------------------
     {
         Pacer p;
@@ -333,6 +433,73 @@ int main() {
             p.plan(P - 0.0125, P);   // the iteration lasts exactly one period (vblank locked)
         }
         CHECK(p.swapSync, "still synced");
+    }
+    {   // SwapGrid on its own (#1141)
+        Rng r;
+        // swaps that do not block (vsync off, an occluded window) never lock it
+        SwapGrid g;
+        double t = 0;
+        for (int i = 0; i < 600; i++) {
+            t += V60 + 0.002 * r.next();
+            g.onSwap(t - 0.0001, t, V60);
+            CHECK(g.correct(t + 0.0002) == 0, "non-blocking swap %d: a correction", i);
+        }
+        CHECK(!g.locked(), "non-blocking swaps locked the grid");
+        // blocking swaps at no fixed rate (VRR, a compositor that is not refresh-locked) never lock it either
+        SwapGrid h;
+        t = 0;
+        for (int i = 0; i < 600; i++) {
+            t += 0.008 + 0.017 * 0.5 * (1.0 + r.next());
+            h.onSwap(t - 0.004, t, V60);
+            CHECK(!h.locked(), "random intervals locked the grid at swap %d", i);
+        }
+        // a vblank-locked loop: locked after kLockAfter swaps; the corrections telescope (no rate change: their sum is the
+        // first step's lag minus the last one's), and each step is booked on its swap's vblank
+        SwapGrid k;
+        double sum = 0, raw0 = 0, raw = 0, grid0 = 0;
+        int first = -1;
+        for (int i = 0; i < 1200; i++) {
+            const double v = (i + 1) * V5994;
+            const double u = 0.5 * (1.0 + r.next());
+            const double end = v + 0.0002 + 0.0012 * u * u;
+            k.onSwap(v - 0.005, end, V60);   // (told 60 Hz, the display is 59.94)
+            const double step = end + 0.0003 * (1.0 + r.next());
+            const double c = k.correct(step);
+            if (k.locked() && first < 0) {
+                first = i;
+                CHECK(c == 0, "the first locked step starts a chain (correction %.6f)", c);
+                raw0 = step;
+                grid0 = v;
+            }
+            if (first >= 0) {
+                sum += c;
+                raw = step;
+            }
+        }
+        CHECK(first >= SwapGrid::kLockAfter - 1 && first < 60, "locked at swap %d", first);
+        CHECK(k.locked(), "a 59.94 Hz grid announced as 60 Hz lost the lock");
+        const double booked = (raw - raw0) + sum, grid = 1200 * V5994 - grid0;   // (the last swap's vblank - the first's)
+        CHECK(std::fabs(booked - grid) < 0.001, "booked %.6f s, the vblanks span %.6f s", booked, grid);
+        CHECK(std::fabs(sum) < 0.003, "the corrections drifted: %.6f s", sum);
+        // one swap 4 ms late while locked: booked at its vblank, the lock kept
+        const double v = 1201 * V5994;
+        k.onSwap(v - 0.005, v + 0.004, V60);
+        const double c = k.correct(v + 0.0043);
+        CHECK(k.locked(), "one late swap dropped the lock");
+        CHECK(c < -0.0025 && c > -0.0045, "a 4 ms late swap was booked %.4f s early, want ~-3.4 ms", c);
+        // a step that is not paced starts a new chain; a new refresh rate starts over and locks on the new grid
+        k.restart();
+        k.onSwap(v + V5994 - 0.005, v + V5994 + 0.0004, V60);
+        CHECK(k.correct(v + V5994 + 0.0006) == 0, "after restart(): a correction on the first step");
+        int relock = -1;
+        for (int i = 0; i < 200 && relock < 0; i++) {
+            const double w = v + 0.1 + i * V120;
+            k.onSwap(w - 0.003, w + 0.0003, V120);
+            if (k.locked()) relock = i;
+        }
+        CHECK(relock >= SwapGrid::kLockAfter - 1 && relock < 60, "a new refresh rate relocked at swap %d", relock);
+        k.reset();
+        CHECK(!k.locked() && k.correct(1e3) == 0, "reset() leaves it unlocked");
     }
     {   // the user's vsync-off wins, always
         Pacer p;

@@ -2,6 +2,7 @@
 // options menu generated from the options v2 definitions), the save-state
 // manager, the on-screen messages.
 #include "app.h"
+#include "build_channel.h"
 #include "devices_ui.h"
 #include "fonts_ui.h"
 
@@ -10,6 +11,7 @@
 #include "settings_reset_ui.h"
 #include "shaders.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 #include "typed_ui.h"
 #include "ui_util.h"
 #include "window_chrome.h"
@@ -121,14 +123,9 @@ bool matchesFilter(const OptionDef& d, const std::string& f) {
 }
 
 void drawCoreOptions(App& app) {
+    if (app.debug.halted()) ImGui::TextDisabled("Settings and cheats apply after Continue");   // frame-lane posts wait for the core to run
     CoreHost& host = app.host;
-    if (!host.isLoaded() && host.optionDefs().empty()) {
-        ImGui::TextWrapped(
-            "The core's options appear here once a game is loaded (or the console is booted). "
-            "The menu is generated from the core's own option definitions.");
-        return;
-    }
-    if (host.isLoaded()) {
+    if (host.isLoaded()) {   // the table is there from startup (CoreHost::probeOptions), game or not
         if (ImGui::Button("Restart game to apply")) app.reloadContent();
         ui::hint("'Restart required' options apply on the next load.");
     }
@@ -184,14 +181,25 @@ void drawVideoTab(App& app) {
     ImGui::Checkbox("Smooth (bilinear) filter", &p.linearFilter);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Has no effect while integer scaling is on.");
     ImGui::Checkbox("Stretch to window (ignore aspect ratio)", &p.stretch);
-    static const char* aspects[] = {"Core default", "4:3", "16:9", "8:7 (square pixels)"};
-    static const float vals[] = {0.0f, 4.0f / 3.0f, 16.0f / 9.0f, 8.0f / 7.0f};
     int sel = 0;
-    for (int i = 0; i < 4; i++)
-        if (std::abs(p.aspectOverride - vals[i]) < 1e-3f) sel = i;
+    for (int i = 0; i < kAspectChoiceCount; i++)
+        if (std::abs(p.aspectOverride - kAspectChoices[i].value) < 1e-3f) sel = i;
     ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 9.0f, 16.0f));
-    if (ImGui::Combo("Aspect ratio", &sel, aspects, 4)) p.aspectOverride = vals[sel];
+    auto aspectLabel = [](void*, int i) { return kAspectChoices[i].label; };
+    if (ImGui::Combo("Aspect ratio", &sel, aspectLabel, nullptr, kAspectChoiceCount)) p.aspectOverride = kAspectChoices[sel].value;
     if (ImGui::Checkbox("VSync", &app.vsync)) app.applyVsync();
+    int pace = app.pacingDisplay ? 1 : 0;
+    const char* paceChoices[] = {"Jaguar rate", "Match display"};
+    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 9.0f, 16.0f));
+    if (ImGui::Combo("Frame pacing", &pace, paceChoices, 2)) app.pacingDisplay = pace == 1;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Jaguar rate: the console's own 60.05 / 50.08 Hz, kept by the sound card. A 60 Hz display shows one\n"
+                          "frame twice about every 20 seconds.\n"
+                          "Match display: one frame per refresh (or per two) where the display runs at a multiple of the\n"
+                          "game's rate (60, 59.94, 120 Hz for NTSC games; 50, 100 Hz for PAL), the sound following it.\n"
+                          "Elsewhere it says why and uses the Jaguar rate. Needs the emulation thread and vsync.");
+    const std::string paceNow = app.pacingStatus();
+    if (!paceNow.empty()) ui::hint("%s", paceNow.c_str());
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     drawShaderSettings(app);
@@ -245,6 +253,38 @@ void drawStorageTab(App& app) {
     ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed (Settings > BIOS).");
 }
 
+// TV mode (#991 phase 4): Off / Manual / Auto, and under Auto the two triggers.  Both setters reconfigure TvMode, which turns a
+// trigger-started TV mode into a Manual one (it stays on; mouse and key hand-back stops), and neither saves: this does.
+void drawTvModeSettings(App& app) {
+    ImGui::SeparatorText("TV mode");
+    static const char* const kLabels[] = {"Off", "Manual", "Auto"};   // tv::TvSetting order
+    int cur = (int)app.tvSetting;
+    ImGui::SetNextItemWidth(ui::em(10.0f));
+    if (ImGui::BeginCombo("##tv_mode", kLabels[cur])) {
+        for (int i = 0; i < 3; i++)
+            if (ImGui::Selectable(kLabels[i], cur == i) && i != cur) {
+                app.setTvSetting((tv::TvSetting)i);
+                app.saveConfig();
+            }
+        ImGui::EndCombo();
+    }
+    if (app.tvSetting == tv::TvSetting::Auto) {
+        bool fs = app.cfg.getBool("ui.tv_auto_fullscreen", true);
+        if (ImGui::Checkbox("Turn on in fullscreen", &fs)) {
+            app.setTvAuto(true, fs);
+            app.saveConfig();
+        }
+        bool pad = app.cfg.getBool("ui.tv_auto_controller", true);
+        if (ImGui::Checkbox("Turn on when a controller is used", &pad)) {
+            app.setTvAuto(false, pad);
+            app.saveConfig();
+        }
+    }
+    ui::hint("A 10-foot look for a pad and a TV. Manual: View > TV mode, Ctrl/Cmd+Shift+T, or F4 / a Share hold with no game. "
+             "Auto also turns it on in fullscreen and when a controller is used in the library (mouse movement or typing "
+             "turns it off again). Nightly and local builds start on Auto, releases on Manual.");
+}
+
 // Settings > Interface: how the app itself looks and behaves (as opposed to Video's picture and Storage's saves).
 // The config keys are the ones these controls always had (ui.*, saves.resume, library.*): nothing is renamed.
 void drawInterfaceTab(App& app) {
@@ -252,6 +292,7 @@ void drawInterfaceTab(App& app) {
     ImGui::SeparatorText("Overlays");
     ImGui::Checkbox("Show frame rate", &app.showFps);
     drawControlsOverlaySettings(app);
+    drawTvModeSettings(app);
     drawAppearanceSettings(app);
     drawFontSettings(app);
     ImGui::SeparatorText("Performance");
@@ -262,8 +303,9 @@ void drawInterfaceTab(App& app) {
     }
     ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
              "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
-             "app starts. While it is on, this version turns off the Tools (debugger) menu and the GDB stub; they "
-             "come back in a later update. Off by default.");
+             "app starts. Break, Step, breakpoints and the GDB stub work with it on. %s",
+             kEmuThreadDefault ? "On unless you turn it off here; --emu-thread off runs one start without it."
+                               : "Off by default in this build; turn it on here.");
     if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");
@@ -343,11 +385,25 @@ void drawDiscordTab(App& app) {
 }
 
 void drawSettings(App& app) {
-    ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
-    bool open = ui::beginWindow("Settings", &app.showSettings);
+    // Opened by "More settings..." in TV mode: centred at 80 % of the viewport with TV-sized text, the pad and the keyboard driving it
+    // (tv_more_settings.h).  It is its own ImGui window ("###" keeps the title) with no saved settings: the desktop window's place
+    // and size in imgui.ini are never touched, and it comes back to them once this one is gone.
+    const bool tv = tvMoreSettingsLive(app);
+    if (tv) {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Always,
+                                ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.8f, vp->WorkSize.y * 0.8f), ImGuiCond_Always);
+    } else {
+        ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
+    }
+    // The font is pushed before Begin so the title bar and its close box are TV-sized too (the UNSCALED size: PushFont applies the DPI scale itself).
+    if (tv) ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * tvMoreSettingsFontScale(app));
+    bool open = ui::beginWindow(tv ? "Settings###vjtvmore" : "Settings", &app.showSettings, tv ? ImGuiWindowFlags_NoSavedSettings : 0);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
+        if (tv) ImGui::PopFont();
         return;
     }
     drawResetAllSettings(app);
@@ -358,20 +414,27 @@ void drawSettings(App& app) {
             app.devSelectTab.clear();
             return (ImGuiTabItemFlags)ImGuiTabItemFlags_SetSelected;
         };
-        if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video", nullptr, tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Audio", nullptr, tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("BIOS", nullptr, tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Interface", nullptr, tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
+        // The pad starts on the selected tab (live): ImGui's tabs never take default focus themselves, and the Reset button is out of reach.
+        auto tabItem = [&](const char* name, ImGuiTabItemFlags flags = 0) {
+            const bool shown = ImGui::BeginTabItem(name, nullptr, flags);
+            if (shown && tv) ImGui::SetItemDefaultFocus();
+            return shown;
+        };
+        if (tabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
+        if (tabItem("Video", tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Audio", tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Input", tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
+        if (tabItem("BIOS", tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
+        if (tabItem("Storage", tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Interface", tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Discord", tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
 #ifdef VJ_HAVE_NEURO
-        if (ImGui::BeginTabItem("Neuro", nullptr, tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Neuro", tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
 #endif
         ImGui::EndTabBar();
     }
     ImGui::End();
+    if (tv) ImGui::PopFont();
 }
 
 // ---- save-state manager --------------------------------------------------------------------
@@ -473,7 +536,7 @@ void drawAbout(App& app) {
         ImGui::End();
         return;
     }
-    ImGui::Text("Virtual Jaguar %s", VJ_APP_VERSION);
+    ImGui::Text("Virtual Jaguar %s (%s build)", VJ_APP_VERSION, kBuildChannel);
     ImGui::TextDisabled("Atari Jaguar emulator. GPLv3.");
     ImGui::Separator();
     ImGui::TextUnformatted("Authors");
@@ -528,7 +591,7 @@ void drawMenuBar(App& app) {
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
         if (ImGui::MenuItem("New window", "Ctrl+N")) app.newWindow();
-        if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show && !app.homeVisible())) app.toggleLibrary();
+        if (ImGui::MenuItem("Game library...", "Ctrl+L", (app.library.show && !app.homeVisible()) || (app.tvMode.active() && app.tvShell().showingLibrary()))) app.openLibrary();
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list
             for (size_t i = 0; i < list.size(); i++) {
@@ -544,26 +607,36 @@ void drawMenuBar(App& app) {
             if (ImGui::MenuItem("CD BIOS (no disc)")) app.bootBios(bios::Cd);
             if (ImGui::MenuItem("Cartridge boot ROM (empty slot)")) app.bootBios(bios::CartBoot);
             ImGui::Separator();
-            if (ImGui::MenuItem("BIOS & boot settings...")) {
-                app.showSettings = true;
-                app.devSelectTab = "BIOS";
-            }
+            if (ImGui::MenuItem("BIOS & boot settings...")) app.openBiosSettings();
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !app.haltedNow())) app.closeContent();
+        // Threaded, a halted game closes too: closeContent() detaches the debugger first.  Inline, the call would run inside
+        // retro_run, so the item stays off.
+        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && (app.threaded() || !app.haltedNow()))) app.closeContent();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) app.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-        bool loaded = host.isLoaded() && !app.haltedNow();   // a debugger halt parks the core: nothing that re-enters it
-        if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, loaded)) app.togglePause();
-        if (ImGui::MenuItem("Reset", "Ctrl+R", false, loaded)) app.reset();
-        ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, loaded);
+        // A debugger halt parks the core.  Threaded, the commands that re-enter it detach the debugger first (canReenter);
+        // inline they would run inside retro_run, so they stay off.  A state needs the core at a frame boundary, so it
+        // waits for Continue in both modes.
+        const bool loaded = host.isLoaded();
+        const bool canReenter = loaded && (app.threaded() || !app.haltedNow());
+        const bool canState = loaded && !app.haltedNow();
+        const auto haltTip = [&app] {   // on a menu item the halt switched off
+            if (app.haltedNow() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Resume the debugger first (F9)");
+        };
+        if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, canReenter)) app.togglePause();
+        if (ImGui::MenuItem("Reset", "Ctrl+R", false, canReenter)) app.reset();
+        ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, canReenter);
         ImGui::Separator();
-        if (ImGui::MenuItem("Save state", "F5", false, loaded)) app.saveState(app.stateSlot);
-        if (ImGui::MenuItem("Load state", "F7", false, loaded && app.slotExists(app.stateSlot))) app.loadState(app.stateSlot);
+        if (ImGui::MenuItem("Save state", "F5", false, canState)) app.saveState(app.stateSlot);
+        if (!canState) haltTip();
+        if (ImGui::MenuItem("Load state", "F7", false, canState && app.slotExists(app.stateSlot))) app.loadState(app.stateSlot);
+        if (!canState) haltTip();
         if (ImGui::BeginMenu("Slot")) {
             for (int s = 0; s < 10; s++) {
                 std::string l = "Slot " + std::to_string(s) + (app.slotExists(s) ? "  (used)" : "");
@@ -571,8 +644,9 @@ void drawMenuBar(App& app) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("State manager...", nullptr, false, loaded)) app.showStates = true;
-        if (ImGui::MenuItem("Cheats...", nullptr, false, loaded)) app.showCheats = true;
+        if (ImGui::MenuItem("State manager...", nullptr, false, canState)) app.showStates = true;
+        if (!canState) haltTip();
+        if (ImGui::MenuItem("Cheats...", nullptr, false, canReenter)) app.showCheats = true;
         DiscInfo disc = host.discInfo();
         if (disc.available) {
             // A disc command is a call(), not a post(): inserting a disc can re-stage the CD BIOS, which writes the
@@ -580,15 +654,16 @@ void drawMenuBar(App& app) {
             ImGui::Separator();
             // The CD BIOS with no disc (#646) has an empty list: closing the tray would have nothing to insert, so
             // only Add disc image... shows until a disc is in it.
-            if (disc.count > 0 && ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) {
+            if (disc.count > 0 && ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false, canReenter)) {
                 const bool eject = !disc.ejected;
-                app.emu.call([&host, eject] { host.discSetEject(eject); });
+                app.callReleased([&host, eject] { host.discSetEject(eject); });   // halted: release the halt first
             }
-            if (ImGui::MenuItem("Add disc image...")) app.showDiscDialog();
+            if (ImGui::MenuItem("Add disc image...", nullptr, false, canReenter)) app.showDiscDialog();
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
                 for (unsigned i = 0; i < disc.count; i++) {
                     ImGui::PushID((int)i);   // a multi-disc set can repeat a label
-                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) app.emu.call([&host, i] { host.discSetIndex(i); });
+                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i, canReenter))
+                        app.callReleased([&host, i] { host.discSetIndex(i); });
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();
@@ -607,14 +682,14 @@ void drawMenuBar(App& app) {
             overlayEvent(app.input.controls, OverlayEvent::Toggle);
         }
         ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
-        if (ImGui::MenuItem("TV mode", "Ctrl+Shift+T", app.tvMode.active(), tv::effectiveSetting(app.tvSetting) != tv::TvSetting::Off))
+        if (ImGui::MenuItem("TV mode", "Ctrl+Shift+T", app.tvMode.active(), app.tvSetting != tv::TvSetting::Off))
             app.toggleTvMode();
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
     drawToolsMenu(app);
     if (ImGui::BeginMenu("Settings")) {
-        if (ImGui::MenuItem("Settings...", "Ctrl+,")) app.showSettings = true;
+        if (ImGui::MenuItem("Settings...", "Ctrl+,")) app.openSettings();
         if (ImGui::MenuItem("Mute", nullptr, &app.mute)) app.applyAudioSettings();
         ImGui::EndMenu();
     }

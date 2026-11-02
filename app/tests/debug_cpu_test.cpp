@@ -4,9 +4,11 @@
 // step, step over, run to cursor and their temporary breakpoint).  No window, no GL, no core.
 #include "cpu_view.h"
 #include "debug_mock.h"
+#include "debug_ui_fixture.h"
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -253,14 +255,15 @@ static void testControls() {
     s.setIface(m.iface());
     s.setContentLoaded(true);
     CpuControl c(s);
-    s.onHalt.push_back([&](int t, unsigned pc, int r) { c.onHalt(t, pc, r); });
+    s.onHaltUi.push_back([&](int t, unsigned pc, int r) { c.onHalt(t, pc, r); });
 
     // Break arms halt_next on that target and remembers it is pending until the halt.
     CHECK(c.breakIn(VJ_DBG_TARGET_GPU));
     CHECK(m.haltNexts.size() == 1 && m.haltNexts[0] == VJ_DBG_TARGET_GPU && c.pending(VJ_DBG_TARGET_GPU));
     CHECK(!c.pending(VJ_DBG_TARGET_M68K));
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_GPU, 0xF03000, VJ_DBG_STOP_USER);
+    s.syncHalt();
     CHECK(!c.pending(VJ_DBG_TARGET_GPU));
 
     // Not halted: step buttons do nothing and say so.
@@ -268,14 +271,15 @@ static void testControls() {
     CHECK(!c.cont() && !c.stepOver(VJ_DBG_TARGET_M68K) && !c.runTo(VJ_DBG_TARGET_M68K, 0x5000));
 
     // Step on the halted tab is a STEP verdict.
-    s.runUiFrame = [&] { CHECK(c.stepIn(VJ_DBG_TARGET_M68K)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.stepIn(VJ_DBG_TARGET_M68K)); };
     int v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
     CHECK(v == VJ_DBG_RESUME_STEP);
 
     // Step on another tab: the halted 68K resumes and the GPU is told to halt at its next instruction.
     m.haltNexts.clear();
-    s.runUiFrame = [&] { CHECK(c.stepIn(VJ_DBG_TARGET_GPU)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.stepIn(VJ_DBG_TARGET_GPU)); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE && m.haltNexts.size() == 1 && m.haltNexts[0] == VJ_DBG_TARGET_GPU);
     CHECK(c.pending(VJ_DBG_TARGET_GPU));
     c.forget();
@@ -284,7 +288,8 @@ static void testControls() {
     // Step over a JSR: temporary breakpoint at the next instruction, then a CONTINUE.
     put(m, 0x4000, {0x4E, 0xB9, 0x00, 0x00, 0x12, 0x34});
     m.breakpoints.clear();
-    s.runUiFrame = [&] {
+    s.core().runUiFrame = [&] {
+        s.syncHalt();
         CHECK(c.stepOver(VJ_DBG_TARGET_M68K));
         CHECK(c.temp().active() && c.temp().addr() == 0x4006);
         bool has = false;
@@ -293,50 +298,60 @@ static void testControls() {
         CHECK(s.breakpoints().empty());            // the session's list stays the user's
     };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE);
     // The next halt (here: the temp breakpoint being hit) clears it.
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4006, VJ_DBG_STOP_BREAKPOINT);
+    s.syncHalt();
     CHECK(!c.temp().active());
     CHECK(m.breakpoints.empty());
 
     // Step over a plain instruction is a plain step.
     put(m, 0x4000, {0x4E, 0x71});
-    s.runUiFrame = [&] { CHECK(!c.stepOver(VJ_DBG_TARGET_M68K)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(!c.stepOver(VJ_DBG_TARGET_M68K)); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_STEP && !c.temp().active());
     // ...and so is every GPU/DSP instruction.
-    s.runUiFrame = [&] { CHECK(!c.stepOver(VJ_DBG_TARGET_GPU)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(!c.stepOver(VJ_DBG_TARGET_GPU)); };
     v = m.simulateHalt(VJ_DBG_TARGET_GPU, 0xF03000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_STEP);
 
     // Run to cursor.
-    s.runUiFrame = [&] { CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x5000)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x5000)); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE && c.temp().active() && c.temp().addr() == 0x5000);
     CHECK(m.breakpoints.size() == 1);
     // Continue drops a pending run-to.
-    s.runUiFrame = [&] { CHECK(c.cont()); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.cont()); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE && !c.temp().active());
     CHECK(m.breakpoints.empty());
 
     // A temporary breakpoint where the user has an enabled one: theirs stays when the temp goes.
     CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x6000));
-    s.runUiFrame = [&] { CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(c.temp().active() && m.breakpoints.size() == 1);
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x6000);
+    s.syncHalt();
     CHECK(!c.temp().active() && m.breakpoints.size() == 1);
     // A disabled user breakpoint is not in the core: the temp owns the slot and clears it.
     s.setBreakpointEnabled(VJ_DBG_TARGET_M68K, 0x6000, false);
     CHECK(m.breakpoints.empty());
-    s.runUiFrame = [&] { CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(m.breakpoints.size() == 1);
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x6000);
+    s.syncHalt();
     CHECK(m.breakpoints.empty());
 
     // The tools off: Break explains why.
@@ -344,7 +359,196 @@ static void testControls() {
     CHECK(!c.breakIn(VJ_DBG_TARGET_M68K) && !c.note().empty());
 }
 
+// #967 3a: the window's feed adopts published buffers and never reaches the core itself.
+static void testCpuFeedReadsBuffersOnly() {
+    UiFixture f;
+    f.s.views().setDisasm(&disasmRows);
+    CpuFeed feed;
+    feed.want(f.s, VJ_DBG_TARGET_M68K, 0x1000, 8);
+    f.s.wakeViews();                                     // inline: the copier runs now
+    const UiFixture::Mark m = f.mark();
+    CHECK(feed.update(f.s) && feed.haveRegs() && feed.regsTarget() == VJ_DBG_TARGET_M68K);
+    CHECK(feed.regs().pc == 0x4000 && feed.regs().d[3] == 0x1003);
+    CHECK(feed.rowsFor(VJ_DBG_TARGET_M68K, 0x1000, 8) && feed.rows().size() == 8);
+    CHECK(feed.rows()[0].addr == 0x1000 && !feed.rows()[0].bytes.empty());
+    for (size_t i = 1; i < 8; i++) CHECK(feed.rows()[i].addr == feed.rows()[i - 1].addr + feed.rows()[i - 1].len);
+    CHECK(!feed.update(f.s) && !feed.update(f.s));         // nothing new
+    CHECK(f.quietSince(m));                                // update() never reaches the core
+    feed.want(f.s, VJ_DBG_TARGET_GPU, 0xF03000, 4);        // a tab switch: the old answer is not the new one
+    CHECK(!feed.rowsFor(VJ_DBG_TARGET_GPU, 0xF03000, 4) && feed.regsTarget() == VJ_DBG_TARGET_M68K);
+    f.s.wakeViews();
+    CHECK(feed.update(f.s) && feed.regsTarget() == VJ_DBG_TARGET_GPU && feed.regs().risc_pc == 0xF03000);
+    CHECK(feed.rowsFor(VJ_DBG_TARGET_GPU, 0xF03000, 4) && feed.rows()[0].text.find("fake") == 0);
+    // The same request restated changes nothing; a new refresh serial adopts a fresh buffer.
+    feed.want(f.s, VJ_DBG_TARGET_GPU, 0xF03000, 4);
+    CHECK(!feed.update(f.s));
+    const unsigned g0 = feed.rowsGen();
+    f.s.requestRefresh();
+    f.s.wakeViews();
+    CHECK(feed.update(f.s) && feed.rowsGen() == g0 + 1);   // every adoption of rows is counted: an older copy is stale
+    // A new core forgets what was adopted; releasing drops the requests.
+    f.s.views().bumpEpoch();
+    CHECK(feed.update(f.s) && !feed.answered() && !feed.haveRegs() && feed.regsTarget() == -1);
+    f.s.wakeViews();
+    CHECK(feed.update(f.s) && feed.answered() && feed.haveRegs());
+    feed.release(f.s);
+    CHECK(f.s.views().count() == 0 && !feed.answered() && !feed.rowsFor(VJ_DBG_TARGET_GPU, 0xF03000, 4));
+}
+
+static void testDisasmNav() {
+    UiFixture f;
+    std::vector<std::function<void()>> q;
+    f.s.corePost = [&](std::function<void()> fn) { q.push_back(std::move(fn)); };
+    DisasmNav nav;
+    nav.back(f.s, VJ_DBG_TARGET_M68K, 0x1010, 4);
+    unsigned a = 0;
+    CHECK(nav.pending() && !nav.take(a));
+    std::vector<std::function<void()>> work = std::move(q);
+    q.clear();
+    for (auto& fn : work) {
+        CountingIface::OnCore g;
+        fn();
+    }
+    CHECK(nav.take(a) && a == backStart(f.mock.iface(), VJ_DBG_TARGET_M68K, 0x1010, 4));
+    CHECK(!nav.pending());
+    // prev walks one instruction back `count` times.
+    nav.prev(f.s, VJ_DBG_TARGET_M68K, 0x1010, 3);
+    work = std::move(q);
+    q.clear();
+    for (auto& fn : work) {
+        CountingIface::OnCore g;
+        fn();
+    }
+    unsigned want = 0x1010;
+    for (int k = 0; k < 3; k++) want = prevAddr(f.mock.iface(), VJ_DBG_TARGET_M68K, want);
+    CHECK(nav.take(a) && a == want);
+}
+
+// The stale-answer rules around the backwards walks, with a deferred queue standing in for the emulation thread.
+static void testNavTracker() {
+    UiFixture f;
+    std::vector<std::function<void()>> q;
+    f.s.corePost = [&](std::function<void()> fn) { q.push_back(std::move(fn)); };
+    auto drain = [&] {
+        std::vector<std::function<void()>> work = std::move(q);
+        q.clear();
+        for (auto& fn : work) {
+            CountingIface::OnCore g;
+            fn();
+        }
+    };
+    const unsigned want = backStart(f.mock.iface(), VJ_DBG_TARGET_M68K, 0x1010, 4);
+    unsigned gens[VJ_DBG_NUM_TARGETS] = {5, 7, 9};
+    NavTracker nav;
+    NavTracker::Applied a;
+    CHECK(nav.free());
+
+    // Outstanding: nothing to apply yet, the slot stays taken, the answer then applies to the tab it was posted for.
+    nav.back(f.s, VJ_DBG_TARGET_GPU, gens[1], 0x1010, 4);
+    CHECK(!nav.free() && nav.busyFor(VJ_DBG_TARGET_GPU) && !nav.busyFor(VJ_DBG_TARGET_M68K) && !nav.prevOutstanding(VJ_DBG_TARGET_GPU));
+    CHECK(!nav.apply(f.s, gens, a) && !nav.free());
+    drain();
+    CHECK(nav.apply(f.s, gens, a) && a.tab == VJ_DBG_TARGET_GPU && nav.free());   // (a tab switch does not matter: the walk knows its tab)
+    CHECK(!nav.apply(f.s, gens, a));                                              // never twice
+
+    // The tab jumped (Go to, PC, wheel: its generation moved) before the answer arrived: dropped, the slot frees.
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    gens[0]++;
+    drain();
+    CHECK(!nav.apply(f.s, gens, a) && nav.free());
+
+    // A fresh walk after that applies, with the address the walk computed.
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    drain();
+    CHECK(nav.apply(f.s, gens, a) && a.tab == VJ_DBG_TARGET_M68K && a.addr == want);
+
+    // A new core (epoch bump) while the walk is queued: the answer is dropped, not applied to the new core.
+    nav.prev(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 2);
+    CHECK(nav.prevOutstanding(VJ_DBG_TARGET_M68K));
+    f.s.views().bumpEpoch();
+    CHECK(!nav.free());                       // it simply finishes ...
+    drain();
+    CHECK(!nav.apply(f.s, gens, a) && nav.free());   // ... and is dropped
+    // ... and the next walk, posted for the new core, is not poisoned by the old one.
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    drain();
+    CHECK(nav.apply(f.s, gens, a) && a.addr == want);
+
+    // Inline (no queue): the answer is there as soon as the walk is posted.
+    f.s.corePost = [](std::function<void()> fn) {
+        CountingIface::OnCore g;
+        fn();
+    };
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    CHECK(nav.apply(f.s, gens, a) && a.addr == want);
+}
+
+// #967 3a: the run controls reach the core only through callCore.
+static void testControlsMarshalled() {
+    UiFixture f;
+    CpuControl c(f.s);
+    TempBreak tb;
+    const UiFixture::Mark m = f.mark();
+    CHECK(tb.arm(f.s, VJ_DBG_TARGET_M68K, 0x5000) && f.mock.breakpoints.size() == 1);
+    CHECK(f.mark().coreCalls > m.coreCalls);
+    tb.disarm(f.s);
+    CHECK(f.mock.breakpoints.empty());
+    CHECK(CountingIface::offCore() == 0);
+}
+
+// #967 3b: the app's own temporary breakpoints (run to cursor, step over a call) are not in the session's list, so a halt
+// at one must not be shown as "HALTED by gdb"; a halt at any other address still is.
+static void testTempBreakIsNotGdb() {
+    DebugSession s;
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.attach());
+    CpuControl c(s);
+    s.onHaltUi.push_back([&](int t, unsigned pc, int r) { c.onHalt(t, pc, r); });
+    s.ownsBreakAt = [&](int t, unsigned pc) { return c.ownsHaltAt(t, pc); };   // as registerCpuTools wires it
+    s.core().waitVerdict = [] {};   // threaded shape: the halt stays recorded until frameEnded()
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.halted() && !s.haltByGdb());
+
+    // Run to cursor: the halt at the cursor is ours.
+    CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x5000) && c.temp().active());
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(!s.halted() && c.temp().active());
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.halted() && !s.haltByGdb());
+    CHECK(!c.temp().active());   // the halt cleared it (CpuControl::onHalt)
+
+    // The same address again, now that the temp is gone: not ours, not in the list.
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());
+
+    // A temp is armed, but the halt is at another address (gdb's breakpoint) or on another processor: gdb's.
+    CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x7000) && c.temp().active());
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5002, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());
+    CHECK(!c.temp().active());   // any halt clears it
+    CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x7000) && c.ownsHaltAt(VJ_DBG_TARGET_M68K, 0x7000));
+    CHECK(!c.ownsHaltAt(VJ_DBG_TARGET_GPU, 0x7000) && !c.ownsHaltAt(VJ_DBG_TARGET_M68K, 0x7002));
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_GPU, 0x7000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());
+}
+
 int main() {
+    CountingIface::reset();
     testMusashi();
     testRisc();
     testStrip();
@@ -354,6 +558,11 @@ int main() {
     testDecoders();
     testParse();
     testControls();
+    testCpuFeedReadsBuffersOnly();
+    testDisasmNav();
+    testNavTracker();
+    testControlsMarshalled();
+    testTempBreakIsNotGdb();
     std::printf("debug_cpu_unit: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

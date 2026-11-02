@@ -170,12 +170,38 @@ bool InputQueue::enqueue(const std::vector<Step>& steps) {
         return false;
     for (const Step& s : steps)
         if (s.frames) steps_.push_back(s);
+    version_++;
     return true;
 }
 
 void InputQueue::clear() {
     steps_.clear();
     hold_ = ControlSet();
+    lineage_++;
+    firstFrame_ = 0;
+    version_++;
+}
+
+void InputQueue::trim(unsigned frames) {
+    while (frames && !steps_.empty()) {
+        Step& s = steps_.front();
+        const unsigned n = frames < s.frames ? frames : s.frames;
+        frames -= n;
+        firstFrame_ += n;
+        if (n == s.frames) steps_.pop_front();
+        else s.frames -= n;
+    }
+}
+
+AgentProgram InputQueue::program(uint64_t gen, bool enabled) const {
+    AgentProgram p;
+    p.gen = gen;
+    p.lineage = lineage_;
+    p.firstFrame = firstFrame_;
+    p.enabled = enabled;
+    p.hold = hold_;
+    for (const Step& s : steps_) p.steps.push_back({s.held, s.frames});
+    return p;
 }
 
 ControlSet InputQueue::peek() const {
@@ -188,6 +214,51 @@ ControlSet InputQueue::frame() {
     const ControlSet s = peek();
     if (!steps_.empty() && --steps_.front().frames == 0) steps_.pop_front();
     return s;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// AgentPlayer
+// ---------------------------------------------------------------------------------------------------------------
+void AgentPlayer::load(const AgentProgram& p) {
+    if (p.lineage != lineage_) {                 // a new lineage restarts the count
+        lineage_ = p.lineage;
+        played_ = 0;
+    }
+    if (played_ < p.firstFrame) played_ = p.firstFrame;   // frames trimmed away can never be replayed
+    q_.clear();
+    std::vector<Step> st;
+    for (const AgentStep& a : p.steps) st.push_back({a.held, a.frames});
+    if (!st.empty()) q_.enqueue(st);
+    q_.trim((unsigned)(played_ - p.firstFrame));  // skip what this replica already played
+    q_.setHold(p.hold);
+    enabled_ = p.enabled;
+    gen_ = p.gen;
+}
+
+ControlSet AgentPlayer::frame() {
+    if (!enabled_) return last_ = ControlSet();   // nothing plays behind a menu, and nothing advances
+    const bool had = q_.busy();
+    last_ = q_.frame();
+    if (had) played_++;
+    return last_;
+}
+
+AgentProgress AgentPlayer::progress() const {
+    AgentProgress r;
+    r.gen = gen_;
+    r.lineage = lineage_;
+    r.played = (unsigned)played_;
+    r.done = !q_.busy();
+    r.pressed = last_;
+    return r;
+}
+
+ControlSet pollAgent(InputSnapshot& s, AgentPlayer& p) {
+    AgentProgram prog;
+    if (s.takeAgent(prog)) p.load(prog);
+    const ControlSet c = p.frame();
+    s.reportAgent(p.progress());
+    return c;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -304,10 +375,11 @@ const Profile* findProfile(const std::vector<Profile>& all, const std::string& t
     return nullptr;
 }
 
-std::string watchValue(const Watch& w, const uint8_t* ram, size_t size) {
-    if (!ram || (size_t)w.address + w.size > size) return "?";
+std::string watchValue(const Watch& w, const uint8_t* bytes, size_t size, uint32_t base) {
+    if (!bytes || w.address < base || (uint64_t)(w.address - base) + w.size > size) return "?";
+    const uint8_t* at = bytes + (w.address - base);
     uint32_t v = 0;
-    for (unsigned i = 0; i < w.size; i++) v = (v << 8) | ram[w.address + i];
+    for (unsigned i = 0; i < w.size; i++) v = (v << 8) | at[i];
     char buf[32];
     if (w.format == "hex") {
         std::snprintf(buf, sizeof buf, "0x%0*X", (int)(w.size * 2), (unsigned)v);

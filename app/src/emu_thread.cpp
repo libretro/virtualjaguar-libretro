@@ -1,4 +1,5 @@
 #include "emu_thread.h"
+#include "thread_realtime.h"
 
 #include <algorithm>
 #include <exception>
@@ -90,6 +91,31 @@ void EmuThread::post(std::function<void()> fn) {
     fn();
 }
 
+void EmuThread::debugPost(std::function<void()> fn) {
+    if (abandoned()) return;
+    if (threaded() && !onEmuThread()) {
+        if (cmds_.post(std::move(fn), EmuCommands::Lane::Debug)) return;   // (post() leaves `fn` alone when it refuses it)
+        waitFinished();
+        if (abandoned()) return;
+    }
+    fn();
+}
+
+size_t EmuThread::serveDebugLane(std::chrono::milliseconds maxWait) {
+    const auto onError = [this](const std::string& what) {
+        if (client_) client_->commandFailed(what);
+    };
+    if (abandoned()) return 0;
+    if (!threaded()) return cmds_.drain(onError, EmuCommands::Lane::Debug);
+    if (!onEmuThread()) return 0;   // not the halt pump's thread: nothing here is ours to serve
+    size_t n = cmds_.drain(onError, EmuCommands::Lane::Debug);
+    if (n == 0) {
+        cmds_.waitUntil(Steady::now() + maxWait, EmuCommands::Lane::Debug);
+        n = cmds_.drain(onError, EmuCommands::Lane::Debug);
+    }
+    return n;
+}
+
 void EmuThread::waitFinished() {
     std::unique_lock<std::mutex> l(mu_);
     cv_.wait(l, [this] { return finished_ || state_.load() == State::Abandoned; });
@@ -106,39 +132,59 @@ void EmuThread::inlineStep() {
     frames_.fetch_add(1);
 }
 
-bool EmuThread::advance(unsigned n) {
-    if (n == 0) return true;
+bool EmuThread::advance(unsigned n, std::function<bool()> giveUp) {
     if (abandoned() || !client_) return false;
     if (!threaded()) {
+        if (n == 0) return true;
         if (!client_->canRun()) return false;
         for (unsigned i = 0; i < n; i++) inlineStep();
         return true;
     }
     if (onEmuThread()) return false;   // a command cannot wait for frames that only run after it
-    // Publish the budget through the command queue too. A UI-side increment can land after drain() but before
-    // the loop reads its budget, letting a frame overtake an earlier posted option/input change.
+    // Publish the budget through the debug lane: an atomic increment that is safe inside a halt (the halt pump serves the
+    // lane), so it is always registered, and the drain order (frame lane first) keeps it behind every earlier post.
     // Count only budgeted frames, including any requests already queued ahead of this one.
-    const uint64_t target = call([this, n] {
+    const uint64_t target = debugCall([this, n] {
         const uint64_t end = advanceDone_.load() + advanceLeft_.load() + n;
         advanceLeft_.fetch_add(n);
         return end;
     });
-    if (!target) return false;   // call() was abandoned before accepting the request
+    if (abandoned()) return false;   // debugCall was abandoned before accepting the request
     std::unique_lock<std::mutex> l(mu_);
-    advanceCv_.wait(l, [&] {
+    const auto pred = [&] {
         return advanceDone_.load() >= target || advanceLeft_.load() == 0 || finished_ ||
                state_.load() == State::Abandoned;
-    });
+    };
+    for (;;) {
+        if (advanceCv_.wait_for(l, std::chrono::milliseconds(16), pred)) break;
+        if (giveUp) {   // outside mu_: the predicate may take any lock of its own
+            l.unlock();
+            const bool g = giveUp();
+            l.lock();
+            if (g) return false;
+        }
+    }
     return advanceDone_.load() >= target;
 }
 
 void EmuThread::loop() {
     threadId_.store(std::this_thread::get_id());
+    // The frame loop is a periodic deadline job; schedule it as one (thread_realtime.h).  The period is a hint for the
+    // deadline policies, so the NTSC field is close enough for PAL too.  Before the handshake: the starter reads the note.
+    [[maybe_unused]] bool realtime = false;
+    if (realtime_.load()) {
+        const rt::Outcome o = rt::makeSelfRealtime(1.0 / 60.0);
+        realtime = o.realtime;
+        realtimeNote_ = o.note;
+    } else {
+        realtimeNote_ = "normal (not requested)";
+    }
 #if defined(__APPLE__)
-    // A default-QoS thread gets timer slack: on the Mac Studio its frame wake-ups ran ~2 ms (p99 ~3 ms) after their due
-    // time, which widens the window of frame end times the pacing grid has to keep off the UI's take point (#967).
-    // The frame loop is what the user is watching; it is as interactive as the main thread.
-    if (preciseWake_.load()) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    // Fallback when the real-time policy was refused or not asked for.  A default-QoS thread gets timer slack: on the
+    // Mac Studio its frame wake-ups ran ~2 ms (p99 ~3 ms) after their due time, which widens the window of frame end
+    // times the pacing grid has to keep off the UI's take point (#967).  The frame loop is what the user is watching;
+    // it is as interactive as the main thread.  (A real-time thread cannot take a QoS class, and does not need one.)
+    if (!realtime && preciseWake_.load()) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     client_->threadStarted();
     {
@@ -151,7 +197,12 @@ void EmuThread::loop() {
     PacingClock clock;
     bool pacing = false;   // the clock was reset since frames last stopped (a pause is never owed time)
     while (!stop_.load()) {
-        if (cmds_.drain(onError) > 0) client_->afterCommands();
+        size_t ran = cmds_.drain(onError, EmuCommands::Lane::Frame);
+        ran += cmds_.drain(onError, EmuCommands::Lane::Debug);
+        // advance()'s budget rides the debug lane: a frame-lane post made before it may have landed between the two
+        // drains above, and must not be overtaken by the frame the budget starts.
+        if (advanceLeft_.load() > 0) ran += cmds_.drain(onError, EmuCommands::Lane::Frame);
+        if (ran > 0) client_->afterCommands();
         if (stop_.load()) break;
         const bool budget = advanceLeft_.load() > 0;
         const bool runnable = client_->canRun();
@@ -176,7 +227,20 @@ void EmuThread::loop() {
             pacing = true;
         }
         double due = in.now;
-        if (!budget) {
+        Client::DisplayGrid g;
+        const bool ticks = !budget && !in.fastForward && client_->displayGrid(in.now, g) && g.period > 0;
+        if (ticks) {
+            // Mode B: the UI's latest tick, or the grid's own once the UI is kTickSlack late for the next one.
+            const double over = in.now - g.tickAt - kTickSlack;
+            in.tickSeq = g.tick + (over > 0 ? (uint64_t)(over / g.period) : 0);
+            in.ticksPerFrame = std::max(1u, g.k);
+            if (!clock.tickDue(in)) {
+                const double backstop = g.tickAt + (double)(clock.nextTick() - g.tick) * g.period + kTickSlack;
+                cmds_.waitUntil(atSec(std::min(std::max(backstop, in.now + 0.0002), in.now + 0.1)));   // or notifyTick()
+                continue;
+            }
+            due = g.tickAt + ((double)in.tickSeq - (double)g.tick) * g.period;   // the vblank this frame starts on
+        } else if (!budget) {
             due = clock.nextDue(in);
             if (due > in.now + 0.0002) {
                 // Precise wake (default): the condition wait (woken by commands) ends kPreciseSec before the due time
@@ -190,8 +254,12 @@ void EmuThread::loop() {
                 continue;
             }
         }
-        clock.frameStarted(in);
-        if (!budget) client_->framePaced(in.now - due, clock);
+        if (ticks) clock.tickStarted(in);
+        else clock.frameStarted(in);   // (an advance() frame in mode B leaves the ticks alone: mode A's state is reset on return)
+        if (!budget) {
+            modeB_.store(ticks);
+            client_->framePaced(in.now - due, clock);
+        }
         client_->runFrame();
         clock.frameEnded(nowSec());
         frames_.fetch_add(1);
@@ -200,6 +268,7 @@ void EmuThread::loop() {
             advanceLeft_.fetch_sub(1);
         }
         dropped_.store(clock.droppedFrames());
+        droppedTicks_.store(clock.droppedTicks());
         steers_.store(clock.steers());
         notifyFrame();
     }

@@ -30,6 +30,23 @@ ctest --test-dir app/build -C Release --output-on-failure   # headless smoke tes
 The binary is `app/build/virtualjaguar` (`app/build/Release/virtualjaguar.exe`
 with the Visual Studio generator).
 
+With CMake 3.21+ the same builds have names, run from `app/`:
+
+```sh
+cd app
+cmake --preset release            # or debug, or nightly (the nightly channel: emulation thread on by default)
+cmake --build --preset release -j
+ctest --preset release            # headless smoke tests
+```
+
+Each preset builds in its own `app/build-<preset>/` and sets its build type and channel on every
+configure. Any other `-D` option stays in the build directory's cache until you change it: an
+earlier `-DVJ_APP_FETCH_LIBRASHADER=OFF` keeps the librashader runtime out of every later build,
+and configure warns about that where a prebuilt exists.
+
+`-DVJ_TV_DEFAULT=auto|manual|off` (default `auto`) is the TV mode setting a fresh config starts on, so a local build starts on Auto
+while release packages are built with `manual` (see [TV mode](#tv-mode)).
+
 FreeType 2.14.1 is the default font rasteriser: it is fetched (pinned, SHA-256 checked), built static with every
 optional library off, so it needs no system libraries. `-DVJ_APP_FREETYPE=OFF` uses Dear ImGui's built-in
 stb_truetype instead (no hinting or anti-aliasing choices); offline builds use `-DFETCHCONTENT_SOURCE_DIR_FREETYPE=<dir>`.
@@ -110,7 +127,7 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
 | A S D, Q E | Jaguar Pro Controller X Y Z and left / right shoulder (keypad 9 8 7, 4 6) |
 | F2 | keypad overlay |
-| Ctrl/Cmd+Shift+T | toggle TV mode (View > TV mode), with or without a game; the game keeps running. Fixed, not rebindable |
+| Ctrl/Cmd+Shift+T | toggle TV mode (View > TV mode), with or without a game; the game keeps running. Fixed, not rebindable (see [TV mode](#tv-mode)) |
 | F4, or a Share hold | the "TV menu / TV mode" action (rebindable): with a game it opens the in-game TV menu, without one it toggles TV mode |
 | F3 | controls overlay: a cheat sheet of your current bindings (also View menu) |
 | Esc / F10 | release the captured mouse; F10 or a click on the picture captures it again (see below) |
@@ -174,12 +191,47 @@ and the BIOS and States tabs. Mouse and keyboard work as before.
 | LT / RT | previous / next initial letter |
 | Right stick | scroll the grid |
 | View / Back | focus the search box |
-| Share or Guide, held | toggle TV mode |
+| Share or Guide, held | toggle TV mode (see [TV mode](#tv-mode)) |
 
 The buttons follow the controller family, detected automatically: Xbox, PlayStation, Nintendo Switch
 (A on the right confirms, B on the bottom goes back) and MFi / generic (Xbox layout). A custom layout
 is under **Settings > Input**: pick one controller in the device list, then **Menu buttons** (a Family
 choice, and **Set** / **Default** per button). **Reset menu buttons** clears that controller's overrides.
+
+### TV mode
+
+TV mode is a 10-foot look for a pad and a TV: large tiles and text, one focus ring, and a pad-driven Home,
+Library, Achievements and Settings, plus an in-game menu (see the rows in the key table above). With a game running it
+only changes which screen stands behind the game; the game keeps running.
+
+The **TV mode** setting has three values, under **Settings > Interface** (and **TV Settings > Interface** in TV mode itself):
+
+- **Off:** TV mode never turns on: F4, the Share hold, Ctrl/Cmd+Shift+T and `--tv` do nothing without a game. With a game running
+  the TV-menu button still opens the in-game menu.
+- **Manual:** only when you ask: View > TV mode, Ctrl/Cmd+Shift+T, the TV-menu button (F4, or a hold of the pad's Share / Capture / Mic button, or of Guide on a pad
+  without one, with no game running) or `--tv`. The on/off state is remembered for the next start (`--tv` is not).
+- **Auto:** also on its own, with two checkboxes you can untick, **Turn on in fullscreen** and **Turn on when a controller is used**.
+
+Auto in one paragraph: entering fullscreen turns TV mode on and leaving it turns it off; a controller press on a navigation
+button (D-pad, face buttons, LB / RB, Start) in the library, with no game running, turns it on, and that press does nothing
+else. A TV mode the controller started is handed back to the desktop by 32 px of mouse movement or by typing (a printable key
+without Ctrl, Cmd or Alt; F-keys, Esc, Enter and shortcuts never count), unless fullscreen is holding it. Turning it on or off by
+hand wins until the next fullscreen change or controller press.
+
+**Build default.** A fresh config starts on the build's default, which is Auto for a local build (the CMake default) and for
+nightly builds and the other CI packages, and Manual for release packages; `-DVJ_TV_DEFAULT=auto|manual|off` sets it when
+configuring. Nothing is stored until you change the setting in the UI, so a build can move its default under people who never
+chose one; **Reset group** at the top of Settings > Interface returns to the build default.
+
+**First-use hint.** Under Manual, the first controller press in the desktop library shows a 6-second toast naming the buttons
+for this pad, as the pad names the button ("Press Share (hold) or F4 for TV mode" on an Xbox pad; "Mic (hold)" on a DualSense,
+"Capture (hold)" on a Switch Pro Controller, "Guide (hold)" on a pad without Share). It shows once per install
+(`ui.tv_hint_shown`), never under Auto or Off, and **Reset group** on Settings > Interface shows it once more.
+
+**Starting and the hold.** `--tv` starts with TV mode on (when the setting is not Off). The TV-menu button on a pad is a hold
+of 500 ms, so a short Share tap keeps opening the keypad overlay. Limit: Guide held opens the TV menu on a pad with no Share
+button, and Guide is also the keypad's `#`, so a keypad chord that holds `#` (such as `*` + `#`) needs the keypad overlay, a pad
+with Share, or that binding removed (the controls screen says so next to the binding).
 
 ### Devices, players and the mouse
 
@@ -481,7 +533,7 @@ cartridge runs, and the Core options tab is empty before the first load).
    miss is remembered for 30 days; a mirror miss only until the app quits, so art the site gains shows on the next
    launch. Set `library.art_mirror` in `config.ini`
    to another base URL, or to an empty value to turn the mirror off.
-   **Download box art** turns all downloading off.
+   **Download art and cheat packs** turns all downloading off.
    **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
    downloaded art. A tile with no art is a drawn card with the game's title and a `CD` / `Cart`
    badge. Right-click a tile > **Set cover image...** (PNG) to give it one, or drop a PNG onto the
@@ -527,11 +579,21 @@ it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library
 busy UI no longer stalls the picture. The game runs at the true Jaguar rate (60.05 Hz, PAL 50.08 Hz), paced by the
 sound card's clock, and the display shows the newest frame (on a 60 Hz panel the true-rate drift alone skips one frame about every 18 s; in this phase frames that finish
 close to the take point also repeat or skip more often than in the single-thread loop, roughly 1 to 2.5 a second as
-measured on a 60 Hz panel, which the display-locked mode planned for a later phase addresses: that is why the setting is
-off by default).
-The setting takes effect at the next start and is **off** by default (nightly builds will turn it on once nothing is
-switched off while it runs). `--emu-thread on|off` decides for one run; headless runs stay single-threaded unless it
-says `on`.
+measured on a 60 Hz panel; **Frame pacing: Match display**, below, removes both).
+The setting takes effect at the next start. It is **on** by default in every build since 4.0 (releases, nightlies and
+`dev` builds alike; About shows the build channel, and the log prints `[emu] channel=..., emulation thread default on`).
+A stored choice always wins in both directions; **Reset group** in Settings > Interface returns to the default. To run
+without it, turn it off in Settings (persistent) or start with `--emu-thread off` (one run); if the thread cannot start,
+the app falls back to the single-thread loop and says so in the log. Headless runs stay single-threaded unless
+`--emu-thread on` says otherwise.
+
+When it starts, the thread asks the OS to schedule it as the periodic deadline job it is: on macOS the time-constraint
+(real-time) policy, which runs ahead of every QoS class and on performance cores; on Windows time-critical priority plus
+the MMCSS "Games" task; on Linux `SCHED_RR` at a low real-time priority, which the kernel refuses unless `RLIMIT_RTPRIO`
+or rtkit allows it. On a loaded host this is the difference between the emulation keeping a core and sharing one (an M2
+Max at load 250 ran the same Doom frame in 5.4 ms with a core of its own and 18-20 ms without). The log's
+`[emu] emulation thread on; scheduling ...` line says what the thread got; `--emu-priority normal` skips the request for
+one run.
 
 With vsync, the window waits until just before each vblank, passing input to the emulation as it arrives, and then
 shows the newest frame (the late latch, `src/late_latch.h`). It stays off until it has found where the vblanks are,
@@ -540,16 +602,54 @@ and lets go by itself if frames keep missing them; the log says `[emu] late latc
 `VJ_PERF_CSV=path` writes one row per measured iteration when the run ends, with the `input_lat_ms` (event to the
 emulation's poll) and `present_lat_ms` (event to the swap that shows it) columns; `--perf-input` injects a key every
 30 iterations so they have samples. `VJ_PERF_TRACE=prefix` adds `prefix-emu.csv` (each emulated frame: due, start, end,
-trim, audio queue) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace_summary.py prefix` counts
-the frames really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
+trim, audio queue, and last the `fill_ns` the Tools windows' view copy took after it; `end_ns` is taken before that
+copy) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace_summary.py prefix` counts the frames
+really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
 grid's phase once whenever frame ends would straddle the take point, so each 60.05-on-60 Hz crossing is one skip rather
 than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
 
-While it is on, this version switches off the Tools (debugger) windows and the GDB stub option; they move to the
-emulation thread in the next phase. RetroAchievements and netplay work as usual: achievements are checked on the
-emulation thread after every frame, and link play's peer waits block only that thread. A load or a state save that
+**Settings > Video > Frame pacing** (`video.pacing`, #1038) picks the clock the emulation thread follows. **Jaguar
+rate** (the default) is the above: the console's own 60.05 / 50.08 Hz, kept by the sound card. **Match display** runs
+one emulated frame on every refresh (every second refresh at 120 Hz) where the display's measured rate is within 0.3%
+of a whole multiple of the game's: 60, 59.94, 120 and 119.88 Hz for NTSC games, 50 and 100 Hz for PAL. The sound plays
+that much faster or slower (0.09% on a 60 Hz panel, inaudible), the Jaguar rate's periodic repeat or skip goes away,
+and a frame starts right after the swap that hands it the newest input, so event to present matches the single-thread loop even
+for heavy games. It needs vsync and the late latch's lock on the vblanks, and settles for about two seconds after the
+start or a display change. Elsewhere (144 or 75 Hz, a PAL game on 60 Hz, vsync off, a refresh that is not steady), and
+always during fast-forward and link play, it uses the Jaguar rate; the setting shows why ("Now: ..."), and a lasting
+fallback shows a message once. The log says `[emu] frame pacing: mode B (locked)` / `mode A (<reason>)` at each
+change. A window that stops swapping (a modal, a sleeping display) does not stop the game: the emulation keeps the
+display's grid on its own, and returns to the Jaguar rate after a quarter of a second. `--pacing jaguar|display`
+chooses for one run without saving. The single-thread loop ignores the setting (it is already display-paced).
+`VJ_PERF_TRACE`'s emulation rows end with `mode`, `tick_seq`, `ticks_dropped` and `lock_reason`, which the summary
+script counts.
+
+While it is on, every Tools window works (their data is copied by the emulation thread after each frame, and their edits
+run on it), and so do Break, Step, breakpoints and the GDB stub. The halt is served by the emulation thread in 4 ms slices
+and the window mirrors it once per frame, so the UI keeps drawing while the game is parked (a gdb session holding a halt
+no longer freezes it); settings and cheats changed meanwhile apply after Continue, and anything that would reload or save
+the game detaches the debugger first or says why it cannot. With the stub enabled the app keeps a silent debugger host so a
+gdb halt shows as "HALTED by gdb"; `virtualjaguar_gdb_wait` parks the boot until the gdb client sends `c` (connecting alone does not continue it) or F9 continues. RetroAchievements
+hardcore locks the GDB stub to `disabled` at load, so turning hardcore on while the stub is enabled reloads the game. A
+headless run (`--headless`) ends cleanly on SIGINT or SIGTERM even while gdb holds a halt; a second signal kills it. RetroAchievements and
+netplay work as usual: achievements are checked on the emulation thread after every frame, and link play's peer waits
+block only that thread. An action that has to reach the core, such as a Tools-window edit, a load or a state save, waits
+for the frame in progress to end, including that frame's peer wait, which link play bounds to about one frame. One that
 takes longer than a quarter of a second shows a spinner instead of freezing the window. A log line
 `[core_host] owner violation: ...` means a UI path still called into the core directly: that is a bug, please report it.
+
+### Reporting a threading problem
+
+The emulation thread is the default since 4.0 (#1039). If something goes wrong only with it on (stutter, a hang, a crash,
+lagging input, skipping sound), compare with `--emu-thread off`, then comment on #1039 or open an issue that links it, with:
+
+- The first line of **Help > About**: the version and build channel, such as `Virtual Jaguar 4.0.0 (nightly build)`.
+- The **Now: ...** line under **Settings > Video > Frame pacing**: which clock the thread follows, and why.
+- The display's refresh rate, the OS and the GPU.
+- Whether it also happens single-threaded: turn the setting off and restart, or run once with `--emu-thread off`. If it
+  happens both ways it is not a threading problem, but it is still worth reporting; say so.
+- If you started the app from a terminal, its lines starting `[emu]`, `[core_host]` or `[stall]`. Any `owner violation`
+  line is a bug on its own.
 
 ## Running several instances
 
@@ -641,6 +741,21 @@ without an emulator binary or SDK. It reports unsupported operations, leaves
 every cheat disabled, and binds the set to the matching cartridge CRC32.
 The app blocks revision mismatches and malformed/duplicate guards; legacy
 unbound `.cht` files continue to work. No community script pack is bundled.
+
+**Community cheats.** The Cheats window has a "Community cheats" section for the
+packs the project publishes at `jaguar.provenance-emu.com/cheats/` (converted from
+[jguffer's BigPEmu scripts](https://github.com/jguffer/BigPEmu_Scripts), credited in the
+section). Opening the window with a cartridge loaded asks the site for its pack index
+(at most every 6 hours; **Check for updates** asks at once); **Install** downloads the pack
+named by the cartridge's CRC32, checks its size and SHA-256 and its revision guard, and only
+then writes it to `<data>/cheats/community/packs/<CRC32>.cht` (with a `.json` record
+beside it). Every cheat starts off, **Update** keeps the cheats whose text did not change,
+**Remove** deletes the pack. Packs cover cartridges only, are found by CRC32 alone (the
+database set above is independent) and are inert in RetroAchievements hardcore mode.
+Library > **Download art and cheat packs** is the single downloads switch (`library.art`);
+with it off the section shows only what is installed. `cheats.community.url` in `config.ini`
+points the store at another base URL (a local test server). Headless, `--cheats-community-install`
+does the same fetch and install for the loaded cartridge.
 
 ## RetroAchievements
 
@@ -856,6 +971,7 @@ asks for the next move whenever the last one has played out, and presses the cho
   `ws://localhost:8000` (Randy). Only `ws://`; no TLS.
 - Config keys `neuro.enabled`, `neuro.url`, `neuro.auto_force`, `neuro.force_interval`, `neuro.game_name`.
 - The socket lives on a background thread and reconnects by itself; the game never waits on it.
+- Works with the emulation thread on or off: the buttons are played on the thread that polls input (see docs/neuro.md).
 - [docs/neuro.md](../docs/neuro.md) has the actions, the profile format and testing with Randy.
 - The code is in `src/neuro/`; `-DVJ_APP_NEURO=OFF` builds the app without it (no tab, no `--neuro`).
 
@@ -892,6 +1008,7 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 [`docs/app-debug-tools.md`](../docs/app-debug-tools.md).
 
 - **Memory viewer** (hex / ASCII grid over every bus region, go-to, search, change highlighting, edits, "Add as cheat")
+  with a raw **Bitmap** mode (width/depth hints, live or staged CLUT, PNG export),
   and **Palette (CLUT)** (256 swatches as CRY or RGB16, with an editor).
 - **Cheat scanner**: find an address by narrowing (changed / increased / equal to ...), then keep it as an ordinary cheat.
 - **Object list**: the whole display list the Object Processor walks, decoded, with a bitmap preview, an outline over the
@@ -905,7 +1022,7 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 Writes go to RAM freely; hardware registers need "Allow register writes"; the CD registers (`$DFFF00-$DFFFFF`) and
 `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD` are never written from here.  Everything greys out (and closes) while
 RetroAchievements hardcore is on.  Extra app instances keep their own windows but do not dump textures.  Developers can
-open one at start-up: `--show-window memory|palette|scanner|objects|blitter|textures|scope` (with `--screenshot`).
+open one at start-up: `--show-window memory|bitmap|palette|scanner|objects|blitter|textures|scope` (with `--screenshot`).
 
 ## Smoke tests
 
@@ -960,7 +1077,7 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   `devices_unit` covers the show / hide policy (click, tap, Esc, F3, timeout).
 
 - `debug_*`: the debug tools.  `debug_session_unit` and the per-tool unit tests (`debug_memory_unit`, `debug_scan_unit`,
-  `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`) run the pure logic against a fake core
+  `debug_op_unit`, `debug_bitmap_unit`, `debug_texture_unit`, `debug_blitter_unit`) run the pure logic against a fake core
   (`tests/debug_mock.h`); `debug_memory_ui_smoke` and `debug_scan_ui_smoke` draw the windows headlessly over it;
   `debug_e2e`, `debug_scan_e2e` and `debug_op_e2e` drive the real core on `yarc.j64` (halt / step / continue, a found counter
   kept as a working cheat, the display list captured by the core).
@@ -1039,12 +1156,15 @@ The tests labelled `emu_thread` (`ctest -L emu_thread`) cover the emulation thre
 | `cmake/VJShaders.cmake` | pinned header fetch, optional prebuilt runtime, shader tests |
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
 | `src/emu_thread.*`, `src/emu_commands.h` | the emulation thread (#967): its loop, `post` / `call` / `advance`, the ordered command queue |
-| `src/pacing_clock.h` | mode A pacing: the core's period trimmed by the audio queue (the sound card as master clock) |
+| `src/pacing_clock.h` | the emulation thread's pacing: mode A, the core's period trimmed by the audio queue (the sound card as master clock); mode B, a frame every k display ticks with owed ticks dropped |
+| `src/display_lock.h` | Frame pacing's lock verdict (mode B, #1038): which displays lock at which k, the fallback reasons, the hysteresis |
 | `src/frame_exchange.h`, `src/frame.h` | finished frames from the emulation thread to the UI (triple buffer, content epochs) |
 | `src/emu_snapshot.h` | what the emulation thread publishes for the UI: the per-frame snapshot and the core-event stream (log lines, events, option writes) |
 | `src/ach_event.*` | an rc_client event copied, so it can be applied on the UI thread |
 | `src/precise_sleep.h` | short sleeps that honour sub-tick durations (a high-resolution waitable timer on Windows) |
 | `src/input_snapshot.h` | the newest input from the UI thread to the core's poll (pointer motion exactly once) |
+| `src/debug/debug_core.*` | the emulation-thread half of the debug session: the debug interface's wrappers and, in the next phase, the halt |
+| `src/debug/debug_views.*` | the per-window requests (memory range, registers, disassembly, OP list, blit log) the emulation thread fills after each frame, and the buffers the windows read |
 | `src/late_latch.h` | the late latch: when the threaded window loop stops waiting before a vblank (vblank tracking, UI build budget) |
 | `src/input.*` | keyboard and gamepad snapshots to libretro input |
 | `src/remap.*`, `src/remap_ui.cpp` | profiles, per-game overrides, keypad delivery, overlay, bind capture, and their UI |

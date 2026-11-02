@@ -50,8 +50,9 @@ public:
     void poll(bool captureKeyboard, unsigned overlayTicks = 1);
     // The result of the last poll() (threaded: what the UI thread publishes to InputSnapshot).
     const CoreInput& coreInput() const { return core_; }
-    // Added to Player 1 by every poll(): what the Neuro API client presses this frame (neuro_agent.h).
-    ControlSet agentControls;
+    // Adds what the Neuro API client presses in this emulated frame to Player 1 (neuro_actions.h: pollAgent), after
+    // poll().  Nothing pressed leaves the result untouched.
+    void addAgentControls(ControlSet c);
     // retro_input_state_t for every device (joypad, keyboard, mouse, analog, light gun).
     int16_t state(unsigned port, unsigned device, unsigned index, unsigned id) const;
 
@@ -99,6 +100,11 @@ public:
     bool takeHelpToggle() { bool h = helpToggle_; helpToggle_ = false; return h; }
     // The TV-menu button was pressed (plain binding) or held (a hold binding reached kHoldMs) since the last call.
     bool takeTvMenuToggle() { bool t = tvMenu_; tvMenu_ = false; return t; }
+    // What to press for the TV menu, as a person reads it (the first-use hint): that pad's first C_TVMENU binding, hold bindings
+    // first ("Share (hold)", "Guide (hold)", "Paddle P1"), and the keyboard profile's first plain C_TVMENU key ("F4").  "" = none
+    // bound, or (the pad) an id that is not open.
+    std::string tvMenuBindingText(SDL_JoystickID id) const;
+    std::string tvMenuKeyText() const;
 
     // ---- dual-use buttons (hold_arbiter.h) -----------------------------------------------------
     // Every UI frame, also while paused: the holds that reached the threshold fire the TV-menu toggle.  `live` = a

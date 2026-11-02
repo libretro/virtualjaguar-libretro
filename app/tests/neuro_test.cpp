@@ -9,10 +9,15 @@
 //                        it, and reconnects; hardcore blocks it (no connect, input released, connects again when
 //                        hardcore ends); a wrong Sec-WebSocket-Accept, an oversize / masked / reserved-bit frame
 //                        and a flood are handled.  Skipped (77) on Windows.
+//   neuro_test app <virtualjaguar> <rom> <on|off>
+//                        the real app, headless, against a fake server: a 30-frame press is played by the core's
+//                        input poll and counted in the run's report.  Skipped (77) on Windows.
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -22,7 +27,10 @@
 #include "neuro_agent.h"
 #include "neuro_json.h"
 #include "neuro_link.h"
+#include "neuro_watch.h"
 #include "neuro_ws.h"
+#include "debug_session.h"   // DebugSession::kDramSize
+#include "debug_views.h"
 
 #ifndef _WIN32
 #include <arpa/inet.h>
@@ -231,6 +239,130 @@ static void testQueue() {
     CHECK(!q.frame().any());
 }
 
+static void testQueueProgram() {
+    InputQueue q;
+    CHECK(q.version() == 0 && q.lineage() == 0);
+    CHECK(q.enqueue({{keys({C_B}), 3}, {keys({C_A}), 2}}));
+    CHECK(q.version() == 1);
+    q.setHold(keys({C_C}));
+    CHECK(q.version() == 2);
+    q.setHold(keys({C_C}));
+    CHECK(q.version() == 2);   // the same hold changes nothing
+    AgentProgram p = q.program(7, true);
+    CHECK(p.gen == 7 && p.enabled && p.hold == keys({C_C}) && p.steps.size() == 2 && p.steps[0].frames == 3);
+    CHECK(p.firstFrame == 0 && p.lineage == q.lineage());
+    q.trim(4);
+    CHECK(q.queuedFrames() == 1 && q.firstFrame() == 4);
+    p = q.program(8, true);
+    CHECK(p.steps.size() == 1 && p.firstFrame == 4);
+    CHECK(q.peek().test(C_A));
+    CHECK(q.version() == 2);   // trim is not a change the replica needs to hear about
+    q.trim(100);
+    CHECK(!q.busy() && q.firstFrame() == 5);
+    const uint64_t v = q.version();
+    q.clear();
+    CHECK(q.lineage() == 1 && q.firstFrame() == 0 && q.version() > v && !q.hold().any());
+}
+
+static AgentProgram prog(uint64_t gen, uint64_t lineage, uint64_t first, std::vector<AgentStep> steps,
+                         ControlSet hold = ControlSet(), bool enabled = true) {
+    AgentProgram p;
+    p.gen = gen;
+    p.lineage = lineage;
+    p.firstFrame = first;
+    p.enabled = enabled;
+    p.hold = hold;
+    p.steps = steps;
+    return p;
+}
+
+static std::string pat(AgentPlayer& pl, unsigned n, Ctl c) {   // one char per poll: '#' when c is pressed
+    std::string s;
+    for (unsigned i = 0; i < n; i++) s += pl.frame().test(c) ? '#' : '.';
+    return s;
+}
+
+// What the app's input poll does, for a test with no core.
+struct Replica {
+    InputSnapshot snap;
+    AgentPlayer player;
+    ControlSet poll(Agent& a) {
+        a.publishTo(snap);
+        const ControlSet c = pollAgent(snap, player);
+        a.absorb(snap.agentProgress());
+        return c;
+    }
+};
+
+static void testAgentPlayer() {
+    const ControlSet B = keys({C_B}), A = keys({C_A}), UP = keys({C_UP}), none;
+    const std::vector<AgentStep> three = {{B, 3}, {none, 3}, {B, 3}};
+    {   // 1: presses for exactly N polls
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 0, three));
+        CHECK(pat(pl, 12, C_B) == "###...###...");
+        AgentPlayer f;
+        f.load(prog(1, 1, 0, three));
+        pat(f, 3, C_B);
+        CHECK(f.progress().played == 3 && !f.progress().done);
+        pat(f, 6, C_B);
+        CHECK(f.progress().played == 9 && f.progress().done);
+    }
+    {   // 2: the hold persists after the steps run out
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 0, {{B, 2}}, A));
+        CHECK(pl.frame() == keys({C_A, C_B}) && pl.frame() == keys({C_A, C_B}));
+        for (int i = 0; i < 4; i++) CHECK(pl.frame() == A);
+        CHECK(pl.progress().pressed == A && pl.progress().played == 2 && pl.progress().done);
+        // 3: a reload with a new lineage replaces everything
+        pl.load(prog(9, 8, 0, {{A, 2}}));
+        CHECK(pl.frame() == A);
+        CHECK(pl.progress().played == 1 && pl.progress().lineage == 8 && pl.progress().gen == 9 && pl.gen() == 9);
+    }
+    {   // 4: appending and changing the hold mid-play equal one uninterrupted queue
+        InputQueue ref;
+        CHECK(ref.enqueue({{B, 6}, {UP, 2}, {none, 2}, {B, 1}}));
+        std::vector<ControlSet> want;
+        for (int i = 0; i < 11; i++) want.push_back(ref.frame());
+        AgentPlayer pl;
+        std::vector<ControlSet> got;
+        pl.load(prog(1, 7, 0, {{B, 6}}));
+        for (int i = 0; i < 2; i++) got.push_back(pl.frame());
+        pl.load(prog(2, 7, 0, {{B, 6}, {UP, 2}}));
+        for (int i = 0; i < 3; i++) got.push_back(pl.frame());
+        pl.load(prog(3, 7, 5, {{B, 1}, {UP, 2}, {none, 2}, {B, 1}}));   // the UI trimmed the 5 played frames
+        for (int i = 0; i < 6; i++) got.push_back(pl.frame());
+        CHECK(got == want);
+        CHECK(pl.progress().played == 11);
+        pl.load(prog(4, 7, 11, {}, keys({C_C})));
+        CHECK(pl.frame() == keys({C_C}) && pl.progress().played == 11);
+    }
+    {   // 5: disabled does not advance
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 0, {{B, 4}}));
+        pl.frame();
+        pl.load(prog(2, 1, 0, {{B, 4}}, ControlSet(), false));
+        for (int i = 0; i < 3; i++) CHECK(!pl.frame().any());
+        CHECK(pl.progress().played == 1);
+        pl.load(prog(3, 1, 0, {{B, 4}}));
+        CHECK(pat(pl, 3, C_B) == "###" && pl.progress().played == 4);
+    }
+    {   // 6: a firstFrame ahead of played is clamped up
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 5, {{B, 3}}));
+        CHECK(pat(pl, 4, C_B) == "###." && pl.progress().played == 8);
+    }
+    {   // 7: pollAgent
+        InputSnapshot s;
+        AgentPlayer pl;
+        s.publishAgent(prog(1, 1, 0, {{B, 2}}));
+        CHECK(pollAgent(s, pl) == B);
+        CHECK(pollAgent(s, pl) == B);
+        CHECK(pollAgent(s, pl) == none);
+        CHECK(s.agentProgress().played == 2 && s.agentProgress().done && s.agentProgress().gen == 1);
+    }
+}
+
 static unsigned drain(InputQueue& q, Ctl c, unsigned limit = 5000) {
     unsigned n = 0;
     for (unsigned i = 0; i < limit && q.busy(); i++)
@@ -411,11 +543,279 @@ static void testLinkProfileSwitch(Link& l, ActionSet& a, std::vector<Json>& sent
     CHECK(!l.connected() && !l.forcePending());
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Watches read from the bytes of one DebugViews request (#967 phase 3c): watchValue with a base, Agent::watchRange,
+// stateText over GameState::watchBytes.
+static void writeFile(const std::filesystem::path& p, const std::string& text) {
+    std::ofstream f(p, std::ios::binary);
+    f << text;
+}
+
+static void testWatches() {
+    uint8_t b[4] = {0x12, 0x34, 0x00, 0x07};   // bytes of a request whose first address is 0x1F0000
+    Watch w;
+    w.address = 0x1F0000;
+    w.size = 2;
+    w.format = "bcd";
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "1234");
+    w.address = 0x1F0003;
+    w.size = 1;
+    w.format = "dec";
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "7");
+    w.address = 0x1F0004;
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "?");   // past the end
+    w.address = 0x1F0002;
+    w.size = 4;
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "?");   // starts inside, ends past the end
+    w.address = 0x1EFFFF;
+    w.size = 1;
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "?");   // before the base
+    CHECK(watchValue(w, nullptr, 0, 0) == "?");
+    w.address = 0x1F0000;
+    w.size = 2;
+    w.format = "hex";
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "0x1234");
+    CHECK(watchValue(w, b, sizeof b) == "?");   // the 3-argument form is base 0: 0x1F0000 is far past 4 bytes
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "vj-neuro-watch";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    // (A distinct title: the built-in Tempest 2000 profile comes first and would be the one picked.)
+    writeFile(dir / "t.json", "{\"game_name\":\"T\",\"titles\":[\"Watch Test\"],\"watch\":[{\"name\":\"score\",\"address\":\"0x100\","
+                              "\"size\":2,\"format\":\"bcd\"},{\"name\":\"lives\",\"address\":256,\"size\":1}]}");
+    writeFile(dir / "u.json", "{\"game_name\":\"U\",\"titles\":[\"Wide\"],\"watch\":[{\"name\":\"score\",\"address\":\"0x100\","
+                              "\"size\":2,\"format\":\"bcd\"},{\"name\":\"far\",\"address\":\"0x1F0000\",\"size\":1}]}");
+    writeFile(dir / "v.json", "{\"game_name\":\"V\",\"titles\":[\"Bare\"]}");
+    Agent agent;
+    for (const std::string& problem : agent.loadProfiles(dir.string())) {
+        std::printf("FAIL profile: %s\n", problem.c_str());
+        g_fail++;
+    }
+    uint32_t base = 77;
+    unsigned len = 77;
+    CHECK(!agent.watchRange(base, len));   // no profile yet
+    AgentSettings s;
+    s.enabled = true;
+    s.url = "ws://127.0.0.1:9";   // nothing listens; the worker just fails to connect
+    agent.configure(s);
+    GameState g;
+    g.loaded = true;
+    g.title = "Watch Test";
+    agent.tick(0.0, g);
+    CHECK(agent.watchRange(base, len) && base == 0x100 && len == 2);
+    g.watchBase = 0x100;
+    g.watchBytes = {0x12, 0x34};
+    std::string st = agent.stateText(g);
+    CHECK(st.find("- score: 1234") != std::string::npos);
+    CHECK(st.find("- lives: 18") != std::string::npos);
+    g.watchBytes.clear();
+    st = agent.stateText(g);
+    CHECK(st.find("- score: ?") != std::string::npos && st.find("- lives: ?") != std::string::npos);
+
+    g.title = "Wide";   // the second watch is 1 MiB away: the span is wider than one Memory request
+    agent.tick(0.1, g);
+    CHECK(agent.watchRange(base, len) && base == 0x100 && len == 0x1EFF01 && len > kMaxWatchSpan);
+    CHECK(kMaxWatchSpan == DebugViews::kMaxMemoryBytes);
+
+    g.title = "Bare";   // a profile without watches
+    agent.tick(0.2, g);
+    CHECK(!agent.watchRange(base, len));
+    g.loaded = false;
+    agent.tick(0.3, g);
+    CHECK(!agent.watchRange(base, len));
+    fs::remove_all(dir, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// WatchFeed against a real DebugViews and a fake core whose byte at address a is (a ^ salt) & 0xFF.  Every guard of
+// the feed has a case here; the clock is passed in, so nothing waits.
+struct FakeCore {
+    static inline unsigned salt = 0;
+    static inline bool fail = false;
+    static int peek(unsigned addr, unsigned char* d, unsigned n) {
+        if (fail) return -1;
+        for (unsigned i = 0; i < n; i++) d[i] = (unsigned char)((addr + i) ^ salt);
+        return (int)n;
+    }
+    static unsigned frame() { return 3; }
+    static vj_debug_iface make() {
+        vj_debug_iface i{};
+        i.size = sizeof i;
+        i.version = VJ_DEBUG_IFACE_VERSION;
+        i.peek = &FakeCore::peek;
+        i.frame_number = &FakeCore::frame;
+        return i;
+    }
+};
+
+static std::vector<uint8_t> pattern(unsigned base, unsigned len, unsigned salt) {
+    std::vector<uint8_t> v(len);
+    for (unsigned i = 0; i < len; i++) v[i] = (uint8_t)((base + i) ^ salt);
+    return v;
+}
+
+static void testWatchFeed() {
+    const vj_debug_iface iface = FakeCore::make();
+    FakeCore::fail = false;
+    FakeCore::salt = 0x5A;
+
+    {   // 1: the first update sets a request; nothing to show before a fill; then the fake's bytes
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        CHECK(v.count() == 1 && f.id() != DebugViews::kNoId);
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 1.0);   // still not filled: "?"
+        CHECK(f.bytes().empty());
+        CHECK(v.fill(&iface, 1) == 1);
+        f.update(v, true, 0x1000, 8, 1.3);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A) && f.base() == 0x1000);
+        CHECK(v.count() == 1);   // an unchanged range does not set again
+    }
+    {   // 2: a range change never adopts the old range's bytes
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        const DebugViews::Id idA = f.id();
+        f.update(v, true, 0x2000, 16, 0.31);   // B, not filled yet
+        CHECK(f.id() != idA && v.count() == 1);
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x2000, 16, 5.0);    // the clock moves on, still no fill
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 2);
+        f.update(v, true, 0x2000, 16, 5.3);
+        CHECK(f.bytes() == pattern(0x2000, 16, 0x5A) && f.base() == 0x2000);
+        // The same start with a different length is another range too.
+        f.update(v, true, 0x2000, 24, 5.6);
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 3);
+        f.update(v, true, 0x2000, 24, 5.9);
+        CHECK(f.bytes() == pattern(0x2000, 24, 0x5A));
+    }
+    {   // 3: a content switch (epoch bump) turns the state text back to "?"
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(!f.bytes().empty());
+        v.bumpEpoch();
+        f.update(v, true, 0x1000, 8, 0.31);   // inside the read interval: the previous game's bytes still go at once
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 2.0);   // later: unreadable until the copier fills in the new epoch
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 2);
+        f.update(v, true, 0x1000, 8, 2.3);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        // dropIfStale: the caller (neuroTick) lends bytes() before update runs, so the check stands alone.
+        v.bumpEpoch();
+        CHECK(!f.bytes().empty());   // nothing looked yet
+        f.dropIfStale(v);
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 3);           // the new epoch is read at once: dropping reset the clock
+        f.update(v, true, 0x1000, 8, 2.31);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        f.dropIfStale(v);            // current bytes stay
+        CHECK(!f.bytes().empty());
+    }
+    {   // 4: the buffer is read at most every 0.25 s
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.5);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        FakeCore::salt = 0x33;
+        v.fill(&iface, 2);   // a refill with different bytes
+        f.update(v, true, 0x1000, 8, 0.6);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));   // 0.1 s later: not read
+        f.update(v, true, 0x1000, 8, 0.74);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        f.update(v, true, 0x1000, 8, 0.75);   // exactly 0.25 s
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x33));
+        FakeCore::salt = 0x5A;
+    }
+    {   // 5: a buffer that is not ok, or that answers some other request, is not adopted
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        FakeCore::fail = true;
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(f.bytes().empty());   // peek failed: ok = false
+        FakeCore::fail = false;
+        v.fill(&iface, 2);
+        f.update(v, true, 0x1000, 8, 0.4);
+        CHECK(f.bytes().empty());   // the rejected read set the clock: a copy is not made every UI frame
+        f.update(v, true, 0x1000, 8, 0.54);
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 0.55);   // 0.25 s after the read that was rejected
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        // Another request behind the feed's back (the same id): other address, then another kind.
+        ViewRequest other;
+        other.kind = ViewRequest::Kind::Memory;
+        other.addr = 0x9000;
+        other.len = 8;
+        v.set(f.id(), other);
+        v.fill(&iface, 3);
+        f.update(v, true, 0x1000, 8, 1.0);
+        CHECK(f.bytes().empty());   // its request is not the one asked for
+        other.addr = 0x1000;
+        other.len = 4;   // right address, wrong length
+        v.set(f.id(), other);
+        v.fill(&iface, 4);
+        f.update(v, true, 0x1000, 8, 1.5);
+        CHECK(f.bytes().empty());
+        other.kind = ViewRequest::Kind::Dram;
+        v.set(f.id(), other);
+        v.fill(&iface, 5);
+        f.update(v, true, 0x1000, 8, 2.0);
+        CHECK(f.bytes().empty());   // 2 MiB of a Dram request, not 8 bytes of a Memory one
+    }
+    {   // 6: want = false releases; a wide range is a Dram request
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(!f.bytes().empty() && v.count() == 1);
+        f.update(v, false, 0, 0, 0.4);
+        CHECK(v.count() == 0 && f.bytes().empty() && f.id() == DebugViews::kNoId);
+        f.update(v, false, 0, 0, 0.5);   // already released: nothing happens
+        CHECK(v.count() == 0);
+
+        f.update(v, true, 0x100, 0x1EFF01, 1.0);   // wider than kMaxWatchSpan
+        CHECK(v.count() == 1);
+        v.fill(&iface, 2);
+        f.update(v, true, 0x100, 0x1EFF01, 1.3);
+        CHECK(f.bytes().size() == DebugSession::kDramSize && f.base() == 0 &&
+              f.bytes()[0x1F0123] == (uint8_t)(0x1F0123 ^ 0x5A));   // a non-zero low byte: an all-salt buffer fails
+        const DebugViews::Id dramId = f.id();
+        f.update(v, true, 0x200, 0x1EFE01, 1.4);   // another wide range: still the same Dram request
+        CHECK(f.id() == dramId && v.count() == 1 && !f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 1.5);         // back to a narrow one: a fresh Memory request
+        CHECK(f.id() != dramId && v.count() == 1 && f.bytes().empty());
+        v.fill(&iface, 3);
+        f.update(v, true, 0x1000, 8, 2.0);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A) && f.base() == 0x1000);
+        f.release(v);   // neuroShutdown
+        CHECK(v.count() == 0 && f.bytes().empty());
+        f.release(v);
+        CHECK(v.count() == 0);
+    }
+}
+
 // The Agent against a link that is "connected" by hand (no socket): Player 1's buttons that cannot reach the game
 // (the in-game menu is open, P1 is a mouse) are refused with the reason and never queued, and what was queued is
 // dropped, so the server is not told "success" for input that would be thrown away.
 static void testAgentGating() {
     Agent agent;
+    Replica rep;
     std::vector<Json> sent;
     agent.link().send = [&](const std::string& m) { sent.push_back(parsed(m)); };
     AgentSettings s;
@@ -432,20 +832,20 @@ static void testAgentGating() {
     const char* press = "{\"command\":\"action\",\"data\":{\"id\":\"1\",\"name\":\"press_buttons\",\"data\":\"{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":30}\"}}";
     agent.link().onMessage(press);
     CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool());
-    CHECK(agent.frame().test(C_B));   // playing
+    CHECK(rep.poll(agent).test(C_B));   // playing
 
     // The menu opens: what is queued goes, the AI is told, and nothing new is accepted.
     sent.clear();
     g.inputBlock = "the in-game menu is open";
     agent.tick(0.1, g);
-    CHECK(!agent.frame().any() && !agent.pressedNow().any());
+    CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
     CHECK(sent.size() == 1 && sent[0]["command"].asString() == "context" &&
           sent[0]["data"]["message"].asString().find("menu is open") != std::string::npos);
     sent.clear();
     agent.link().onMessage(press);
     CHECK(sent.size() == 1 && sent[0]["command"].asString() == "action/result" && !sent[0]["data"]["success"].asBool());
     CHECK(sent[0]["data"]["message"].asString().find("menu is open") != std::string::npos);
-    CHECK(!agent.frame().any() && !agent.pressedNow().any());   // nothing was queued behind the menu
+    CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());   // nothing was queued behind the menu
     sent.clear();
     agent.link().onMessage("{\"command\":\"action\",\"data\":{\"id\":\"2\",\"name\":\"release_all\"}}");
     CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool());   // letting go is always fine
@@ -457,7 +857,7 @@ static void testAgentGating() {
     CHECK(sent.size() == 1 && sent[0]["command"].asString() == "context");
     sent.clear();
     agent.link().onMessage(press);
-    CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool() && agent.frame().test(C_B));
+    CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool() && rep.poll(agent).test(C_B));
 
     // Player 1 is a mouse: the same refusal, with its own reason.
     sent.clear();
@@ -467,7 +867,7 @@ static void testAgentGating() {
     agent.link().onMessage(press);
     CHECK(sent.size() == 1 && !sent[0]["data"]["success"].asBool() &&
           sent[0]["data"]["message"].asString().find("mouse") != std::string::npos);
-    CHECK(!agent.frame().any());
+    CHECK(!rep.poll(agent).any());
 
     // No moves are asked for while the input is blocked.
     agent.link().forceInterval = 0;
@@ -486,11 +886,11 @@ static void testAgentGating() {
     std::vector<std::string> toasts;
     agent.notify = [&](const std::string& t) { toasts.push_back(t); };
     agent.link().onMessage(press);
-    CHECK(agent.frame().test(C_B));
+    CHECK(rep.poll(agent).test(C_B));
     s.hardcore = true;
     agent.configure(s);
     CHECK(agent.blockedByHardcore() && !agent.allowed() && !agent.driving());
-    CHECK(!agent.frame().any() && !agent.pressedNow().any() && !agent.link().connected());
+    CHECK(!rep.poll(agent).any() && !agent.pressedNow().any() && !agent.link().connected());
     CHECK(agent.statusText().find("hardcore") != std::string::npos);
     bool told = false;
     for (const std::string& t : toasts) told |= t.find("hardcore") != std::string::npos;
@@ -499,6 +899,117 @@ static void testAgentGating() {
     agent.configure(s);
     CHECK(agent.allowed() && !agent.blockedByHardcore());
     agent.configure(AgentSettings());   // closes the worker
+}
+
+// The Agent's side of the input snapshot: what it publishes, how progress trims the queue, and that every way input
+// must stop (release_all, hardcore, Neuro off) reaches the replica within one poll (#1025).
+static void testAgentProgram() {
+    Agent agent;
+    Replica rep;
+    std::vector<Json> sent;
+    agent.link().send = [&](const std::string& m) { sent.push_back(parsed(m)); };
+    AgentSettings s;
+    s.enabled = true;
+    s.url = "ws://127.0.0.1:9";
+    s.forceInterval = 0;
+    agent.configure(s);
+    GameState g;
+    g.loaded = true;
+    g.title = "Tempest 2000";
+    agent.tick(0.0, g);
+    agent.link().onConnected();
+    auto forces = [&] {
+        size_t n = 0;
+        for (const Json& j : sent) n += j["command"].asString() == "actions/force";
+        return n;
+    };
+    auto action = [](const char* id, const char* name, const char* data) {
+        return std::string("{\"command\":\"action\",\"data\":{\"id\":\"") + id + "\",\"name\":\"" + name + "\"" +
+               (*data ? std::string(",\"data\":\"") + data + "\"" : std::string()) + "}}";
+    };
+    const std::string hold = action("h", "hold_buttons", "{\\\"buttons\\\":[\\\"right\\\"]}");
+    const std::string press = action("p", "press_buttons", "{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":3}");
+    const std::string release = action("r", "release_all", "");
+    auto pad = [](const ControlSet& c) {   // one char per poll: B, U, R or '.', for the buttons this test uses
+        std::string o;
+        if (c.test(C_RIGHT)) o += 'R';
+        if (c.test(C_B)) o += 'B';
+        if (c.test(C_UP)) o += 'U';
+        return o.empty() ? std::string(".") : o;
+    };
+
+    {   // 1: busy covers progress from an older gen
+        sent.clear();
+        agent.link().onMessage(press);
+        CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool());
+        agent.publishTo(rep.snap);
+        agent.absorb(rep.snap.agentProgress());   // the default progress: gen 0, another lineage
+        agent.tick(1.0, g);
+        CHECK(forces() == 0);                      // still accepted-and-not-played: no force goes out
+        for (int i = 0; i < 3; i++) CHECK(rep.poll(agent).test(C_B));
+        agent.tick(2.0, g);
+        CHECK(forces() == 1 && agent.framesPlayed() == 3);
+    }
+    {   // 2: release_all drops queue and hold at the next poll
+        agent.link().onMessage(hold);
+        agent.link().onMessage(press);
+        CHECK(rep.poll(agent) == keys({C_RIGHT, C_B}) && rep.poll(agent) == keys({C_RIGHT, C_B}));
+        agent.link().onMessage(release);
+        CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+        for (int i = 0; i < 3; i++) CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+    }
+    {   // 3: hardcore clears the replica within one poll, even though tick() (which returns early) never runs
+        agent.link().onMessage(hold);
+        CHECK(rep.poll(agent).test(C_RIGHT) && agent.pressedNow().test(C_RIGHT));
+        s.hardcore = true;
+        agent.configure(s);
+        CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+        CHECK(!rep.player.progress().pressed.any() && !rep.snap.agentProgress().pressed.any());
+        for (int i = 0; i < 2; i++) CHECK(!rep.poll(agent).any());
+        s.hardcore = false;   // and it plays again once hardcore ends
+        agent.configure(s);
+        agent.tick(3.0, g);
+        agent.link().onConnected();
+        agent.link().onMessage(press);
+        CHECK(rep.poll(agent).test(C_B));
+        agent.link().onMessage(release);
+        CHECK(!rep.poll(agent).any());
+    }
+    {   // 4: turning Neuro off clears the replica (the neuroShutdown path)
+        agent.link().onMessage(hold);
+        CHECK(rep.poll(agent).test(C_RIGHT));
+        agent.configure(AgentSettings());
+        CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+    }
+    {   // 5: an action appended mid-play neither replays nor drops frames
+        Agent a;
+        Replica r;
+        a.link().send = [](const std::string&) {};
+        a.configure(s);
+        a.tick(0.0, g);
+        a.link().onConnected();
+        a.link().onMessage(action("p6", "press_buttons", "{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":6}"));
+        std::string got;
+        for (int i = 0; i < 2; i++) got += pad(r.poll(a));
+        a.link().onMessage(action("pu", "press_buttons", "{\\\"buttons\\\":[\\\"up\\\"],\\\"frames\\\":2}"));
+        for (int i = 0; i < 6; i++) got += pad(r.poll(a));
+        CHECK(got == "BBBBBBUU");
+        CHECK(a.framesPlayed() == 8);
+        a.configure(AgentSettings());
+    }
+    {   // 6: progress from before a release_all (an older lineage) does not set pressedNow() again
+        agent.configure(s);
+        agent.tick(4.0, g);
+        agent.link().onConnected();
+        agent.link().onMessage(hold);
+        CHECK(rep.poll(agent).test(C_RIGHT));
+        const AgentProgress stale = rep.snap.agentProgress();
+        CHECK(stale.pressed.test(C_RIGHT));
+        agent.link().onMessage(release);   // bumps the lineage
+        agent.absorb(stale);
+        CHECK(!agent.pressedNow().any());
+    }
+    agent.configure(AgentSettings());
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -749,9 +1260,12 @@ static void loopbackHardcoreFirst() {
     agent.configure(AgentSettings());
 }
 
-static int loopback() {
-    loopbackHardcoreFirst();
-    loopbackHostile();
+// The Agent against a fake Neuro server, with the app's loop on its own thread.  `threadedPoll` is the run whose input
+// poll is a second thread (Neuro on the emulation thread): the "UI" thread keeps configure / absorb / tick / publishTo
+// every 5 ms, and the poll thread runs pollAgent four times per tick (standing in for fast-forward).  They share only
+// the InputSnapshot's agent channel; the AgentPlayer is the poll thread's and the Agent the UI thread's.  `recOut` gets
+// the frame-numbered press record, for the threaded run to be compared with the inline one.
+static int loopbackRun(bool threadedPoll, std::vector<uint8_t>* recOut = nullptr) {
     FakeServer srv;
     if (!srv.open()) {
         std::printf("FAIL cannot listen on 127.0.0.1\n");
@@ -777,19 +1291,50 @@ static int loopback() {
     std::atomic<bool> run{true}, hardcore{false};
     std::atomic<int> pressedB{0};
     std::atomic<bool> rightNow{false}, upNow{false};
-    // The app's loop, on its own thread: a UI tick and an emulated frame every ~5 ms.  The settings go through
-    // configure() every iteration, as the app does.
+    // The frame-numbered record of the first three shots: from the first poll that presses B, one 0/1 per poll.  A run
+    // whose polls happen on the emulation thread must reproduce it.
+    std::mutex recMu;
+    std::vector<uint8_t> rec;
+    // One emulated frame's worth of what the input poll sees: counts B, records the frame-numbered press vector and sets
+    // the direction flags.  Inline it runs on the app thread, threaded on the poll thread (atomics and recMu cover the
+    // other readers).
+    auto notePoll = [&](const ControlSet& pressed) {
+        if (pressed.test(C_B)) pressedB++;
+        {
+            std::lock_guard<std::mutex> l(recMu);
+            if ((pressed.test(C_B) || !rec.empty()) && rec.size() < 15) rec.push_back(pressed.test(C_B) ? 1 : 0);
+        }
+        rightNow = pressed.test(C_RIGHT);
+        upNow = pressed.test(C_UP);
+    };
+    // The app's loop, on its own thread: a UI tick every ~5 ms.  The settings go through configure() every iteration, as
+    // the app does.  Inline, the tick is followed by the one emulated frame (Replica); threaded, the UI thread does
+    // neuroTick's order (configure, absorb, tick, publishTo) and the poll thread plays on its own clock.
+    Replica rep;
+    std::thread poller;
+    if (threadedPoll) {
+        poller = std::thread([&] {
+            AgentPlayer player;   // the poll thread's alone
+            while (run) {
+                notePoll(pollAgent(rep.snap, player));
+                std::this_thread::sleep_for(std::chrono::microseconds(1250));
+            }
+        });
+    }
     std::thread app([&] {
         double t = 0;
         AgentSettings cfg = s;
         while (run) {
             cfg.hardcore = hardcore.load();
             agent.configure(cfg);
-            agent.tick(t, g);
-            const ControlSet pressed = agent.frame();
-            if (pressed.test(C_B)) pressedB++;
-            rightNow = pressed.test(C_RIGHT);
-            upNow = pressed.test(C_UP);
+            if (threadedPoll) {
+                agent.absorb(rep.snap.agentProgress());
+                agent.tick(t, g);
+                agent.publishTo(rep.snap);
+            } else {
+                agent.tick(t, g);
+                notePoll(rep.poll(agent));
+            }
             t += 0.005;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -819,7 +1364,23 @@ static int loopback() {
     CHECK(res["data"]["id"].asString() == "a1" && res["data"]["success"].asBool());
     Json force2 = waitFor(fd, rd, "actions/force", agent, &seen);   // the next move, once the shots played out
     CHECK(force2["command"].asString() == "actions/force");
+    {   // the last polls may still be counting on the poll thread when the next force arrives
+        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+        while (std::chrono::steady_clock::now() < end) {
+            {
+                std::lock_guard<std::mutex> l(recMu);
+                if (rec.size() >= 15) break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));   // and any extra press would show now
+    }
     CHECK(pressedB.load() == 9);
+    {
+        std::lock_guard<std::mutex> l(recMu);   // three 3-frame shots with a 3-frame gap: the Tempest "fire" macro
+        CHECK((rec == std::vector<uint8_t>{1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1}));
+        if (recOut) *recOut = rec;
+    }
 
     std::string rr = serverFrame("{\"command\":\"actions/reregister_all\"}");
     ::send(fd, rr.data(), rr.size(), 0);
@@ -864,6 +1425,7 @@ static int loopback() {
     }
     run = false;
     app.join();
+    if (poller.joinable()) poller.join();
     {
         std::lock_guard<std::mutex> l(toastMu);
         bool conn = false, disc = false, hc = false;
@@ -880,6 +1442,70 @@ static int loopback() {
     std::printf("\n");
     return g_fail ? 1 : 0;
 }
+
+static int loopback() {
+    loopbackHardcoreFirst();
+    loopbackHostile();
+    return loopbackRun(false);
+}
+
+// The same run with the input poll on a second thread: the frame-numbered press record must equal the inline run's.
+// Both in this process, inline first.
+static int loopbackThreaded() {
+    std::vector<uint8_t> inl, thr;
+    int rc = loopbackRun(false, &inl);
+    if (rc) return rc;
+    rc = loopbackRun(true, &thr);
+    CHECK(thr == inl);
+    CHECK(thr.size() == 15);
+    return rc || g_fail ? 1 : 0;
+}
+
+// The real app, headless, against a fake Neuro server: one press_buttons of 30 frames must be played out by the core's
+// input poll (`mode` is the --emu-thread value) and counted in the run's report.
+static int appRun(const std::string& exe, const std::string& rom, const std::string& mode) {
+    FakeServer srv;
+    if (!srv.open()) {
+        std::printf("FAIL cannot listen on 127.0.0.1\n");
+        return 1;
+    }
+    const std::string cmd = "\"" + exe + "\" --headless --emu-thread " + mode + " --neuro ws://127.0.0.1:" +
+                            std::to_string(srv.port) + " --frames 480 \"" + rom + "\" 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        std::printf("FAIL cannot start %s\n", exe.c_str());
+        return 1;
+    }
+    std::string out;
+    std::thread reader([&] {
+        char buf[4096];
+        while (fgets(buf, sizeof buf, pipe)) out += buf;
+    });
+    Agent unused;   // waitFor() takes one
+    int fd = srv.accept(10000);
+    CHECK(fd >= 0);
+    if (fd >= 0) {
+        FrameReader rd(true);
+        CHECK(waitFor(fd, rd, "startup", unused, nullptr, 10000)["command"].asString() == "startup");
+        CHECK(waitFor(fd, rd, "actions/register", unused, nullptr, 10000)["command"].asString() == "actions/register");
+        const std::string act = serverFrame("{\"command\":\"action\",\"data\":{\"id\":\"p1\",\"name\":\"press_buttons\","
+                                            "\"data\":\"{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":30}\"}}");
+        ::send(fd, act.data(), act.size(), 0);
+        Json res = waitFor(fd, rd, "action/result", unused, nullptr, 10000);
+        CHECK(res["data"]["id"].asString() == "p1" && res["data"]["success"].asBool());
+        waitFor(fd, rd, "never", unused, nullptr, 60000);   // until the app closes the link at the end of the run
+        ::close(fd);
+    }
+    reader.join();
+    const int status = pclose(pipe);
+    CHECK(status == 0);
+    CHECK(out.find("[neuro] headless: 30 frames of input played") != std::string::npos);
+    CHECK(out.find("owner violation") == std::string::npos && out.find("ThreadSanitizer") == std::string::npos);
+    if (mode == "on") CHECK(out.find("emulation thread)") != std::string::npos);
+    if (g_fail) std::printf("%s\n", out.c_str());
+    std::printf(g_fail ? "neuro app: FAILED\n" : "neuro app: ok\n");
+    return g_fail ? 1 : 0;
+}
 #endif
 
 int main(int argc, char** argv) {
@@ -894,15 +1520,42 @@ int main(int argc, char** argv) {
         return rc;
 #endif
     }
+    if (mode == "loopback-threaded") {
+#ifdef _WIN32
+        std::printf("loopback-threaded: skipped on Windows\n");
+        return 77;
+#else
+        int rc = loopbackThreaded();
+        std::printf(rc ? "neuro loopback-threaded: FAILED\n" : "neuro loopback-threaded: ok\n");
+        return rc;
+#endif
+    }
+    if (mode == "app") {
+#ifdef _WIN32
+        std::printf("app: skipped on Windows\n");
+        return 77;
+#else
+        if (argc < 5) {
+            std::printf("usage: neuro_test app <virtualjaguar> <rom> <on|off>\n");
+            return 2;
+        }
+        return appRun(argv[2], argv[3], argv[4]);
+#endif
+    }
     testJson();
     testWsUrls();
     testWsFrames();
     testQueue();
+    testQueueProgram();
+    testAgentPlayer();
     testButtons();
     testActions();
     testProfiles();
     testLink();
+    testWatches();
+    testWatchFeed();
     testAgentGating();
+    testAgentProgram();
     testStopIsPrompt();
     std::printf(g_fail ? "neuro unit: %d FAILED\n" : "neuro unit: ok\n", g_fail);
     return g_fail ? 1 : 0;

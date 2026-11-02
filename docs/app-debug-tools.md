@@ -16,28 +16,64 @@ of them changes how the game plays unless you press an edit button.
 | --- | --- |
 | the contract (C89, shared verbatim by core and app) | `src/debug/vj_debug_iface.h` |
 | core side | `src/debug/vjdebug.c` (+ the halt pump in `src/debug/gdbtarget.c`, OP snapshot in `src/tom/op.c`, blit log in `src/tom/blitter_mmio.c`, `TexReplaceReload` in `src/tom/texreplace.c`) |
-| app side, no ImGui | `app/src/debug/debug_session.{h,cpp}` |
+| app side, no ImGui | `app/src/debug/debug_session.{h,cpp}` (the UI thread's object: availability, breakpoints, the Tools registry) |
+| app side, the core's half | `app/src/debug/debug_core.{h,cpp}` (owns the core's debug interface and wraps every entry point; emulation thread) and `debug_views.{h,cpp}` (the windows' requests and the buffers the emulation thread fills) |
 | app side, ImGui | `app/src/debug/debug_ui.cpp` (Tools menu, halted bar, `addDebugTools`), one `*_ui.cpp` per tool, each with its pure logic beside it (`memory_view`, `cheat_scan`, `op_decode` / `op_view` / `op_render`, `texture_pack`, `blitter_log`, `audio_ring`) |
 | a fake core for tests | `app/tests/debug_mock.h` |
 
 ## Halt model
 
-All calls are made on the thread that runs `retro_run()`: between two `retro_run()` calls, or from inside the halt pump.
+All calls are made on the thread that runs `retro_run()` (the UI thread inline, the emulation thread when Settings > Interface > Emulation thread is on): between two `retro_run()` calls, or from inside the halt pump.
 
 1. A breakpoint (or **Break**, F9) makes the core call `GDBHalt()`, which blocks **in place**, deep inside `retro_run()`.
    Every processor is frozen exactly where it stopped.
-2. With an app host attached, `GDBHalt()` calls the host's `halt_pump` every iteration.  The app answers by running **one UI
-   frame** (`App::haltedFrame()`: events, ImGui, present -- no emulation step) and returning the verdict set by the
-   buttons: continue (F9), step (F10), detach.
-3. While parked, `CoreHost::inFrame()` is true and everything that would re-enter the core is refused: state save/load,
-   reset, loading or closing a game, option changes, controller and disc changes.  Audio is paused and cleared on the
-   way out.  Closing the window while halted resumes the core and detaches.
+2. With an app host attached, `GDBHalt()` calls the host's `halt_pump` every iteration.  Threaded, the pump
+   (`DebugCore::pump`) serves the debug lane, waits at most 4 ms and returns NONE, so the core's own loop keeps the gdb socket and
+   the halt timeout; the UI mirrors the halt once per frame (`DebugSession::syncHalt`) and its verdict (continue F9, step F10)
+   is tagged with the halt serial it saw, so a verdict for a halt that is gone is dropped (Detach and the content commands
+   are lane posts that decide on the core's real state: "One rule for leaving a halt" below).  Inline the pump runs one UI
+   frame (`App::haltedFrame()`: events, ImGui, present -- no emulation step) as before.  A halt gdb or the halt timeout ends is
+   closed by `frameEnded()` after the frame, and a STEP the core never re-halted (the stepped instruction ended the frame) is
+   closed the same way.
+3. While parked, anything that would re-enter the core is held or refused.  Frame-lane commands (option changes, cheats,
+   controller, SRAM autosave) wait in the queue and apply after Continue; the halt bar and the Core options tab say so (the
+   periodic ones -- the SRAM autosave, the achievements idle -- are coalesced to one queued post each, so a long halt cannot
+   grow the queue).  Save/load
+   state and boot refuse with a toast.  Open, close, reset and disc changes release the halt first (threaded, the rule below) and then proceed (quit just resumes the core, below);
+   inline they keep refusing.  Every UI call into the core (`EmuThread::call`, `advance`) gives up when a halt begins, so
+   the window never waits on a parked core.  Audio is paused and cleared on the way out.  Closing the window while halted
+   resumes the core (`beginQuit()` ends the pump within one wait; the pump answers CONTINUE and the host stays attached until the content unloads, so a gdb breakpoint that is still armed cannot re-park the core behind a socket with nobody to release it).
+
+**One rule for leaving a halt (#1069, #1081 M1).**  A halt is only ever released with CONTINUE, and the app's host stays
+attached while the core is inside `retro_run()`.  The app never answers the pump with DETACH: a DETACH drops the host
+*inside* `GDBHalt()`, and when a gdb client's own `Z0` breakpoint is still armed the core hits it again at once and parks
+behind the open socket with nobody to pump -- the mirror then reads "not halted", a threaded call waits until gdb continues,
+and inline the window freezes.  So, threaded and inline alike:
+
+- **Detach** (the halt bar, the Tools menu, the macOS menu; hardcore does the same): the app's breakpoint list is dropped, its
+  entries are disarmed in the core, the pump answers CONTINUE, and the host itself is dropped by `frameEnded()` once the
+  frame is over -- outside `retro_run()`, where the silent gdb host is put straight back if the stub is on.  If the core
+  halts again before the frame ends (only gdb can cause that now: the app's breakpoints are gone), that halt needs the
+  host, so the pending drop is cancelled and the bar shows "HALTED by gdb".  A Break or a new breakpoint before the drop
+  has happened keeps the host too (the attach supersedes the drop): Detach, then Break, just works.
+- **Reset, Open, Close, a disc change** (`App::releaseForCall`): the same release, but the list and the host are kept.  The
+  enabled breakpoints are disarmed so the frame can end even with one in a hot loop, the command runs at the frame
+  boundary, and the list is re-armed before the first frame after it (inside the same emulation-thread call for Reset and
+  the disc commands, so a breakpoint on boot code fires after a Reset).  Open and Close replace the core, and the list is
+  per game, so there is nothing to re-arm; a command that gave up (gdb halted the game again) re-arms from the UI thread.
+- The call that follows a release gives up only on a halt NEWER than the one released (`DebugCore::releaseSerial()`), so a
+  Detach made while a step is in flight waits for the step's re-halt to be released instead of giving up on it.
+- A halt gdb's client holds is released the same way (the app and gdb share the halt: whoever answers first wins); a `Z0`
+  in a hot loop then halts again, the content command gives up with "the debugger halted the game again", and the halt bar
+  shows it.  Delete the breakpoint in gdb (or continue there) and retry.
+- Quitting is unchanged: `abortHalt` answers CONTINUE on every pump until the frame ends and the unload drops the host.
 4. Turning RetroAchievements **hardcore** on (from anywhere, including inside a halt) detaches, resumes and closes every
    tool; the Tools menu goes grey with the reason.
 
 Without an attached host and without the GDB socket `GDBHalt()` returns at once, so a stale "break" can never hang the
 core.  When the GDB TCP stub is on as well, either side may resume the machine; a TCP client disconnecting clears the
-breakpoint tables as before (the app re-applies its list on the next attach).
+breakpoint tables as before (the app re-applies its list on the next attach).  A headless run has no UI to release a halt:
+a halt gdb holds waits for the gdb client or a quit signal (below); a halt the app itself caused is released at once (inline only: with the emulation thread on, the headless loop does not release it).
 
 ## Memory and the poke policy
 
@@ -62,10 +98,26 @@ Every window follows the same rules:
   keeps the `refreshSerial()` it last drew and re-reads when it changes; the serial also bumps after a state load, a
   reset, a content change, a halt and every poke, so a paused game costs nothing and a loaded state shows at once.
 - **Opaque, resizable windows** placed through `ui::nextWindow`, text that wraps rather than clips.
-- All core calls happen on the main thread, between `retro_run` calls or inside the halt pump.
+- Core calls follow the **Threading** rules below.
 
-Developers can open a window at start-up with `--show-window memory|palette|scanner|objects|blitter|textures|scope`
-(with `--screenshot PNG` for a picture).
+Developers can open a window at start-up with `--show-window memory|bitmap|palette|scanner|objects|blitter|textures|scope`
+(with `--screenshot PNG` for a picture); it works with the emulation thread on too.
+
+### Threading
+
+Only the thread that runs `retro_run()` calls the core, and no window ever does.  Inline that is the UI thread and the
+rules below cost nothing; with the emulation thread on they are what keeps the windows off the core:
+
+- **Periodic readers** (Memory, Palette, the CPU window's registers and disassembly, the Object list, the Blitter log,
+  the scanner's live column) set a `DebugViews` request -- a memory range, a register set, a disassembly window -- and
+  read the buffer the emulation thread filled after the last frame.  A changed request, or a content switch (an epoch
+  that bumps when the core hands over a new interface), invalidates its buffer, so a window never draws the previous
+  game's bytes.  A paused game still fills: the UI's `wakeViews()` posts one fill to the emulation thread.
+- **One-shot actions** (poke, register edit, arm the OP snapshot, enable the blit log, texture pack reload, attach, the
+  scanner's 2 MB scan pass) go through `EmuThread::debugCall` and wait at most one frame.  Slower work whose result
+  the window picks up later (the CPU window's backwards disassembly walk) is posted (`CoreJob`) instead.
+- Break, Step, breakpoints and the GDB stub work with the thread on too: the halt pump runs on the emulation thread
+  (`DebugCore`), the UI mirrors the halt once per frame, and every UI call into the core gives up while the core is halted.
 
 ## The tools
 
@@ -75,6 +127,22 @@ Memory viewer: a hex / ASCII grid over every bus region the core lists (DRAM, ca
 registers, CLUT, line buffers, GPU and DSP RAM).  Values are big-endian bus order, shown as 8-, 16- or 32-bit cells.  It has
 go-to, back, "Follow pointer", an incremental hex / text search, change highlighting between refreshes, an in-place
 editor (click a cell, double-click or Enter, type hex) and **Add as cheat** for the selected cell.
+
+The **Bitmap** mode previews graphics at any mapped address, including cartridge, GPU and DSP RAM, through the
+same pixel decoder as Object list. Set width, height (0 = complete rows to the region end), 1/2/4/8/16/24 bpp and
+Auto (VMODE), CRY, RGB16 or Mixed colour. Indexed depths use the live CLUT at `$F00400`; enter another CLUT address
+and press Enter to inspect a staged palette. Rows are tightly packed (sub-byte rows round up to a byte);
+Jaguar 24 bpp uses four bytes per pixel. Previews are capped at 4096 by 1024 pixels.
+
+**Guess width / depth** samples at most 64 KiB from the start address. The five buttons rank byte-row similarity,
+with a preference for phrase strides and shorter equal-scoring harmonics, and show widths for the selected depth.
+The depth hint compares even/odd byte distributions: similar suggests 8 bpp, distinct suggests CRY16;
+uniform or ambiguous data is inconclusive. These are heuristics, not format detection.
+Left/Right changes width by one pixel (Shift: eight); Up/Down nudges the address by one row (Shift: one phrase).
+**Export PNG** writes the current preview to the editable path (initially `<data>/debug/bitmap.png`).
+**Open as OP object** opens a synthetic object in Object list for phrase-aligned addresses and whole-phrase widths
+within OP size limits; it does not write an object into the game. Width/depth guesses run on request and preview
+refreshes run on the emulation thread, including while paused or halted.
 
 The **Palette** window shows the 256 CLUT entries as swatches (CRY or RGB16, your choice, since indexed objects can be
 either depending on the video mode), the raw word, and an editor with a colour picker.  The CLUT is mirrored in two tables
@@ -144,7 +212,8 @@ App only: nothing is recorded and the core is not involved; while the window is 
 
 **F9** breaks into the game at the next instruction of the 68000 (or continues when already halted); **F10** steps one
 instruction while halted (it does nothing otherwise).  The Tools menu and a "HALTED" bar over the picture show the same
-actions plus **Detach debugger**, which clears every breakpoint and resumes.  While halted the tool windows keep drawing and
+actions plus **Detach debugger**, which clears every breakpoint and resumes (with the GDB stub enabled the silent host is back one frame
+later, see below).  While halted the tool windows keep drawing and
 refreshing, so you can read memory, palette and registers of the frozen machine.  Breakpoints are per game (they are dropped when
 a different game loads).
 
@@ -153,6 +222,12 @@ a different game loads).
 Hardcore turns the whole Tools menu off: the entries grey out with "RetroAchievements hardcore is on", every open window
 closes, the session detaches and any halt resumes.  Turning hardcore on from inside a halt does the same.  The scanner's
 cheats are ordinary cheats, so the Cheats window's own hardcore block applies to them too.
+
+Hardcore also locks the GDB stub (`virtualjaguar_gdb_stub`) to `disabled`: the lock is applied at the next load, because the
+core reads the stub options only then.  **Turning hardcore on while the stub is enabled reloads the game** (a restart is
+what hardcore needs anyway, and the reload is the only way the lock reaches the core and the socket closes); the log says
+`[ach] hardcore on: reloading the game to close the GDB stub`.  If hardcore turns off mid-game the stub stays disabled until
+the next load.
 
 ## Several app instances
 
@@ -167,6 +242,26 @@ The built-in debugger and the GDB TCP stub (`virtualjaguar_gdb`) share one set o
 either side may resume a halted machine, and a GDB client disconnecting clears the table (the app re-applies its list on the next
 attach).  With no app host and no GDB client attached, a halt returns at once and can never hang the core.
 
+Whenever the stub is enabled the app keeps a **silent host** attached (logged as `[debug] gdb host attached (silent)`): it
+never halts anything by itself, it only makes a GDB halt visible -- the halt bar says "HALTED by gdb", F9 continues, calls
+into the core give up instead of hanging, and quitting resumes the core.  It is attached on the emulation thread inside the load,
+before the first frame.  Two consequences:
+
+- **`virtualjaguar_gdb_wait`** parks the boot even before a GDB client connects; the UI stays
+  live, the halt bar shows it, and F9 (or **Detach**) continues.  A client that connects later asks `?` and gets `S05`.
+- **Detach debugger** drops every app breakpoint and, once the frame is over, the host; with the stub still enabled the
+  silent host comes back before the next frame (it re-attaches on the emulation thread, so a gdb breakpoint is never
+  missed).  Pressed while a gdb client holds a halt, it continues that halt ("One rule for leaving a halt" above): a `Z0`
+  the client left armed halts the core again at once, and the app shows that halt too.  Detach
+  does not close the stub; turn the option off and reload for that.  Breakpoints you want after a Detach are set again.
+- **Quitting** resumes the core with the host kept attached (a gdb breakpoint hit again on the way out is answered
+  at once), then closes the socket.  A **headless** run that gdb holds halted
+  waits for the gdb client or a quit signal: SIGINT or SIGTERM ends it cleanly (exit 0, the socket closed); a second
+  signal kills it at once, in case the core is wedged.
+- **While halted, `rc_client_idle` does not run** (it is a frame-lane post, coalesced to one in the queue): the
+  RetroAchievements pings and retries resume after Continue.  A halted game is not being played, hardcore never
+  coexists with a halt (it locks the stub and detaches), and nothing is evaluated on frozen memory, so nothing is lost.
+
 ## Cost when you are not looking
 
 Detached, nothing on a per-instruction or per-pixel path looks at the interface: attaching stores a pointer, and the
@@ -176,7 +271,24 @@ field, nothing the emulated machine can observe (the core test hashes the frame 
 
 ## Testing
 
-`debug_session_unit` (logic against the mock) and `debug_e2e` (real core); per tool, a unit test over the pure logic
+`debug_session_unit` (logic against the mock; label `emu_thread`: the verdict serial, `frameEnded`, detach and quit mid-halt, the lane
+order of Detach and Attach) and `debug_e2e` (real core, inline); `debug_views_unit` (the request table, the buffers and
+the epoch, under ThreadSanitizer too) and `debug_views_threaded` (the real core on the emulation thread: the views equal
+a `debugCall` peek, a paused request fills with no frame run, the first read after a reload is the new ROM, inline and
+threaded give the same Dram view).
+
+The halt on the emulation thread: `emu_thread_unit` (`testCallGivesUp`, `testAdvanceGivesUp`, `testServeDebugLane`),
+`emu_commands_unit` (`testDebugLaneWait`) and `debug_e2e_threaded` (the real core on a threaded `EmuThread`, wired as `App`
+wires it: break, step, continue, detach, hardcore and quit mid-halt, every UI operation within 50 ms while the core is parked,
+the 3 s join, and -- sections 13 and 14 -- a Detach and a Reset while a gdb client holds a `Z0` halt in a hot loop, threaded
+and inline: the re-hit stays visible, the Reset returns, an app breakpoint survives a Reset).  `debug_session_unit` pins the
+rule against the mock (a Detach inside a halt answers CONTINUE and drops the host at the frame end, a new halt cancels the
+drop, a release keeps and re-arms the list, the release serial).  The GDB stub: `gdb_threaded_halt` (a gdb client finds the headless app halted at boot, reads memory and
+continues; SIGTERM mid-halt exits cleanly; `gdb_inline_halt(_hardcore)` run the same inline), `debug_on_threaded`,
+`gdb_enabled(_threaded)` (the silent host attaches at load), `gdb_hardcore_locked_*` and `gdb_hardcore_flip_*` (hardcore locks the
+stub; a mid-game flip reloads).
+
+Per tool, a unit test over the pure logic
 (`debug_memory_unit`, `debug_scan_unit`, `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`), a headless ImGui smoke test
 of each window over the mock (`debug_memory_ui_smoke`, `debug_scan_ui_smoke`) and end-to-end runs on the public `yarc.j64`
 (`debug_scan_e2e`, `debug_op_e2e`: at least one bitmap object comes from the core's snapshot itself); and the core's

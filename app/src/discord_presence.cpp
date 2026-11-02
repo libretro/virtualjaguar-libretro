@@ -149,6 +149,9 @@ void Presence::shutdown() {
 }
 
 std::string Presence::statusText() const {
+#ifdef VJ_MAC_APP_STORE
+    return "Discord Rich Presence is unavailable in the Mac App Store edition.";
+#endif
     if (s_.appId.empty())
         return "Not available: this build has no Discord application ID (set discord.app_id in config.ini, or build with -DVJ_DISCORD_APP_ID=...).";
     if (s_.instance > 1) return "Only the first window of the app shows its status on Discord.";

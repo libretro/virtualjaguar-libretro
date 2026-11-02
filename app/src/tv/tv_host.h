@@ -49,6 +49,52 @@ struct StateRef {
 
 enum class List { All, Favorites, Recent, Disc };
 
+// One row of the TV Settings screen, by value (AppHost fills them from the app's settings and the core's options, so the
+// screen never sees either).  `choices` are what Left / Right / Accept step through; "more" has none.
+struct SettingRow {
+    std::string id, label;             // app rows: shader integer smooth stretch aspect vsync fullscreen volume mute audio_buffer fps ... more; a core option: "core:" + its key
+    std::vector<std::string> choices;  // empty for "more"
+    int index = 0;
+    bool readOnly = false;
+    std::string note;                  // shown under the value: why it is read-only, or what to know about it
+    std::string group;                 // the rail item's key: "picture" "sound" "interface" "library" "achievements" "discord" "neuro", "core:" + a category key ("core:" = no category)
+    std::string groupLabel;            // ... and what the rail shows for it
+};
+
+// One achievement of the loaded game, or one active leaderboard tracker (kind Tracker: read-only, no status).  AppHost fills them
+// from rc_client's rows, so the screen never sees rcheevos.
+struct AchItem {
+    enum Kind { Achievement, Tracker } kind = Achievement;
+    uint32_t id = 0;
+    std::string title, description, status;   // description: what to do, as the desktop's window shows it; status: the desktop's line ("Unlocked in hardcore  2026-10-16 21:04", "Locked  Progress: 5/10 ...")
+    unsigned points = 0;
+    bool unlocked = false;
+    std::string badgeUrl;        // the one to show (earned or locked); "" = none
+};
+
+// One game of the RetroAchievements Jaguar list (only games with a published set).
+struct AchGame {
+    uint32_t id = 0;
+    std::string title, imageUrl;
+    unsigned achievements = 0, unlocked = 0;
+    bool haveProgress = false, inLibrary = false;
+};
+
+// What the Achievements screen's header says.  mode: "Hardcore" | "Softcore" | "Softcore (hardcore is paused: <blocker>)".
+struct AchHeader {
+    bool signedIn = false, available = true, hasGame = false;   // available: this build has rc_client at all
+    std::string title, mode, iconUrl;
+    unsigned unlocked = 0, total = 0;
+};
+
+// One row of the Overlays screen: a window or a drawing the player can switch on and off.  ids: "fps", "keypad", "controls" and
+// "tool:<DebugTool::id>" for each debug tool window.  A row that cannot be switched now (`enabled` false) says why in `note`.
+struct ToggleRow {
+    std::string id, label;
+    bool on = false, enabled = true;
+    std::string note;
+};
+
 class Host {
 public:
     virtual ~Host() = default;
@@ -57,9 +103,10 @@ public:
     virtual double now() const = 0;
     virtual bool gameLoaded() const = 0;
     virtual std::string gameTitle() const = 0;
-    virtual bool menuPause(std::string& why) = 0;    // false = refused (hardcore rationing); netplay: true, not paused
+    virtual bool menuPause(std::string& why) = 0;    // App: always true -- netplay and hardcore's refusal open the menu over a game that keeps running
     virtual void menuResume() = 0;                   // restores the pause state from before the menu
     virtual bool netplayActive() const = 0;          // netplay.configured()
+    virtual bool menuRunsOn() const { return false; }   // the menu is over a running game because hardcore would not pause it (banner)
     virtual bool canLoadState() const = 0;           // ach.allowStateLoad()
     virtual std::vector<SlotInfo> slots() = 0;       // 0..9, thumbnails from App::slotThumb
     virtual bool saveState(int slot) = 0;
@@ -95,6 +142,7 @@ public:
     // All / Disc / Favorites: by title, case-insensitive; Recent: newest first.  Never BIOS.  Fetched fresh every frame.
     virtual bool libraryScanning() const = 0;                    // a scan is running (an empty library may still fill up)
     virtual std::vector<GameRef> games(List l) = 0;
+    virtual bool hasGames() const = 0;                           // the library lists at least one game (never BIOS); no copy, cheap enough for a frame
     virtual Art art(const GameRef& g) = 0;                       // starts the load on first use; tex 0 until it is ready
     virtual std::vector<StateRef> states(const GameRef& g) = 0;
     virtual Art stateThumb(const GameRef& g, const StateRef& state) = 0;
@@ -104,6 +152,23 @@ public:
     virtual void launchState(const GameRef& g, const StateRef& state) = 0;    // opens the game and loads that state
     virtual bool isFavorite(const GameRef& g) = 0;               // library.isFavorite(entry); false when the game is gone
     virtual void setFavorite(const GameRef& g, bool on) = 0;     // library.setFavorite(entry, on); a no-op when the game is gone
+
+    // ---- Settings (phase 3) ----------------------------------------------------------------------------------------
+    virtual std::vector<SettingRow> settingRows() = 0;             // only the rows that exist in this build / session; fetched every frame
+    virtual void setSetting(const std::string& id, int index) = 0; // applies and saves, as the desktop control would
+    virtual void openMoreSettings() = 0;                           // the desktop Settings window
+
+    // ---- Achievements (phase 3) ------------------------------------------------------------------------------------
+    virtual AchHeader achHeader() = 0;                      // fetched every frame
+    virtual std::vector<AchItem> achItems() = 0;            // trackers first, then the rows in bucket order; empty with no tracked game
+    virtual std::vector<AchGame> achGames() = 0;            // the Jaguar list, title order; must be called every frame the list shows (it loads and fetches)
+    virtual Art achImage(const std::string& url) = 0;       // a badge or icon: tex only when ready; asked for only while it is on screen
+    virtual void achPlay(uint32_t gameId) = 0;              // opens the library file that runs that game (an event: the caller guards)
+    virtual uint32_t achGameId(const GameRef& g) = 0;       // the list entry whose library file is this game, else 0
+
+    // ---- Overlays (phase 3) ----------------------------------------------------------------------------------------
+    virtual std::vector<ToggleRow> overlayRows() = 0;       // fetched every frame the screen shows
+    virtual void toggleOverlay(const std::string& id) = 0;  // flips that row (a no-op for an id that is not listed or not enabled)
 };
 
 }  // namespace vj::tv

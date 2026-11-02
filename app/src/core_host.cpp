@@ -391,7 +391,7 @@ std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
             // nothing" trap, so a value that differs is reported (an error for --option, a
             // warning for a stale saved one).
             if (kv.second != l->second)
-                out.push_back("'" + kv.first + "' is managed by the app (Settings > Input / Controls)" +
+                out.push_back("'" + kv.first + "' is locked by the app" +
                               (sessionOnly ? "; --option cannot change it" : "; the saved value is ignored"));
             continue;
         }
@@ -485,7 +485,7 @@ void CoreHost::pushMessage(const std::string& text, uint32_t ms, int level) {
 // ---- environment ---------------------------------------------------------------
 // --verbose: say once per change when the core is handed a non-default value.
 void CoreHost::traceOption(const std::string& key, const char* value, const char* why) {
-    if (!logVerbose_) return;
+    if (!logVerbose_ || probing_) return;   // a probe is not a load: the first real read says it
     std::string& last = optionTrace_[key];
     if (last == value) return;
     last = value;
@@ -493,6 +493,17 @@ void CoreHost::traceOption(const std::string& key, const char* value, const char
 }
 
 bool CoreHost::env(unsigned cmd, void* data) {
+    if (probing_) {   // probeOptions(): the option commands only, everything else is refused (the core must not learn anything yet)
+        switch (cmd) {
+        case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+        case RETRO_ENVIRONMENT_GET_VARIABLE: break;
+        default: return false;
+        }
+    }
     // Experimental flag bit is part of some command ids; compare masked.
     switch (cmd) {
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
@@ -766,6 +777,23 @@ bool CoreHost::env(unsigned cmd, void* data) {
 }
 
 // ---- content -------------------------------------------------------------------
+// The environment half of a session, alone: retro_set_environment makes the core push its option table and install its
+// display callback, whose one call hides the rows its gates hide (libretro allows both before retro_init).  The core
+// is then taken back to the state of a fresh process -- retro_deinit, the call every reload makes before its
+// retro_set_environment -- because the display pass leaves its show_* latches at "hidden", and a game's own load would
+// see no change and never hide those rows again.  The first startSession then clears and re-pushes everything.
+void CoreHost::probeOptions() {
+    if (noteOffOwner("probeOptions") || initialized_ || loaded_ || !defs_.empty()) return;
+    probing_ = true;
+    retro_set_environment(envCb);
+    if (updateDisplayCb_) updateDisplayCb_();
+    probing_ = false;
+    retro_deinit();
+    // Dropped as in stopSession.  Until the first game loads a gating option (Network Link mode, voice chat...) therefore does not
+    // show or hide its dependent rows: keeping the callback would re-flip the latches retro_deinit just reset.
+    updateDisplayCb_ = nullptr;
+}
+
 bool CoreHost::startSession(std::string& err) {
     g_logVerbose = logVerbose_;
     // Tear down the previous game completely (the iOS path: statics are reset in
@@ -835,7 +863,7 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err, const std:
 
 bool CoreHost::loadContent(const std::string& path, std::string& err) {
     if (noteOffOwner("loadContent")) { err = "called off the emulation thread"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     if (!startSession(err)) return false;
 
     // An .m3u: the core boots the first disc, and every disc goes in its disc list after the load.
@@ -925,7 +953,7 @@ bool CoreHost::readPlaylist(const std::string& m3uPath, std::vector<std::string>
 
 bool CoreHost::loadNoContent(std::string& err) {
     if (noteOffOwner("loadNoContent")) { err = "called off the emulation thread"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     if (!startSession(err)) return false;
     if (!supportsNoGame_) {
         err = "the core does not support booting without content";
@@ -1027,7 +1055,7 @@ void CoreHost::sendKeyEvent(bool down, unsigned retroKey, uint32_t character, ui
 bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
     if (noteOffOwner("saveStateToFile")) { err = "called off the emulation thread"; return false; }
     if (!loaded_) { err = "no game loaded"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     size_t size = retro_serialize_size();
     if (!size) { err = "the core cannot save states"; return false; }
     std::vector<unsigned char> buf(size);
@@ -1039,7 +1067,7 @@ bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
 bool CoreHost::loadStateFromFile(const std::string& path, std::string& err) {
     if (noteOffOwner("loadStateFromFile")) { err = "called off the emulation thread"; return false; }
     if (!loaded_) { err = "no game loaded"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     std::vector<unsigned char> buf;
     if (!readFile(path, buf) || buf.empty()) { err = "cannot read " + path; return false; }
     if (!retro_unserialize(buf.data(), buf.size())) { err = "the core rejected the state"; return false; }

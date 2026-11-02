@@ -102,6 +102,17 @@ uint32_t JaguarGetDefaultFieldHalflines(void);
 /* 1e6 / (halflines * halfline_us): 60.05445 Hz NTSC / 50.08013 Hz PAL. */
 double JaguarGetFieldRateHz(void);
 
+/* The half-line event; TOM's HC readback asks the scheduler how long
+ * until it fires next. */
+void HalflineCallback(void);
+/* Emulated microseconds elapsed since the start of the current
+ * JaguarExecuteNew() slice: the 68K's own progress while it runs (its
+ * bus-stall share included), the whole slice while GPU/DSP finish it,
+ * 0 between slices.  Event times are only rebased at slice end, so this
+ * plus a GetCallbackTime() remainder places a bus access inside the
+ * slice -- what a free-running counter such as HC needs. */
+double JaguarSliceElapsedUs(void);
+
 /* Clock-scale enhancement levers (issue #314), in percent of the stock
  * rate (100 = stock).  Config, not state: set from the core options in
  * libretro.c::check_variables(), never serialized.  Applied ONLY where

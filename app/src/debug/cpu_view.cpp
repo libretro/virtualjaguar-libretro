@@ -226,6 +226,92 @@ unsigned prevAddr(const vj_debug_iface* iface, int target, unsigned addr) {
     return backStart(iface, target, addr, 1);
 }
 
+std::vector<DisasmLine> disasmRows(const vj_debug_iface* iface, int target, unsigned addr, unsigned rows) {
+    std::vector<DisasmLine> out;
+    out.reserve(rows);
+    for (Line& l : disasmForward(iface, target, addr, (int)rows)) {
+        DisasmLine d;
+        d.addr = l.addr;
+        d.len = l.valid ? l.len : 0;
+        d.text = std::move(l.text);
+        d.bytes = std::move(l.bytes);
+        out.push_back(std::move(d));
+    }
+    return out;
+}
+
+// ---- the window's feed -------------------------------------------------------------------------------------------
+
+void CpuFeed::want(DebugSession& s, int target, unsigned top, unsigned rows) {
+    ViewRequest r;
+    r.kind = ViewRequest::Kind::Regs;
+    r.target = target;
+    ViewRequest d;
+    d.kind = ViewRequest::Kind::Disasm;
+    d.target = target;
+    d.addr = top;
+    d.rows = rows;
+    const bool regsSame = stated_ && regsId_ != DebugViews::kNoId && wantRegs_.target == target;
+    const bool disSame = stated_ && disId_ != DebugViews::kNoId && wantDis_.target == target && wantDis_.addr == top &&
+                         wantDis_.rows == rows;
+    if (!regsSame) regsId_ = s.views().set(regsId_, r);
+    if (!disSame) disId_ = s.views().set(disId_, d);
+    wantRegs_ = r;
+    wantDis_ = d;
+    stated_ = true;
+}
+
+void CpuFeed::forget() {
+    answered_ = haveRegs_ = haveRows_ = false;
+    regsTarget_ = rowsTarget_ = -1;
+    regsSerial_ = rowsSerial_ = 0;
+    rows_.clear();
+    std::memset(&regs_, 0, sizeof regs_);
+}
+
+bool CpuFeed::update(DebugSession& s) {
+    bool changed = false;
+    const uint64_t ep = s.views().epoch();
+    if (ep != epoch_) {   // a new core / content: nothing adopted before belongs to it
+        changed = answered_ || haveRows_;
+        forget();
+        epoch_ = ep;
+    }
+    ViewBuffer b;
+    if (regsId_ != DebugViews::kNoId && s.views().read(regsId_, b) && b.req.kind == ViewRequest::Kind::Regs) {
+        if (!answered_ || b.serial != regsSerial_ || b.req.target != regsTarget_) {
+            answered_ = true;
+            regsTarget_ = b.req.target;
+            regsSerial_ = b.serial;
+            haveRegs_ = b.ok;
+            if (b.ok) regs_ = b.regs;
+            changed = true;
+        }
+    }
+    if (disId_ != DebugViews::kNoId && s.views().read(disId_, b) && b.req.kind == ViewRequest::Kind::Disasm) {
+        if (!haveRows_ || b.serial != rowsSerial_ || b.req.target != rowsTarget_ || b.req.addr != rowsTop_ ||
+            b.req.rows != rowsN_) {
+            haveRows_ = true;
+            rowsTarget_ = b.req.target;
+            rowsTop_ = b.req.addr;
+            rowsN_ = b.req.rows;
+            rowsSerial_ = b.serial;
+            rows_ = b.ok ? std::move(b.lines) : std::vector<DisasmLine>();
+            rowsGen_++;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+void CpuFeed::release(DebugSession& s) {
+    if (regsId_ != DebugViews::kNoId) s.views().clear(regsId_);
+    if (disId_ != DebugViews::kNoId) s.views().clear(disId_);
+    regsId_ = disId_ = DebugViews::kNoId;
+    stated_ = false;
+    forget();
+}
+
 // ---- step over ------------------------------------------------------------------------------------------------------
 
 StepOver stepOverTarget(const vj_debug_iface* iface, int target, unsigned pc) {
@@ -338,12 +424,14 @@ bool parseHex(const char* text, unsigned& out, bool bus24) {
 bool TempBreak::arm(DebugSession& s, int target, unsigned addr) {
     disarm(s);
     if (!s.attach()) return false;
-    const vj_debug_iface* i = s.iface();
-    if (!i || !i->break_set) return false;
     bool userArmed = false;
     for (const DebugBreakpoint& b : s.breakpoints())
         if (b.target == target && b.addr == addr && b.enabled) userArmed = true;
-    if (!userArmed && !i->break_set(target, addr)) return false;
+    if (!userArmed) {
+        bool set = false;
+        s.callCore([&] { set = s.core().breakSet(target, addr); });
+        if (!set) return false;
+    }
     active_ = true;
     owned_ = !userArmed;
     target_ = target;
@@ -352,7 +440,7 @@ bool TempBreak::arm(DebugSession& s, int target, unsigned addr) {
 }
 
 void TempBreak::disarm(DebugSession& s) {
-    if (active_ && owned_ && s.attached() && s.iface() && s.iface()->break_clear) s.iface()->break_clear(target_, addr_);
+    if (active_ && owned_ && s.attached()) s.callCore([&] { s.core().breakClear(target_, addr_); });
     active_ = false;
     owned_ = false;
 }
@@ -409,9 +497,12 @@ bool CpuControl::stepIn(int tab) {
         return true;
     }
     // Another processor is the one that is parked: let the machine run until `tab` executes its next instruction.
-    const vj_debug_iface* i = s_.iface();
-    if (!i || !i->halt_next) return false;
-    i->halt_next(tab);
+    bool ok = false;
+    s_.callCore([&] {
+        ok = s_.core().iface() != nullptr;
+        if (ok) s_.core().haltNext(tab);
+    });
+    if (!ok) return false;
     pending_[(size_t)tab] = true;
     s_.resume();
     return true;
@@ -425,17 +516,20 @@ bool CpuControl::stepOver(int tab) {
     }
     if (tab != s_.haltedTarget()) return stepIn(tab), false;
     if (tab == VJ_DBG_TARGET_M68K) {
-        vj_debug_regs r;
-        const vj_debug_iface* i = s_.iface();
-        if (i && i->get_regs && i->get_regs(tab, &r)) {
-            StepOver so = stepOverTarget(i, tab, r.pc);
-            if (so.overCall) {
-                if (temp_.arm(s_, tab, so.next)) {
-                    s_.resume();
-                    return true;
-                }
-                note_ = "Could not set the temporary breakpoint; stepping instead";
+        StepOver so;
+        bool got = false;
+        s_.callCore([&] {   // one round trip: the registers and the decision read the same core state
+            vj_debug_regs r;
+            if (!s_.core().getRegs(tab, r)) return;
+            so = stepOverTarget(s_.core().iface(), tab, r.pc);
+            got = true;
+        });
+        if (got && so.overCall) {
+            if (temp_.arm(s_, tab, so.next)) {
+                s_.resume();
+                return true;
             }
+            note_ = "Could not set the temporary breakpoint; stepping instead";
         }
     }
     temp_.disarm(s_);

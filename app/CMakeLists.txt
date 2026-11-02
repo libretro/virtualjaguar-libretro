@@ -62,6 +62,34 @@ set(VJ_DISCORD_APP_ID "1559739062682787870" CACHE STRING "Discord application ID
 if(NOT VJ_DISCORD_APP_ID STREQUAL "" AND NOT VJ_DISCORD_APP_ID MATCHES "^[0-9]+$")
     message(FATAL_ERROR "VJ_DISCORD_APP_ID must be the numeric application ID from the Discord developer portal (got '${VJ_DISCORD_APP_ID}')")
 endif()
+# TV mode (#991): the setting a fresh config starts from (a stored ui.tv_mode wins; the key is written only when the user
+# changes it, so this default can move between builds).  app-package.yml always passes it: manual for release tags and
+# prerelease, auto for nightlies, PR builds and dev; a plain configure gets the default below.
+set(VJ_TV_DEFAULT "auto" CACHE STRING "TV mode setting for a fresh config: auto (nightlies, PR builds) | manual (releases) | off")
+if(NOT VJ_TV_DEFAULT MATCHES "^(auto|manual|off)$")
+    message(FATAL_ERROR "VJ_TV_DEFAULT must be auto, manual or off (got '${VJ_TV_DEFAULT}')")
+endif()
+# The build channel (#967 phase 3d, design section 8): release | nightly | dev.  Since the 4.0 flip (#1039 phase 5c) every
+# channel defaults Settings > Interface > Emulation thread to On for users who never chose; a stored choice always wins.
+# The channel still names the build in About and the log.  app-package.yml passes it per lane like VJ_TV_DEFAULT above;
+# a plain configure is dev.  VJ_EMU_THREAD_DEFAULT_VALUE stays a variable so a channel can be defaulted Off again in one
+# place (build_channel.h's static_assert checks it against emuThreadDefaultFor).
+set(VJ_BUILD_CHANNEL "dev" CACHE STRING "release | nightly | dev: the build channel shown in About and the log (#967)")
+set_property(CACHE VJ_BUILD_CHANNEL PROPERTY STRINGS release nightly dev)
+if(NOT VJ_BUILD_CHANNEL MATCHES "^(release|nightly|dev)$")
+    message(FATAL_ERROR "VJ_BUILD_CHANNEL must be release, nightly or dev (got '${VJ_BUILD_CHANNEL}')")
+endif()
+set(VJ_EMU_THREAD_DEFAULT_VALUE 1)
+add_library(vj_build_channel INTERFACE)
+target_compile_definitions(vj_build_channel INTERFACE VJ_BUILD_CHANNEL="${VJ_BUILD_CHANNEL}" VJ_EMU_THREAD_DEFAULT=${VJ_EMU_THREAD_DEFAULT_VALUE})
+option(VJ_MAC_APP_STORE "Build the sandboxed Mac App Store edition" OFF)
+if(VJ_MAC_APP_STORE AND NOT APPLE)
+    message(FATAL_ERROR "VJ_MAC_APP_STORE requires macOS")
+endif()
+if(VJ_MAC_APP_STORE)
+    # Use Apple's HID/GameController frameworks; no Homebrew runtime dlopen.
+    set(SDL_HIDAPI_LIBUSB OFF CACHE BOOL "No external libusb in the Store edition" FORCE)
+endif()
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
 option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
 option(VJ_APP_FREETYPE "Rasterise UI fonts with FreeType (hinting + anti-aliasing choices; fetched, pinned, built static). Off: Dear ImGui's built-in stb_truetype" ON)
@@ -259,13 +287,21 @@ if(VJ_APP_BUNDLE_DB)
             configure_file("${VJ_APP_LIBRETRO_DB_DIR}/${_n}" "${VJ_DB_DIR}/${_n}" COPYONLY)
             math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
         else()
+            # No EXPECTED_HASH: with it, a failed download is a configure error ("cannot compute hash on failed
+            # download") instead of the warning below.  The hash is checked by hand once the file is here.
             file(DOWNLOAD
                 "https://raw.githubusercontent.com/libretro/libretro-database/${VJ_DB_COMMIT}/metadat/${_p}"
                 "${VJ_DB_DIR}/${_n}"
-                EXPECTED_HASH SHA256=${_h}
                 TLS_VERIFY ON
                 STATUS _st)
             list(GET _st 0 _rc)
+            if(_rc EQUAL 0)
+                file(SHA256 "${VJ_DB_DIR}/${_n}" _got)
+                if(NOT _got STREQUAL _h)
+                    set(_rc 1)
+                    set(_st "1;\"SHA256 mismatch: ${_got}\"")
+                endif()
+            endif()
             if(_rc EQUAL 0)
                 math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
             else()
@@ -286,6 +322,7 @@ endif()
 set(VJ_APP_SOURCES
     src/main.cpp
     src/app.cpp
+    src/gl_context.cpp
     src/paths.cpp
     src/instance.cpp
     src/config.cpp
@@ -293,6 +330,7 @@ set(VJ_APP_SOURCES
     src/emu_thread.cpp
     src/audio.cpp
     src/video.cpp
+    src/aspect_choices.cpp
     src/present_util.cpp
     src/shaders.cpp
     src/shaders_ui.cpp
@@ -301,6 +339,7 @@ set(VJ_APP_SOURCES
     src/desktop_nav.cpp
     src/desktop_nav_app.cpp
     src/desktop_nav_ui.cpp
+    src/tv_more_settings.cpp
     src/hold_arbiter.cpp
     src/remap.cpp
     src/remap_ui.cpp
@@ -323,8 +362,10 @@ set(VJ_APP_SOURCES
     src/library_ui.cpp
     src/bios_ui.cpp
     src/cheats.cpp
+    src/cheat_store.cpp
     src/cheats_core.cpp
     src/cheats_ui.cpp
+    src/sha256.cpp
     src/achievements.cpp
     src/ach_event.cpp
     src/achievements_ui.cpp
@@ -338,8 +379,12 @@ set(VJ_APP_SOURCES
     src/netplay_ui.cpp
     # Debug tools (#652 / #833): the session, the Tools menu and one window (+ its pure logic) per tool.
     src/debug/debug_session.cpp
+    src/debug/debug_core.cpp
+    src/debug/debug_views.cpp
     src/debug/debug_ui.cpp
     src/debug/memory_view.cpp
+    src/debug/bitmap_view.cpp
+    src/debug/bitmap_ui.cpp
     src/debug/memory_ui.cpp
     src/debug/clut_ui.cpp
     src/debug/cheat_scan.cpp
@@ -352,6 +397,7 @@ set(VJ_APP_SOURCES
     src/debug/texture_pack.cpp
     src/debug/texture_ui.cpp
     src/debug/blitter_log.cpp
+    src/debug/blitter_feed.cpp
     src/debug/blitter_ui.cpp
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
@@ -373,16 +419,23 @@ set(VJ_APP_SOURCES
     src/tv/tv_home.cpp
     src/tv/tv_library.cpp
     src/tv/tv_details.cpp
+    src/tv/tv_achievements.cpp
+    src/tv/tv_overlays.cpp
+    src/tv/tv_settings.cpp
+    src/tv/tv_settings_model.cpp
     src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
-    src/discord_app.cpp)
+    src/discord_app.cpp
+    src/stall_probe.cpp)
 
 # Neuro API client (docs/neuro.md): an AI plays as Player 1.  Off: no Settings > Neuro tab, no --neuro.
 set(VJ_NEURO_SOURCES src/neuro/neuro_json.cpp src/neuro/neuro_ws.cpp src/neuro/neuro_actions.cpp
-    src/neuro/neuro_profiles.cpp src/neuro/neuro_link.cpp src/neuro/neuro_agent.cpp)
+    src/neuro/neuro_profiles.cpp src/neuro/neuro_link.cpp src/neuro/neuro_agent.cpp src/neuro/neuro_watch.cpp)
 if(VJ_APP_NEURO)
     list(APPEND VJ_APP_SOURCES ${VJ_NEURO_SOURCES} src/neuro/neuro_app.cpp)
+else()
+    list(APPEND VJ_APP_SOURCES src/neuro/neuro_json.cpp)   # the cheat store reads its manifest with it
 endif()
 
 # Native-OS integration (#833): one source per OS behind src/platform/platform_os.h.
@@ -391,7 +444,7 @@ if(APPLE)
     set_source_files_properties(src/platform/platform_macos.mm PROPERTIES
         COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
 elseif(WIN32)
-    list(APPEND VJ_APP_SOURCES src/platform/platform_windows.cpp)
+    list(APPEND VJ_APP_SOURCES src/platform/platform_windows.cpp src/platform/software_gl_windows.cpp)
 else()
     list(APPEND VJ_APP_SOURCES src/platform/platform_other.cpp)
 endif()
@@ -436,19 +489,27 @@ endif()
 include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
 add_executable(virtualjaguar ${VJ_APP_SOURCES})
+if(VJ_MAC_APP_STORE)
+    target_sources(virtualjaguar PRIVATE src/platform/file_access_macos.mm)
+    set_source_files_properties(src/platform/file_access_macos.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
+    target_compile_definitions(virtualjaguar PRIVATE VJ_MAC_APP_STORE=1)
+endif()
 vj_app_shaders(virtualjaguar)
 vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src src/debug "${VJ_ROOT}/src/debug")
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
+target_link_libraries(virtualjaguar PRIVATE vj_build_channel)
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 if(VJ_APP_NEURO)
     target_compile_definitions(virtualjaguar PRIVATE VJ_HAVE_NEURO=1)
 endif()
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
+message(STATUS "TV mode default for a fresh config: ${VJ_TV_DEFAULT}")
+message(STATUS "Build channel: ${VJ_BUILD_CHANNEL} (emulation thread default ${VJ_EMU_THREAD_DEFAULT_VALUE})")
 if(WIN32)
-    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
+    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses; platform_windows.cpp: WSAStartup for the core
     target_link_libraries(virtualjaguar PRIVATE shell32)           # platform_windows.cpp: SHAddToRecentDocs, ShellExecuteW
 endif()
 if(APPLE)
@@ -456,7 +517,8 @@ if(APPLE)
 endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}"
-    VJ_DISCORD_APP_ID="${VJ_DISCORD_APP_ID}")
+    VJ_DISCORD_APP_ID="${VJ_DISCORD_APP_ID}"
+    VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}")
 if(MSVC)
     target_compile_options(virtualjaguar PRIVATE /W3 /utf-8)
     target_compile_definitions(virtualjaguar PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -484,7 +546,7 @@ else()
     set(_vj_sign_dev_default OFF)
 endif()
 option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" ${_vj_sign_dev_default})
-if(VJ_APP_SIGN_DEV_BUILD AND APPLE)
+if(VJ_APP_SIGN_DEV_BUILD AND APPLE AND NOT VJ_MAC_APP_STORE)
     add_custom_command(TARGET virtualjaguar POST_BUILD
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/packaging/local-package.sh"
                 --sign-exe "$<TARGET_FILE:virtualjaguar>"
@@ -497,6 +559,10 @@ endif()
 # bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
 install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
 
+# The session's own sources (DebugSession marshals to DebugCore and fills DebugViews): every debug test that links
+# debug_session.cpp links all three.
+set(VJ_DEBUG_SESSION_SRCS src/debug/debug_session.cpp src/debug/debug_core.cpp src/debug/debug_views.cpp)
+
 # CPU debugger (debug tools WP4): vendored Musashi disassembler + cpu_view / cpu_ui + their tests.
 include(VJDebugCpu)
 
@@ -508,6 +574,7 @@ include(VJCheatData)
 # ---------------------------------------------------------------------------
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
+    find_package(Python3 COMPONENTS Interpreter)   # gdb_threaded_halt (VJEmuThreadTests.cmake) drives a gdb client from Python
     include(VJSmokeTests)
     include(VJAchTests)
     include(VJCheatTests)

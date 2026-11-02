@@ -8,6 +8,7 @@
 //                                       two app processes on localhost, one Host and one Join through
 //                                       the command-line twin of the window; both must report the link UP.
 //                                       Does not use UDP broadcast: the client is given the address.
+//   vj_netplay_test pair-shared EXE ROM [THREAD]  two copies on ONE data folder (instance.h); THREAD = on runs both with the emulation thread
 //   vj_netplay_test control EXE ROM [THREAD]  the same with nobody to talk to: must FAIL (so the check can fail).
 //   vj_netplay_test discovery EXE ROM   a host and a client that must FIND it by LAN discovery and join
 //                                       it.  Exit 77 (ctest: skipped) when this machine does not deliver
@@ -652,7 +653,7 @@ static int runPair(const std::string& exe, const std::string& rom, const std::st
 
 // Two copies of the app on ONE data folder.  The test takes instance 1 itself, so both children are
 // secondaries (2 and 3): they must coexist, link up, and leave the shared files alone.
-static int runPairShared(const std::string& exe, const std::string& rom) {
+static int runPairShared(const std::string& exe, const std::string& rom, const std::string& thread = "off") {
     namespace fs = std::filesystem;
     const int port = pickFreePort();
     const int disc = pickFreePort(port);
@@ -674,10 +675,16 @@ static int runPairShared(const std::string& exe, const std::string& rom) {
 
     const std::string p = std::to_string(port);
     const std::string d = dir.string();
-    Child host = spawn(appArgs(exe, rom, {"--data-dir", d, "--netplay", "host", "--netplay-port", p, "--netplay-expect-link", "30"}));
+    std::vector<std::string> hostX = {"--data-dir", d, "--netplay", "host", "--netplay-port", p, "--netplay-expect-link", "30"};
+    std::vector<std::string> joinX = {"--data-dir", d, "--netplay", "join", "--netplay-addr", "127.0.0.1",
+                                      "--netplay-port", p, "--netplay-expect-link", "30"};
+    if (thread == "on") {
+        hostX.insert(hostX.end(), {"--emu-thread", "on"});
+        joinX.insert(joinX.end(), {"--emu-thread", "on"});
+    }
+    Child host = spawn(appArgs(exe, rom, hostX));
     SDL_Delay(300);
-    Child join = spawn(appArgs(exe, rom, {"--data-dir", d, "--netplay", "join", "--netplay-addr", "127.0.0.1",
-                                          "--netplay-port", p, "--netplay-expect-link", "30"}));
+    Child join = spawn(appArgs(exe, rom, joinX));
     bool finished = waitBoth(host, join, 90);
     reap(host);
     reap(join);
@@ -771,7 +778,7 @@ static int runDiscovery(const std::string& exe, const std::string& rom) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: vj_netplay_test unit ROM | pair EXE ROM [DEVICE [HOST JOIN]] | control EXE ROM [THREAD] | discovery EXE ROM\n");
+        std::fprintf(stderr, "usage: vj_netplay_test unit ROM | pair EXE ROM [DEVICE [HOST JOIN]] | pair-shared EXE ROM [THREAD] | control EXE ROM [THREAD] | discovery EXE ROM\n");
         return 2;
     }
     netInit();
@@ -785,7 +792,7 @@ int main(int argc, char** argv) {
     } else if (mode == "pair" && argc >= 4) {
         rc = runPair(argv[2], argv[3], argc >= 5 ? argv[4] : "jaglink", argc >= 6 ? argv[5] : "off", argc >= 7 ? argv[6] : "off");
     } else if (mode == "pair-shared" && argc >= 4) {
-        rc = runPairShared(argv[2], argv[3]);
+        rc = runPairShared(argv[2], argv[3], argc >= 5 ? argv[4] : "off");
     } else if (mode == "control" && argc >= 4) {
         rc = runControl(argv[2], argv[3], argc >= 5 ? argv[4] : "off");
     } else if (mode == "discovery" && argc >= 4) {

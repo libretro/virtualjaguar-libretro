@@ -1,10 +1,22 @@
 name: Regression Tests
 
 on:
+  # No `develop` in the push list: every change reaches develop through a PR that
+  # already ran this workflow, so re-running it per merge mostly duplicated the PR
+  # run.  (Tests do not re-run on the merged tip; release.yml still compiles every
+  # develop tip for the nightly.)
   push:
-    branches: [ master, develop ]
+    branches: [ master ]
   pull_request:
     branches: [ develop, master ]
+    # A PR that changes only docs builds nothing and tests nothing, so it runs
+    # none of this.  docs/cd-boot-matrix.md's format check lives in pages.yml,
+    # which has its own filter.  A release PR always carries code; to run this
+    # on a docs-only PR anyway, use workflow_dispatch on its branch.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
 
 # Cancel stale PR runs when new commits push.
 concurrency:
@@ -39,7 +51,10 @@ jobs:
             platform: macos-arm64
 
     name: regression-${{ matrix.config.platform }}
-    runs-on: ${{ matrix.config.os }}
+    # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
+    # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
+    # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.
+    runs-on: ${{ matrix.config.os == 'ubuntu-latest' && github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || matrix.config.os == 'macos-latest' && vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || matrix.config.os }}
 
     steps:
     - uses: actions/checkout@v7
@@ -47,7 +62,9 @@ jobs:
     - name: Install ImageMagick
       run: |
         if [ "$(uname -s)" = "Darwin" ]; then
-          brew install imagemagick
+          # The Mac Studio runner is a non-admin user with imagemagick preinstalled;
+          # brew would auto-update into a prefix it may not own.
+          command -v magick >/dev/null || command -v convert >/dev/null || brew install imagemagick
         else
           sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
         fi
@@ -62,14 +79,18 @@ jobs:
     - name: Build miniretro
       if: steps.cache-miniretro.outputs.cache-hit != 'true'
       run: |
-        git clone --depth 1 https://github.com/davidgfnet/miniretro.git /tmp/miniretro-src
+        # RUNNER_TEMP, not /tmp: the self-hosted Studio runner keeps /tmp between jobs, so a
+        # second run's clone would hit the first run's directory.
+        SRC="$RUNNER_TEMP/miniretro-src"
+        rm -rf "$SRC"
+        git clone --depth 1 https://github.com/davidgfnet/miniretro.git "$SRC"
         LDFLAGS="-ldl"
         if [ "$(uname -s)" = "Darwin" ]; then LDFLAGS=""; fi
         ${{ matrix.config.cxx }} -O2 -Wall -Wno-deprecated-declarations -Wno-unused-result \
           -o miniretro-bin \
-          /tmp/miniretro-src/miniretro.cc \
-          /tmp/miniretro-src/util.cc \
-          /tmp/miniretro-src/loader.cc \
+          "$SRC/miniretro.cc" \
+          "$SRC/util.cc" \
+          "$SRC/loader.cc" \
           $LDFLAGS
 
     - name: Build core
