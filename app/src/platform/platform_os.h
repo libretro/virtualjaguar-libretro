@@ -13,6 +13,7 @@ namespace vj {
 namespace platform {
 namespace os {
 
+void initNetworking();                     // Windows: WSAStartup, once, before any core load
 void beforeWindow();
 void windowCreated(SDL_Window* w);
 void setDarkChrome(bool dark);             // Windows: the title bar follows the app theme
@@ -21,6 +22,7 @@ void renderMenus(const MenuBar& bar, const std::vector<MenuItem>& dock);
 void noteRecent(const std::string& path);
 void clearRecents();
 void setActivity(bool running);            // macOS App Nap
+bool displayAsleep(SDL_Window* w);         // macOS: the window's display is asleep (CGDisplayIsAsleep); false elsewhere
 bool revealFile(const std::string& path);  // false: not supported, caller opens the folder
 const char* fileManagerName();
 int dumpMenus();                           // see platform.h dumpNativeMenu()

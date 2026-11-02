@@ -91,17 +91,7 @@ void picture(Achievements& a, const std::string& url, float size, const std::str
     dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), ui::u32(ui::pal().pictureBg, v.state == ra::ImageView::Loading ? 90.0f / 255.0f : 50.0f / 255.0f), 4.0f);
 }
 
-std::string clock(long long t) {
-    char when[48] = "";
-    std::tm tmv;
-    std::time_t tt = (std::time_t)t;
-#ifdef _WIN32
-    if (localtime_s(&tmv, &tt) == 0) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
-#else
-    if (localtime_r(&tt, &tmv)) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
-#endif
-    return when;
-}
+std::string clock(long long t) { return ra::clockText(t); }
 
 std::string day(long long t) {
     char when[48] = "";
@@ -217,22 +207,7 @@ void drawThisGame(App& app) {
             ui::coloredWrapped(r.unlocked() ? kGold() : kGrey(), line);
         }
         if (!r.description.empty()) ImGui::TextWrapped("%s", r.description.c_str());
-        // The status line: earned how and when, or how far along, plus the tags.
-        std::string st;
-        if (r.unlockedHard) st = "Unlocked in hardcore";
-        else if (r.unlockedSoft) st = "Unlocked (softcore)";
-        else st = "Locked";
-        if (r.unlocked() && r.unlockTime) st += "  " + clock(r.unlockTime);
-        if (!r.unlocked() && !r.progress.empty()) st += "  Progress: " + r.progress;
-        if (r.rarity > 0) {
-            char pct[48];
-            std::snprintf(pct, sizeof pct, "  %.1f%% of players", r.rarity);
-            st += pct;
-        }
-        if (const char* t = ra::achTypeLabel(r.type); *t) st += std::string("  [") + t + "]";
-        if (r.unofficial) st += "  [unofficial]";
-        if (r.unsupported) st += "  [not supported by this version]";
-        ImGui::TextDisabled("%s", st.c_str());
+        ImGui::TextDisabled("%s", ra::achStatusLine(r).c_str());   // the status line: earned how and when, or how far along, plus the tags
         ImGui::EndGroup();
         ImGui::Spacing();
         ImGui::PopID();

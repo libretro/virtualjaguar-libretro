@@ -165,6 +165,41 @@ void Agent::tick(double now, const GameState& g) {
     link_.tick(now, canForce, canForce && link_.connected() ? stateText(g) : std::string());
 }
 
+void Agent::publishTo(InputSnapshot& s) {
+    const bool en = allowed() && actions_.blocked().empty();
+    if (queue_.version() == pubVersion_ && queue_.lineage() == pubLineage_ && en == pubEnabled_) return;
+    s.publishAgent(queue_.program(++programGen_, en));
+    pubVersion_ = queue_.version();
+    pubLineage_ = queue_.lineage();
+    pubEnabled_ = en;
+}
+
+void Agent::absorb(const AgentProgress& p) {
+    if (p.lineage == lastLineage_) {
+        if (p.played > lastPlayed_) playedTotal_ += p.played - lastPlayed_;
+    } else {
+        playedTotal_ += p.played;
+    }
+    lastLineage_ = p.lineage;
+    lastPlayed_ = p.played;
+    const bool mine = p.lineage == queue_.lineage();   // an older lineage's progress says nothing about this queue
+    pressed_ = mine && allowed() ? p.pressed : ControlSet();
+    if (mine && p.played > queue_.firstFrame()) queue_.trim((unsigned)(p.played - queue_.firstFrame()));
+}
+
+bool Agent::watchRange(uint32_t& base, unsigned& len) const {
+    const Profile* p = actions_.profile();
+    if (!p || p->watches.empty()) return false;
+    uint32_t lo = p->watches[0].address, hi = lo;
+    for (const Watch& w : p->watches) {
+        if (w.address < lo) lo = w.address;
+        if (w.address + w.size > hi) hi = w.address + w.size;
+    }
+    base = lo;
+    len = hi - lo;
+    return true;
+}
+
 std::string Agent::stateText(const GameState& g) const {
     if (!g.loaded) return "No game is running.";
     std::string s = "# " + (g.title.empty() ? std::string("Atari Jaguar game") : g.title) + "\n";
@@ -173,7 +208,8 @@ std::string Agent::stateText(const GameState& g) const {
     s += "- Held buttons: " + describe(h) + "\n";
     if (const Profile* p = actions_.profile())
         for (const Watch& w : p->watches)
-            s += "- " + w.name + ": " + watchValue(w, g.ram, g.ramSize) + (w.note.empty() ? "" : " " + w.note) + "\n";
+            s += "- " + w.name + ": " + watchValue(w, g.watchBytes.data(), g.watchBytes.size(), g.watchBase) +
+                 (w.note.empty() ? "" : " " + w.note) + "\n";
     return s;
 }
 

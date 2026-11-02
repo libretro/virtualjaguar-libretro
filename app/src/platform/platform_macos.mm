@@ -16,6 +16,8 @@
 //     main loop, never inside Cocoa's menu-tracking run loop.
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
+#include <pthread.h>
+#include <sys/qos.h>
 
 #include <cstdio>
 #include <cstring>
@@ -175,7 +177,11 @@ void hookDockMenu() {
 
 }  // namespace
 
-void beforeWindow() {}
+// The UI thread presents every frame on a vblank deadline: run it at user-interactive QoS however the app was
+// launched.  LaunchServices starts an app's main thread there; a launch from a terminal starts it at the default QoS,
+// where any CPU load delays it by milliseconds (#1026).  The emulation thread does the same (emu_thread.cpp).
+void initNetworking() {}
+void beforeWindow() { pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0); }
 void windowCreated(SDL_Window*) {}
 void setDarkChrome(bool) {}   // the title bar follows the system appearance
 
@@ -217,6 +223,20 @@ void renderMenus(const MenuBar& bar, const std::vector<MenuItem>& dock) {
         if (helpMenu) [NSApp setHelpMenu:helpMenu];
         g_dockMenu = makeDockMenu(dock);
     }
+}
+
+// No display is awake (CGGetActiveDisplayList is empty while they sleep -- the list SDL's display link is made from), or
+// the window's own display (its NSScreen; the main display when the window has none) is asleep.
+bool displayAsleep(SDL_Window* w) {
+    uint32_t active = 0;
+    if (CGGetActiveDisplayList(0, nullptr, &active) == kCGErrorSuccess && active == 0) return true;
+    CGDirectDisplayID id = CGMainDisplayID();
+    if (w) {
+        NSWindow* nw = (__bridge NSWindow*)SDL_GetPointerProperty(SDL_GetWindowProperties(w), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+        NSNumber* num = [[nw.screen deviceDescription] objectForKey:@"NSScreenNumber"];
+        if (num) id = (CGDirectDisplayID)num.unsignedIntValue;
+    }
+    return CGDisplayIsAsleep(id) != 0;
 }
 
 void noteRecent(const std::string& path) {

@@ -1,9 +1,11 @@
-// TV mode (#991): a Base-layer screen.  The shell keeps a stack of them (tv_shell.h), draws the chrome around the
-// top one (tv_chrome.cpp) and hands it the nav intents; a screen is drawn on an ImDrawList and tests the pointer with
+// TV mode (#991): a Base-layer screen (also the screen of the in-game menu's slot, see setEmbedded).  The shell keeps a stack of
+// them (tv_shell.h), draws the chrome around the top one (tv_chrome.cpp) and hands it the nav intents; a screen is drawn on an ImDrawList and tests the pointer with
 // plain rectangles (see tv_widgets.h), so it never owns an ImGui item.
 //
-// A screen never sees Intent::Back, SectionPrev or SectionNext: those are the shell's (a pop, a step to the
-// neighbouring section).  What a screen needs of the app it asks of tv::Host.
+// A screen never sees SectionPrev or SectionNext: those are the shell's (a step to the neighbouring section).  Back is
+// the shell's too (a pop, or Home from a root), except that it asks the top screen first (Screen::back()): a screen with a
+// level of its own inside (Settings' list, under its rail) steps up there.  What a screen needs of the app it asks of
+// tv::Host.
 #pragma once
 
 #include <memory>
@@ -22,7 +24,7 @@ namespace vj::tv {
 
 class Shell;
 
-enum class Section { Home, Library };   // Phase 3 appends Achievements and Settings
+enum class Section { Home, Library, Achievements, Settings };
 
 // What a screen draws with, once per frame.  The pointer fields are false / zero unless the Base window itself is
 // hovered, so a click on a desktop window drawn above it never reaches a tile.
@@ -40,19 +42,47 @@ struct DrawCtx {
 class Screen {
 public:
     virtual ~Screen() = default;
-    virtual const char* id() const = 0;   // "home" | "library" | "letters" | "details": FocusMemory keys, tests
+    virtual const char* id() const = 0;   // "home" | "library" | "letters" | "details" | "achievements" | "settings" | "overlays": FocusMemory keys, tests
     virtual void intent(Intent in) = 0;
     virtual bool typed(char c) { return false; }   // 'a'..'z', '0'..'9', '\b'; true = used
+    // The label of what has the focus (Settings: the group on the rail, or the row in its list), "" when the screen has none to name.
+    // For tests and the headless script (`expect tv-focus=LABEL`); not drawn.  Not const: a screen may refresh its model first.
+    virtual std::string focusLabel() { return {}; }
+    // Settings: the key of the group on the rail ("picture", "core:video"); "" for any other screen.  Tests and the headless script
+    // (`expect tv-group=KEY`).
+    virtual std::string focusGroup() { return {}; }
+    virtual bool back() { return false; }          // Back: true = the screen stepped up inside itself; false = the shell's (pop / Home)
     virtual void draw(const DrawCtx& c) = 0;       // draws, and does hover-focus / click / wheel from c
     virtual std::vector<widgets::Hint> hints() const = 0;   // last = the way out
     virtual bool modal() const { return false; }   // drawn over the screen below it, which is drawn first
+
+    // Set by Shell::menuPushScreen: the screen sits in the in-game menu's slot.  DrawCtx::pos / size are then the menu's list area, so
+    // a screen draws no rail of its own and no safe margin, and its way out is "Menu" (Back always leaves for the menu, after the
+    // screen's own back()).
+    void setEmbedded(bool on) { embedded_ = on; }
+    // An embedded screen that wants the whole panel (the Library: its own rail and grid) instead of the list area beside the menu's
+    // rail.  The menu then draws no rail, and DrawCtx::pos / size are the panel inside its inset.
+    virtual bool wide() const { return false; }
+
+protected:
+    bool embedded() const { return embedded_; }
+
+private:
+    bool embedded_ = false;
 };
 
-// The two root screens (tv_home.cpp, tv_library.cpp).
+// The root screens (tv_home.cpp, tv_library.cpp, tv_achievements.cpp, tv_settings.cpp); Achievements, Overlays and Settings are also
+// the screens of the in-game menu's slot (Shell::menuPushScreen).
 std::unique_ptr<Screen> makeHomeScreen(Host& h, Shell& s);
 std::unique_ptr<Screen> makeLibraryScreen(Host& h, Shell& s);
+// The loaded game's achievements, or the RetroAchievements Jaguar list; `focusGameId` (a list id, 0 = none) is the game whose row
+// the list focuses once it has it (Game details opens the section that way).
+std::unique_ptr<Screen> makeAchievementsScreen(Host& h, Shell& s, uint32_t focusGameId = 0);
+std::unique_ptr<Screen> makeSettingsScreen(Host& h, Shell& s);   // a rail of groups beside their rows (tv_settings_model.h)
+// The overlays the player can switch (tv_overlays.cpp): never a section, only the in-game menu's slot.
+std::unique_ptr<Screen> makeOverlaysScreen(Host& h, Shell& s);
 
-// Game details (tv_details.cpp): the art, the title and a list -- Play, one Resume row per save state, Favorite.  Pushed by
+// Game details (tv_details.cpp): the art, the title and a list -- Play, one Resume row per save state, Favorite, Achievements.  Pushed by
 // Start or a right-click on a tile of Home or the Library.  The list is fetched again every draw, keyed by `g.key`.
 class DetailsScreen : public Screen {
 public:
@@ -64,7 +94,7 @@ public:
 
 private:
     struct Item {
-        enum Kind { Play, Resume, Favorite } kind;
+        enum Kind { Play, Resume, Favorite, Achievements } kind;
         std::string label, sub;
         int slot = -1;
         int64_t time = 0;
@@ -77,6 +107,7 @@ private:
     Shell& shell_;
     GameRef g_;
     std::vector<Item> items_;   // from the last refresh(); empty when the game is gone
+    uint32_t achId_ = 0;        // the RetroAchievements list entry for this game (Host::achGameId); 0 = none, no Achievements row
     LinearFocus focus_;
     Tween scroll_;              // vertical scroll of the list, in pixels
     float scrollTo_ = 0;        // ... and where it is heading

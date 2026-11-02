@@ -13,6 +13,8 @@ static size_t (*save_events)(uint8_t *);
 static size_t (*load_events)(const uint8_t *);
 static uint8_t (*read_byte)(uint32_t,uint32_t);
 static uint32_t (*read_long)(uint32_t,uint32_t);
+static void (*set_callback)(void (*)(void),double,int);
+static void (*halfline_cb)(void);
 static void reset_timer(void)
 {
     c.TOMReset(); init_events();
@@ -90,6 +92,33 @@ TEST(readable_memory)
     c.TOMWriteWord(0xF02020,0x5678,0);
     ASSERT_EQ(c.TOMReadWord(0xF02020,0),0x5678);
 }
+/* HC free-runs 0..HP across each half-line (JTRM), so its low bits at a
+ * read are the read's position in the line.  Alien vs Predator rolls its
+ * marine fire decision on `HC & 7 == 2`; a readback that was a per-read
+ * counter reset every half-line only ever showed 0 or 6 there. */
+TEST(hc_free_runs)
+{
+    const double period = 31.777777777, tick = period / 845.0;
+    unsigned k;
+    c.TOMReset(); init_events();
+    ((struct VJSettings *)c.vjs)->hardwareTypeNTSC=true;
+    c.TOMWriteWord(0xF0002E, 844, 0);              /* HP: 845 ticks */
+    set_callback(halfline_cb, period, 0);
+    ASSERT_EQ(c.TOMReadWord(0xF00004,0),0);
+    /* Every low-bit value is reachable, and a read does not move it. */
+    for(k=0;k<8;k++)
+    {
+        subtract_time(k ? tick : 0.5 * tick, 0);
+        ASSERT_EQ(c.TOMReadWord(0xF00004,0),k);
+        ASSERT_EQ(c.TOMReadWord(0xF00004,0),k);
+    }
+    subtract_time(400.0 * tick, 0);
+    ASSERT_EQ(c.TOMReadWord(0xF00004,0),407);
+    ASSERT_EQ(read_byte(0xF00004,0),407 >> 8);
+    ASSERT_EQ(read_byte(0xF00005,0),407 & 0xFF);
+    subtract_time(437.0 * tick, 0);                 /* tick 844.5 */
+    ASSERT_EQ(c.TOMReadWord(0xF00004,0),844);
+}
 int main(void)
 {
     TEST_INIT("TOM hardware readback");
@@ -104,9 +133,11 @@ int main(void)
     RESOLVE(load_events,"EventStateLoad");
     RESOLVE(read_byte,"TOMReadByte");
     RESOLVE(read_long,"JaguarReadLong");
+    RESOLVE(set_callback,"SetCallbackTime");
+    RESOLVE(halfline_cb,"HalflineCallback");
     RUN_TEST(pit_live); RUN_TEST(pit_rollover_and_state);
     RUN_TEST(pit_full_width); RUN_TEST(memcon_fallback);
-    RUN_TEST(readable_memory);
+    RUN_TEST(readable_memory); RUN_TEST(hc_free_runs);
     vj_core_unload(&c);
     return TEST_REPORT();
 }

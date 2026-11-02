@@ -54,8 +54,13 @@ std::string stemOf(const std::string& path) {
 }  // namespace
 
 std::string discordConfiguredAppId(const Config& cfg) {
+#ifdef VJ_MAC_APP_STORE
+    (void)cfg;
+    return trim(""); // Discord's external Unix socket isn't available inside App Sandbox.
+#else
     std::string id = trim(cfg.get("discord.app_id", ""));
     return id.empty() ? trim(VJ_DISCORD_APP_ID) : id;
+#endif
 }
 
 void discordNoteGameStarted(App& app) { app.discordState.gameStartUnix = unixNow(); }

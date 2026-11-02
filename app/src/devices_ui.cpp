@@ -3,6 +3,7 @@
 
 #include "app.h"
 #include "libretro.h"
+#include "tv_more_settings.h"
 #include "tv/tv_shell.h"
 #include "ui_util.h"
 
@@ -65,10 +66,15 @@ void tvInputFrame(App& app, uint64_t ms) {
         if (app.host.isLoaded()) app.tvShell().toggleMenu();
         else app.toggleTvMode();
     }
+    // TV mode just came on (any trigger: the toggle, Auto's fullscreen / pad press, --tv, the remembered Manual state): its Library is the
+    // TV screen, so the desktop library window does not stay open over it.
+    if (app.tvMode.active() && !app.tvSeenOn_) app.library.show = false;
+    app.tvSeenOn_ = app.tvMode.active();
     if (app.tvShell().menuOpen() && !app.host.isLoaded()) app.tvShell().closeMenu();   // the game went away under it
     app.tvShell().noteCapture(in.capturing());   // a capture start / end forgets what the nav thinks is held
     app.tvShell().frame(ms);   // the nav intents gathered since the last frame
     deskPadFrame(app, ms);     // the desktop library's pad nav (#1021)
+    tvMoreSettingsFrame(app, ms);   // "More settings" opened from TV mode: its window's pad nav
     // `live` = the game owns the input: loaded, running, and the TV menu not laid over it.
     in.tickHolds(ms, app.host.isLoaded() && !app.paused && !app.tvShell().menuOpen());
 }

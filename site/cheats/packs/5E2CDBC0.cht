@@ -1,0 +1,39 @@
+# Community cheats for Doom - Evil Unleashed (1994); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_doom.c
+# Source SHA256: 197cc6ffbbce120dd8332fa3416f30764ec07dd72a96a59c8a33ebc393280158
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "5E2CDBC0"
+cheats = 8
+
+cheat0_desc = "Infinite Ammo"
+cheat0_code = "0004DA40:0000022B+0004DA44:0000022B+0004DA48:0000022B+0004DA4C:0000022B"
+cheat0_enable = false
+
+cheat1_desc = "Unlock All Levels"
+cheat1_code = "00047D37:18"
+cheat1_enable = false
+
+cheat2_desc = "Unlock All Weapons"
+cheat2_code = "0004DA28:00000001+0004DA2C:00000001+0004DA30:00000001+0004DA34:00000001+0004DA38:00000001+0004DA3C:00000001"
+cheat2_enable = false
+
+cheat3_desc = "Unlock All Cards"
+cheat3_code = "0004D9F4:00000001+0004D9F8:00000001+0004D9FC:00000001+0004DA00:00000001+0004DA04:00000001+0004DA08:00000001"
+cheat3_enable = false
+
+cheat4_desc = "Invulnerable"
+cheat4_code = "0004D9E4:0000000B"
+cheat4_enable = false
+
+cheat5_desc = "Iron Feet"
+cheat5_code = "0004D9EC:0000000B"
+cheat5_enable = false
+
+cheat6_desc = "Strength"
+cheat6_code = "0004D9E8:00000041"
+cheat6_enable = false
+
+cheat7_desc = "Full Map"
+cheat7_code = "0004D9F0:00000001"
+cheat7_enable = false

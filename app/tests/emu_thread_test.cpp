@@ -28,11 +28,15 @@
 namespace vj {
 struct EmuThreadTestAccess {
     static bool advancePublished(EmuThread& e) {
-        // The owner is gated after drain: old code publishes the budget directly, fixed code queues it
-        // behind the one pending mutation. Neither can be consumed until the test releases the gate.
+        // The owner is gated after drain: old code publishes the budget directly, fixed code queues it (on the debug
+        // lane) behind the one pending mutation. Neither can be consumed until the test releases the gate.
         if (e.advanceLeft_.load() != 0) return true;
         std::lock_guard<std::mutex> lock(e.cmds_.mu_);
-        return e.cmds_.q_.size() >= 2;
+        return !e.cmds_.dbg_.empty();
+    }
+    static size_t debugQueued(EmuThread& e) {
+        std::lock_guard<std::mutex> lock(e.cmds_.mu_);
+        return e.cmds_.dbg_.size();
     }
 };
 }  // namespace vj
@@ -63,6 +67,8 @@ struct FakeClient : EmuThread::Client {
     std::atomic<bool> blocked{false};
     std::atomic<int> holdAt{-1};        // runFrame holds, after counting its frame, while frames == holdAt
     std::atomic<int> started{0}, stopping{0}, afterCmds{0};
+    std::atomic<int> serveNow{0};       // each count runs onBlocked once, on the emulation thread, inside the blocked frame
+    std::function<void()> onBlocked;    // set BEFORE start(), never reassigned while the thread runs
     std::thread::id startedOn;
     std::atomic<double> period{0.010};
     std::mutex errMu;
@@ -79,6 +85,10 @@ struct FakeClient : EmuThread::Client {
     void runFrame() override {
         while (block.load()) {
             blocked = true;
+            if (onBlocked && serveNow.load() > 0) {
+                serveNow--;
+                onBlocked();
+            }
             sleepMs(1);
         }
         frames++;
@@ -104,6 +114,31 @@ void testInline() {
     CHECK(c.frames == 1 && e.framesRun() == 1, "inlineStep runs one frame");
     CHECK(e.advance(3) && c.frames == 4, "advance(3) runs three more");
     CHECK(e.stop(), "stop is a no-op inline");
+}
+
+// The scheduling class (thread_realtime.h): asked for by default, never fatal, always reported; off on request.  What the
+// OS grants depends on the host (Linux refuses SCHED_RR without RLIMIT_RTPRIO), so the note's text is printed, not pinned.
+void testRealtimeNote() {
+    {
+        EmuThread e;
+        FakeClient c;
+        CHECK(e.start(EmuThread::Mode::Threaded, c), "start (real-time requested)");
+        CHECK(!e.realtimeNote().empty(), "the note is set before start() returns");
+        CHECK(e.realtimeNote().rfind("real-time", 0) == 0 || e.realtimeNote().rfind("normal", 0) == 0, "note: %s",
+              e.realtimeNote().c_str());
+        std::printf("emu_thread_test: scheduling %s\n", e.realtimeNote().c_str());
+        e.advance(2);
+        CHECK(c.frames >= 2, "frames run as a real-time thread");
+        CHECK(e.stop(), "stop");
+    }
+    {
+        EmuThread e;
+        FakeClient c;
+        e.setRealtime(false);
+        CHECK(e.start(EmuThread::Mode::Threaded, c), "start (normal)");
+        CHECK(e.realtimeNote() == "normal (not requested)", "off: %s", e.realtimeNote().c_str());
+        CHECK(e.stop(), "stop");
+    }
 }
 
 void testCallSeesPosts() {
@@ -330,6 +365,10 @@ void testJoinTimeout() {
         ran = true;
         return 1;
     }) == 0 && !ran, "after abandoning, call() runs nothing and returns a default value");
+    CHECK(e->debugCall([&ran] {
+        ran = true;
+        return 1;
+    }) == 0 && !ran, "after abandoning, debugCall() runs nothing and returns a default value");
     CHECK(!e->callFor(std::chrono::milliseconds(10), [&ran] { ran = true; }) && !ran, "nor callFor()");
     c->block = false;   // let the abandoned thread finish its frame and exit; it runs the queued callFor on the way out
     for (int i = 0; i < 1000 && !late->load(); i++) sleepMs(1);
@@ -483,7 +522,367 @@ void testWaitHook() {
     CHECK(e.stop(), "stop");
 }
 
+// #967 phase 3: the debug lane. Inline it runs at once; threaded it runs on the emulation thread, wakes a parked
+// (paused) loop, waits for a frame in progress and runs at the boundary BEFORE the next frame starts, and runs the
+// wait hook like call().
+void testDebugLane() {
+    {
+        EmuThread e;
+        FakeClient c;
+        CHECK(e.start(EmuThread::Mode::Inline, c), "inline start");
+        int x = 0;
+        e.debugPost([&x] { x = 1; });
+        CHECK(x == 1, "inline debugPost runs at once");
+        CHECK(e.debugCall([&x] { return x + 1; }) == 2, "inline debugCall runs at once");
+    }
+    EmuThread e;
+    FakeClient c;
+    e.setPaused(true);   // no frames: only a command can wake the loop
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "threaded start");
+    CHECK(e.debugCall([&e] { return e.onEmuThread(); }), "a debugCall runs on the emulation thread");
+    CHECK(e.debugCall([&e] { return e.debugCall([] { return 7; }); }) == 7,
+          "a debugCall made on the emulation thread runs inline");
+    std::atomic<bool> ran{false};
+    const Clock::time_point t0 = Clock::now();
+    e.debugPost([&ran] { ran = true; });
+    for (int i = 0; i < 400 && !ran.load(); i++) sleepMs(1);
+    CHECK(ran.load() && since(t0) < 0.2, "a debugPost runs on a paused thread well inside its 250 ms idle wait (%.3f s)", since(t0));
+    CHECK(c.frames == 0, "...without running a frame");
+    std::atomic<bool> late{false};
+    e.debugPost([&late] { late = true; });
+    CHECK(e.stop() && late.load(), "stop() drains the debug lane too");
+}
+
+void testDebugCallWaitsForTheFrame() {
+    EmuThread e;
+    FakeClient c;
+    c.holdAt = 1;   // the first frame counts itself, then holds
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && c.frames.load() < 1; i++) sleepMs(1);
+    std::atomic<int> framesWhenRun{-1};
+    std::atomic<bool> returned{false};
+    std::thread caller([&] {
+        e.debugCall([&] { framesWhenRun = c.frames.load(); });
+        returned = true;
+    });
+    sleepMs(80);
+    CHECK(!returned.load() && framesWhenRun.load() == -1, "a debugCall waits while a frame is in progress");
+    c.holdAt = -1;
+    caller.join();
+    CHECK(framesWhenRun.load() == 1, "it runs at the frame boundary, before the next frame starts (frames %d)",
+          framesWhenRun.load());
+    CHECK(e.stop(), "stop");
+}
+
+void testDebugCallWaitHook() {
+    EmuThread e;
+    FakeClient c;
+    std::atomic<int> calls{0};
+    e.setWaitHook([&](double, unsigned) { calls++; });
+    c.holdAt = 1;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && c.frames.load() < 1; i++) sleepMs(1);
+    // Hold the frame until the hook has run three times (kBusyAfter, then ~every 16 ms), not for a fixed 450 ms: a slow
+    // hosted VM can oversleep so much that three hooks do not fit (#967).  The 5 s bound keeps a broken hook from hanging.
+    std::thread release([&c, &calls] {
+        for (int i = 0; i < 5000 && calls.load() < 3; i++) sleepMs(1);
+        c.holdAt = -1;
+    });
+    e.debugCall([] { return 0; });
+    release.join();
+    CHECK(calls.load() >= 3, "a debugCall behind a slow frame runs the wait hook like call() (%d)", calls.load());
+    CHECK(e.stop(), "stop");
+}
+
 }  // namespace
+
+// B1: the halt pump's lane service.  Threaded, it drains the debug lane, waits at most maxWait for a DEBUG post, drains
+// again; a frame-lane post does not shorten the wait; inline it drains and returns at once.
+void testServeDebugLane() {
+    EmuThread e;
+    FakeClient c;
+    std::atomic<size_t> served{0};
+    std::atomic<double> waited{0};
+    std::atomic<int> rounds{0};               // onBlocked calls that have finished: the results above are valid once it counts them
+    c.onBlocked = [&] {                       // runs on the emulation thread, inside the blocked frame (the halt)
+        // A thread descheduled between leaving the loop and serving, as on a loaded hosted VM (#967): the test must wait for
+        // the round to finish, never for a fixed sleep, or it reads `waited` before it is stored (the CI "0.0 ms").
+        sleepMs(30);
+        const auto t0 = Clock::now();
+        served = e.serveDebugLane(std::chrono::milliseconds(4));
+        waited = since(t0);
+        rounds++;                             // last: it publishes `served` and `waited`
+    };
+    c.block = true;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    e.post([] {});                            // a frame-lane command queued behind the halted frame (the SRAM autosave)
+    c.serveNow = 1;
+    for (int i = 0; i < 5000 && rounds.load() < 1; i++) sleepMs(1);   // the 5 s bound only keeps a broken lane from hanging the test
+    CHECK(rounds.load() == 1, "the first lane service finished (%d)", rounds.load());
+    CHECK(served.load() == 0, "nothing in the debug lane: 0 commands (%zu)", served.load());
+    CHECK(waited.load() >= 0.003 && waited.load() < 2.0, "and it waited about maxWait despite the frame post (%.1f ms)", waited.load() * 1e3);
+    std::atomic<int> ran{0};
+    e.debugPost([&] { ran++; });
+    c.serveNow = 1;
+    for (int i = 0; i < 5000 && rounds.load() < 2; i++) sleepMs(1);   // `served` is stored after the lane service returns
+    CHECK(ran.load() == 1 && served.load() == 1, "a debug post is run by the lane service (%d, %zu)", ran.load(), served.load());
+    CHECK(e.serveDebugLane(std::chrono::milliseconds(50)) == 0, "off the emulation thread: 0, no wait");
+    c.block = false;
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline start");
+    int x = 0;
+    in.debugPost([&] { x = 1; });            // inline: ran at once
+    const auto t0 = Clock::now();
+    CHECK(in.serveDebugLane(std::chrono::milliseconds(50)) == 0 && since(t0) < 0.01 && x == 1, "inline: returns at once");
+}
+
+// Review Focus 1: a call posted an instant before the core halts.  With a give-up predicate it returns R() once the
+// predicate turns true, and the cancelled task never runs; a task that already started is waited for; a predicate that
+// is already true means nothing is queued at all.
+void testCallGivesUp() {
+    EmuThread e;
+    FakeClient c;
+    c.block = true;   // a frame that never ends: the halt
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    std::atomic<bool> halted{false};
+    std::atomic<int> polls{0};
+    auto ran = std::make_shared<std::atomic<bool>>(false);
+    std::thread flip([&] { sleepMs(60); halted = true; });
+    const Clock::time_point t0 = Clock::now();
+    const int r = e.call([ran] { *ran = true; return 42; }, [&] { polls++; return halted.load(); });
+    flip.join();
+    CHECK(r == 0, "the call returned R() (%d)", r);
+    // call() has no timeout: a predicate it never consulted would hang here, not run long.  The ceiling only tells a hang
+    // from a slow host (a starved macOS runner took 319 ms: every 1 ms sleep took 8).
+    CHECK(since(t0) < 2.0 && since(t0) >= 0.05, "once the predicate turned true, not before, no hang (%.3f s)", since(t0));
+    CHECK(polls.load() >= 2, "the predicate was polled before the post and after a slice (%d)", polls.load());
+    // Already halted when the call is made: nothing is queued, R() at once.
+    polls = 0;
+    auto ran2 = std::make_shared<std::atomic<bool>>(false);
+    const Clock::time_point t1 = Clock::now();
+    CHECK(e.call([ran2] { *ran2 = true; return 7; }, [&] { polls++; return halted.load(); }) == 0 && since(t1) < 0.01 && polls.load() == 1,
+          "a true predicate before the post returns at once (%.1f ms, %d polls)", since(t1) * 1e3, polls.load());
+    c.block = false;
+    sleepMs(100);                                   // the frame ends, the queue drains
+    CHECK(!ran->load() && !ran2->load(), "the cancelled task never ran, the refused one was never queued");
+    // A task that started before the predicate turned true runs to completion and returns its value.
+    halted = false;
+    const int r2 = e.call([&] { sleepMs(120); halted = true; sleepMs(30); return 7; }, [&] { return halted.load(); });
+    CHECK(r2 == 7, "a started task is waited for (%d)", r2);
+    // Never consulted inline or on the emulation thread.
+    std::atomic<int> consulted{0};
+    CHECK(e.call([&] { return e.call([] { return 1; }, [&] { consulted++; return true; }); }) == 1, "on the thread: runs");
+    CHECK(consulted.load() == 0, "predicate ignored on the emulation thread (%d)", consulted.load());
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline");
+    CHECK(in.call([] { return 3; }, [&] { consulted++; return true; }) == 3 && consulted.load() == 0, "inline: runs, never asks");
+}
+
+// Carried from 3a: advance() gives up like call().  The budget is registered on the debug lane even while a frame is
+// parked; the wait ends when the predicate turns true; advance(0) later waits for the frames still budgeted.
+void testAdvanceGivesUp() {
+    EmuThread e;
+    FakeClient c;
+    e.setPaused(true);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    c.block = true;                                 // the next frame parks: the halt
+    std::atomic<bool> halted{false};
+    std::thread flip([&] { sleepMs(80); halted = true; });
+    const Clock::time_point t0 = Clock::now();
+    const bool r = e.advance(2, [&] { return halted.load(); });
+    flip.join();
+    CHECK(!r && since(t0) >= 0.07 && since(t0) < 2.0, "gave up once the predicate turned true, not before (%.3f s)", since(t0));
+    CHECK(c.blocked.load(), "the budget was registered: the first frame started and parked");
+    halted = false;
+    c.block = false;
+    CHECK(e.advance(0, [&] { return halted.load(); }), "advance(0) waits for the frames still budgeted");
+    CHECK(c.frames.load() == 2, "both budgeted frames ran (%d)", c.frames.load());
+    const Clock::time_point t1 = Clock::now();
+    CHECK(e.advance(0) && since(t1) < 0.05, "nothing pending: true at once");
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline");
+    std::atomic<int> consulted{0};
+    CHECK(in.advance(2, [&] { consulted++; return true; }) && ic.frames.load() == 2 && consulted.load() == 0, "inline: runs, never asks");
+}
+
+// The CAS-lost branch: the predicate turns true only AFTER the task has started (it spins until it has).  call() must then
+// wait for the task and return its value, never R(), and the by-reference local it wrote must be intact.
+void testCallGiveUpLosesToStart() {
+    EmuThread e;
+    FakeClient c;
+    c.block = true;                                  // the first frame parks: the task stays queued past the first slice
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    std::atomic<bool> started{false};
+    std::atomic<int> polls{0};
+    int local = 0;
+    const int r = e.call(
+        [&] {
+            started = true;
+            sleepMs(30);
+            local = 1;
+            return 7;
+        },
+        [&] {
+            if (polls++ == 0) return false;          // the poll before the post
+            c.block = false;                         // the poll after the first slice: let the frame end ...
+            for (int i = 0; i < 2000 && !started.load(); i++) sleepMs(1);   // ... and answer true only once the task runs
+            return true;
+        });
+    CHECK(r == 7 && local == 1, "a predicate that turns true after the task started still gets its value (%d, %d)", r, local);
+    CHECK(polls.load() == 2, "polled before the post and once after a slice (%d)", polls.load());
+    CHECK(e.stop(), "stop");
+}
+
+// The loop's second frame-lane drain: advance()'s budget rides the debug lane, so a frame-lane post made while the debug
+// lane is draining (after the frame lane was) must still be applied before the frame the budget starts.  A debug command
+// queued ahead of the budget posts it from another thread, in the middle of that drain.
+void testAdvanceBudgetDoesNotOvertakeFramePost() {
+    struct GatedClient : FakeClient {
+        std::atomic<bool> holdBatch{true}, batchHeld{false}, commandApplied{false}, frameSawCommand{false};
+        void afterCommands() override {
+            if (holdBatch.load()) {
+                batchHeld = true;
+                while (holdBatch.load()) sleepMs(1);
+            }
+        }
+        void runFrame() override {
+            frameSawCommand = commandApplied.load();
+            FakeClient::runFrame();
+        }
+    } c;
+    EmuThread e;
+    e.setPaused(true);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    e.post([] {});
+    for (int i = 0; i < 2000 && !c.batchHeld.load(); ++i) sleepMs(1);
+    CHECK(c.batchHeld.load(), "owner held after a command batch");
+    e.debugPost([&] {                                // runs inside the debug drain, after the frame drain
+        std::thread t([&] { e.post([&] { c.commandApplied = true; }); });
+        t.join();                                    // queued on the frame lane before this command returns
+    });
+    std::atomic<bool> ok{false};
+    std::thread caller([&] { ok = e.advance(1); });  // the budget queues behind the command above
+    for (int i = 0; i < 2000 && vj::EmuThreadTestAccess::debugQueued(e) < 2; ++i) sleepMs(1);   // the command and the budget
+    CHECK(vj::EmuThreadTestAccess::debugQueued(e) == 2, "both debug commands are queued behind the held batch");
+    c.holdBatch = false;
+    caller.join();
+    CHECK(ok.load() && c.frames == 1, "advance ran its frame");
+    CHECK(c.frameSawCommand.load(), "the frame-lane post made during the debug drain was applied before the budgeted frame");
+    CHECK(e.stop(), "stop");
+}
+
+// Mode B (#1038): a fake UI publishing display ticks.  Frames only on ticks (k per frame), owed ticks dropped behind a
+// jump, the grid's own backstop when the UI stops ticking, mode A again without a grid; pause, advance() and commands as
+// in mode A.  Deadline polls and frame counts only: no latency ceilings (a starved runner only makes things slower).
+struct TickClient : FakeClient {
+    std::mutex gm;
+    bool on = false;
+    EmuThread::Client::DisplayGrid grid;   // (under gm)
+    bool displayGrid(double now, DisplayGrid& g) override {
+        (void)now;
+        std::lock_guard<std::mutex> l(gm);
+        if (on) g = grid;
+        return on;
+    }
+    void tick(EmuThread& e, uint64_t seq, unsigned k = 1, double period = 10.0) {   // a 10 s period: no backstop
+        {
+            std::lock_guard<std::mutex> l(gm);
+            on = true;
+            grid.tick = seq;
+            grid.tickAt = std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
+            grid.period = period;
+            grid.k = k;
+        }
+        e.notifyTick();
+    }
+    void off(EmuThread& e) {
+        {
+            std::lock_guard<std::mutex> l(gm);
+            on = false;
+        }
+        e.notifyTick();
+    }
+};
+
+bool waitFrames(const EmuThread& e, uint64_t n) {
+    for (int i = 0; i < 5000 && e.framesRun() < n; i++) sleepMs(1);
+    return e.framesRun() >= n;
+}
+
+void testDisplayTicks() {
+    EmuThread e;
+    TickClient c;
+    c.period = 0.001;   // mode A would run 1000 frames a second
+    c.tick(e, 100);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    sleepMs(100);
+    CHECK(e.framesRun() == 0, "entering mode B, the first frame waits for the next tick (%llu)", (unsigned long long)e.framesRun());
+    c.tick(e, 101);
+    CHECK(waitFrames(e, 1), "tick 101: one frame");
+    sleepMs(100);
+    CHECK(e.framesRun() == 1 && e.modeB(), "and only one, on a tick (%llu)", (unsigned long long)e.framesRun());
+    for (uint64_t t = 102; t <= 104; t++) {
+        c.tick(e, t);
+        CHECK(waitFrames(e, t - 100), "tick %llu: its frame", (unsigned long long)t);
+    }
+    // k = 2: a new multiple settles on the next tick, then one frame every two ticks.
+    c.tick(e, 105, 2);
+    sleepMs(50);
+    const uint64_t at = e.framesRun();
+    c.tick(e, 106, 2);
+    CHECK(waitFrames(e, at + 1), "k=2: the first frame on the next tick");
+    c.tick(e, 107, 2);
+    sleepMs(100);
+    CHECK(e.framesRun() == at + 1, "k=2: nothing on the tick between (%llu)", (unsigned long long)(e.framesRun() - at));
+    c.tick(e, 108, 2);
+    CHECK(waitFrames(e, at + 2), "k=2: the next frame two ticks later");
+    // Commands are served while it waits for a tick.
+    const auto t0 = Clock::now();
+    CHECK(e.call([] { return 5; }) == 5, "a call() is answered between ticks (%.3f s)", since(t0));
+    // A jump of 10 ticks (a stall): the owed ticks are dropped, one catch-up frame runs, never a burst.
+    c.tick(e, 108, 1);
+    sleepMs(50);
+    const uint64_t b0 = e.framesRun(), d0 = e.droppedTicks();
+    c.tick(e, 109, 1);
+    CHECK(waitFrames(e, b0 + 1), "k=1 again: a frame on the next tick");
+    c.tick(e, 119, 1);
+    CHECK(waitFrames(e, b0 + 3), "a 10-tick jump: the frame on it and one catch-up frame");
+    sleepMs(100);
+    CHECK(e.framesRun() == b0 + 3, "no burst behind the jump (%llu frames)", (unsigned long long)(e.framesRun() - b0));
+    CHECK(e.droppedTicks() - d0 == 8, "the 8 owed ticks between were dropped (%llu)", (unsigned long long)(e.droppedTicks() - d0));
+    // Paused: no frames on ticks; advance() still runs its frames.
+    e.setPaused(true);
+    sleepMs(20);
+    const uint64_t p0 = e.framesRun();
+    c.tick(e, 120);
+    c.tick(e, 121);
+    sleepMs(100);
+    CHECK(e.framesRun() == p0, "paused: ticks run nothing");
+    const auto a0t = Clock::now();
+    CHECK(e.advance(2) && e.framesRun() == p0 + 2, "paused: advance(2) runs two frames without ticks");
+    CHECK(since(a0t) < 2.0, "without waiting for one (the next is 10 s away): no hang (%.3f s)", since(a0t));
+    e.setPaused(false);
+    // The UI stops ticking: the grid's own backstop keeps frames coming at the display rate.
+    c.tick(e, 130, 1, 0.005);
+    const uint64_t s0 = e.framesRun();
+    CHECK(waitFrames(e, s0 + 20), "no UI ticks: the grid's backstop keeps running frames (%llu)", (unsigned long long)(e.framesRun() - s0));
+    // No grid (mode A): frames on the clock again.
+    c.off(e);
+    const uint64_t a0 = e.framesRun();
+    CHECK(waitFrames(e, a0 + 50), "no grid: mode A runs frames on its own");
+    sleepMs(20);
+    CHECK(!e.modeB(), "and says so");
+    CHECK(e.stop(), "stop");
+}
 
 int main() {
 #ifdef _WIN32
@@ -492,6 +891,7 @@ int main() {
     timeBeginPeriod(1);
 #endif
     testInline();
+    testRealtimeNote();
     testCallSeesPosts();
     testProducers();
     testPauseAdvance();
@@ -504,6 +904,15 @@ int main() {
     testJoinTimeout();
     testPendingCallAbandoned();
     testWaitHook();
+    testDebugLane();
+    testDebugCallWaitsForTheFrame();
+    testDebugCallWaitHook();
+    testServeDebugLane();
+    testCallGivesUp();
+    testAdvanceGivesUp();
+    testCallGiveUpLosesToStart();
+    testAdvanceBudgetDoesNotOvertakeFramePost();
+    testDisplayTicks();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

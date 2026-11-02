@@ -6,7 +6,7 @@
 //   * OS/2 weight + italic, post.isFixedPitch, .ttc collections, truncated / bitmap-only files refused
 //   * the folder walk: recursive, de-duplicated by name, sorted, non-fonts ignored
 //   * the folders worth scanning on macOS / Windows / Linux against fake environments
-//   * the machine's own fonts (informational)
+//   * the machine's own fonts (a smoke check; a slow host is reported, not failed)
 //
 //   vj_fonts_system_test
 #include "fonts.h"
@@ -247,22 +247,33 @@ static void testDirs() {
     CHECK(shareCount == 1);   // no duplicates
 }
 
+// The machine's own fonts: a smoke check of the worker-thread plumbing (start, idempotence, ready, list).  The
+// correctness of the scan (names, weights, dedupe, sorting) is asserted above on synthesised fonts, so this never
+// needs a fast host: the full scan takes ~2 s on a normal machine but 32-53 s on GitHub's hosted Windows runners (#1078).
+// When the scan has not finished within the wait bound it is reported as slow, not failed -- the picker never blocks on
+// it either (fonts_ui.cpp draws what it has) -- and the process still waits for the worker at exit.  FONTS_STRICT=1
+// (a developer machine) restores the hard check.
 static void testMachine() {
+    const bool strict = std::getenv("FONTS_STRICT") != nullptr;
+    const int boundMs = strict ? 120000 : 30000;
     const auto t0 = std::chrono::steady_clock::now();
     systemFontsStart();
     systemFontsStart();   // idempotent
-    for (int i = 0; i < 600 && !systemFontsReady(); i++) SDL_Delay(50);
+    for (int i = 0; i < boundMs / 50 && !systemFontsReady(); i++) SDL_Delay(50);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     auto list = systemFonts();
-    CHECK(list != nullptr);
-    if (!list) return;
+    if (!list) {
+        std::printf("this machine: font scan still running after %.0f ms (slow host) -- not a failure, see #1078\n", ms);
+        CHECK(!strict);
+        return;
+    }
     int mono = 0;
     for (const SystemFont& f : *list) {
         CHECK(!f.name.empty() && !f.path.empty());
         if (f.mono) mono++;
     }
     std::printf("this machine: %zu faces (%d fixed-pitch) in %.0f ms\n", list->size(), mono, ms);
-    if (std::getenv("FONTS_STRICT")) CHECK(!list->empty());
+    if (strict) CHECK(!list->empty());
 }
 
 int main() {

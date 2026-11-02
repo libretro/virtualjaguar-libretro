@@ -1,15 +1,27 @@
 name: C/C++ CI
 
 on:
+  # No `develop` in the push list: every change reaches develop through a PR that
+  # already ran this workflow, so re-running it per merge mostly duplicated the PR
+  # run.  (Tests do not re-run on the merged tip; release.yml still compiles every
+  # develop tip for the nightly.)  To re-run on develop by hand, use
+  # workflow_dispatch with the branch picker on develop.
   push:
-    branches: [ master, develop ]
+    branches: [ master ]
   pull_request:
     branches: [ develop, master ]
+    # A PR that changes only docs builds nothing and tests nothing, so it runs
+    # none of this.  docs/cd-boot-matrix.md's format check lives in pages.yml,
+    # which has its own filter.  A release PR always carries code; to run this
+    # on a docs-only PR anyway, use workflow_dispatch on its branch.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 # Cancel in-progress runs when a new commit lands on the same PR.
-# Pushes to master/develop run to completion (no cancellation) so we
-# always have a green-or-red record on the integration branches.
+# Pushes to master run to completion (no cancellation) so we always have a
+# green-or-red record on the release branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -17,7 +29,7 @@ concurrency:
 jobs:
   core-plan:
     name: Production core routing and safety tests
-    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     permissions:
       contents: read
     outputs:
@@ -25,7 +37,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Ensure the workflow contract parser is available
@@ -36,7 +48,7 @@ jobs:
           fi
       - name: Verify compiler, SDK and production ABI contracts
         run: ruby .github/scripts/tests/core-workflow-contract.rb
-      - run: node --test .github/scripts/tests/release-packages.test.cjs .github/scripts/tests/release-cores.test.cjs
+      - run: node --test .github/scripts/tests/release-packages.test.cjs .github/scripts/tests/release-cores.test.cjs .github/scripts/tests/temp-linux-routing.test.cjs
       - id: plan
         uses: actions/github-script@v9
         with:
@@ -48,7 +60,7 @@ jobs:
     name: Verify and retain shared production cores
     needs: [core-plan]
     if: needs.core-plan.outputs.reuse == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     timeout-minutes: 360
     permissions:
       actions: read
@@ -56,7 +68,7 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Require all exact-head production jobs and artifacts
@@ -160,7 +172,10 @@ jobs:
     env:
       # Compile-only rows match Release's production configuration; native test mode switches stay unchanged.
       RELEASE_DEBUG_INFO: ${{ matrix.config.release_platform && '1' || '0' }}
-    runs-on: ${{ matrix.config.os }}
+    # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
+    # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
+    # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.
+    runs-on: ${{ matrix.config.os == 'ubuntu-latest' && github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || matrix.config.os == 'macos-latest' && vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || matrix.config.os }}
 
     defaults:
       run:
@@ -403,12 +418,12 @@ jobs:
         CC="${{ matrix.config.cc }}"
         if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
         INCFLAGS="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Ilibretro-common/include"
-        $CC -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c
-        /tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64
+        $CC -O2 -Wall -o "$RUNNER_TEMP/gen_eeprom_test_rom" test/tools/gen_eeprom_test_rom.c
+        "$RUNNER_TEMP/gen_eeprom_test_rom" "$RUNNER_TEMP/eeprom_lifecycle_test.j64"
         $CC -O2 -Wall -std=c99 $INCFLAGS \
           -o test/test_eeprom_lifecycle test/test_eeprom_lifecycle.c \
           test/harness/harness.c $LDFLAGS -lm
-        ./test/test_eeprom_lifecycle ./${{ matrix.config.artifact }} /tmp/eeprom_lifecycle_test.j64
+        ./test/test_eeprom_lifecycle ./${{ matrix.config.artifact }} "$RUNNER_TEMP/eeprom_lifecycle_test.j64"
 
     - name: Cache pinned rcheevos E2E build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
@@ -448,7 +463,7 @@ jobs:
   # !cancelled() keeps later checks running after a failure; any failure still fails the job.
   source-validation:
     name: Source validation (lists, EditorConfig, cppcheck, C89)
-    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v7
 
@@ -571,7 +586,10 @@ jobs:
 
   spm-build:
     name: SwiftPM build (macOS arm64)
-    runs-on: macos-latest
+    # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
+    # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
+    # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.
+    runs-on: ${{ vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || 'macos-latest' }}
     steps:
     - uses: actions/checkout@v7
 
@@ -632,13 +650,15 @@ jobs:
     - name: exactly one SIMD vtable, and it is not the scalar one
       run: |
         set -euo pipefail
-        B=$(find .build -type d -name 'virtualjaguar.build' | head -1)
-        [ -n "$B" ] || { echo "could not locate the build directory"; exit 1; }
+        # Layout-independent: Xcode 26's SwiftPM build system keeps objects under
+        # .build/out/Intermediates.noindex/.../Objects-normal/arm64/blitter_simd_<a>.o,
+        # older SwiftPM under .build/<triple>/debug/virtualjaguar.build/.../<a>.c.o.
+        # Find each object by name and fail loudly if one of the three is missing.
         total=0
         for a in neon sse2 scalar; do
-          o="$B/src/tom/blitter_simd_$a.c.o"
-          n=0
-          [ -f "$o" ] && n=$(nm "$o" | grep -c '_blitter_simd_ops' || true)
+          o=$(find .build -type f \( -name "blitter_simd_$a.o" -o -name "blitter_simd_$a.c.o" \) | head -1)
+          [ -n "$o" ] || { echo "could not locate blitter_simd_$a object under .build"; exit 1; }
+          n=$(nm "$o" | grep -c '_blitter_simd_ops' || true)
           echo "  blitter_simd_$a: $n"
           total=$((total + n))
         done
@@ -722,7 +742,7 @@ jobs:
     needs: [core-plan]
     if: needs.core-plan.outputs.reuse != 'true'
     name: build-PS Vita
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     container:
       image: vitasdk/vitasdk:latest
     steps:
@@ -744,7 +764,7 @@ jobs:
     needs: [core-plan]
     if: needs.core-plan.outputs.reuse != 'true'
     name: build-Nintendo Switch
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     container:
       image: devkitpro/devkita64:latest
     steps:
@@ -765,7 +785,7 @@ jobs:
 
   coverage:
     name: Code coverage (gcov + codecov)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # Coverage runs are advisory -- they don't gate merges.  The PR
     # delta is what reviewers care about; codecov posts that as a
     # comment automatically.
@@ -793,7 +813,7 @@ jobs:
 
   sanitizers:
     name: AddressSanitizer + UndefinedBehaviorSanitizer
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # Initially advisory: lets the job report findings without blocking
     # PRs while we triage the existing UB the cppcheck job already
     # flagged (signed shifts in src/tom/{gpu,op}.c, etc.).  Flip to
@@ -835,7 +855,7 @@ jobs:
 
   clang-tidy:
     name: clang-tidy on changed files
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # Advisory at first.  The .clang-tidy check list is curated, but
     # the first pass over emulator C will surface noisy true positives
     # that need triage.  Flip continue-on-error to false once the
@@ -873,8 +893,15 @@ jobs:
           # capability macros and includes). They are covered instead by
           # c89-lint's per-arch pass, which compiles them the way the
           # build does.
+          #
+          # src/jerry/dsp_exec_untimed.h is the same kind of fragment: a
+          # function body dsp.c includes twice, using dsp.c's statics.
+          # Standalone it is nothing but undeclared identifiers.  Its code
+          # is still linted, through dsp.c, because HeaderFilterRegex
+          # covers src/jerry.
           FILES=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- '*.c' '*.h' \
             | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/(tom|jerry)/[a-z0-9_]+_simd_(neon|sse2|scalar)\.(c|h)$)' \
+            | grep -v '^src/jerry/dsp_exec_untimed\.h$' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then
             echo "No relevant C files changed; skipping clang-tidy."

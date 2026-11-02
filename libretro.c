@@ -2440,12 +2440,12 @@ static void perf_conflict_append(char *buf, size_t cap, const char *what)
 }
 
 /* Which options currently switch the RISC idle-skip off.  Mirrors the gate
- * at the top of DSPExec() (src/jerry/dsp.c) -- see the comment above for what
- * is deliberately absent.  Shared by the log warning below and the option
+ * at the top of DSPExec() (src/jerry/dsp_exec_untimed.h) -- see the comment
+ * above for what is deliberately absent.  Blit memoization is absent too
+ * (#952): it no longer switches the skip off.  Shared by the log warning below and the option
  * sublabel (#841), so the two can never name different suppressors. */
 #define IDLE_SUP_DRAM  1u
 #define IDLE_SUP_PIPE  2u
-#define IDLE_SUP_MEMO  4u
 
 static unsigned idle_skip_suppressor_mask(void)
 {
@@ -2455,8 +2455,6 @@ static unsigned idle_skip_suppressor_mask(void)
       mask |= IDLE_SUP_DRAM;
    if (vjs.gpuPipelineTiming)
       mask |= IDLE_SUP_PIPE;
-   if (blitMemoMode != BLIT_MEMO_OFF || blitMemoRecording)
-      mask |= IDLE_SUP_MEMO;
    return mask;
 }
 
@@ -2474,8 +2472,6 @@ static void perf_warn_idle_skip_suppressed(void)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_dram_timing");
    if (mask & IDLE_SUP_PIPE)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_gpu_pipeline_timing");
-   if (mask & IDLE_SUP_MEMO)
-      perf_conflict_append(who, sizeof(who), "virtualjaguar_blit_memo");
 
    if (who[0] == '\0')
       return;
@@ -2722,15 +2718,6 @@ static void explain_compute(explain_amend_t *out, int *count)
       }
       if (mask & IDLE_SUP_PIPE)
          i = explain_find_def("virtualjaguar_gpu_pipeline_timing");
-      else
-         i = -1;
-      if (i >= 0)
-      {
-         explain_option_name(i, name, sizeof(name));
-         perf_conflict_append(who, sizeof(who), name);
-      }
-      if (mask & IDLE_SUP_MEMO)
-         i = explain_find_def("virtualjaguar_blit_memo");
       else
          i = -1;
       if (i >= 0)

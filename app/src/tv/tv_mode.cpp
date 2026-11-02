@@ -1,6 +1,7 @@
 #include "tv/tv_mode.h"
 
 #include <cmath>
+#include <vector>
 
 namespace vj::tv {
 
@@ -21,8 +22,20 @@ bool settingFromKey(const std::string& k, TvSetting& out) {
     return true;
 }
 
-TvSetting effectiveSetting(TvSetting stored) {
-    return stored == TvSetting::Auto ? TvSetting::Manual : stored;
+TvSetting defaultSetting(const char* buildDefault) {
+    TvSetting s = TvSetting::Auto;
+    if (buildDefault) settingFromKey(buildDefault, s);   // an unknown value leaves Auto
+    return s;
+}
+
+std::string firstUseHint(const std::string& padText, const std::string& keyText, bool macOS) {
+    std::vector<std::string> ways;
+    if (!padText.empty()) ways.push_back(padText);
+    if (!keyText.empty()) ways.push_back(keyText);
+    if (ways.size() < 2) ways.push_back(macOS ? "Cmd+Shift+T" : "Ctrl+Shift+T");
+    std::string s = "Press " + ways[0];
+    for (size_t i = 1; i < ways.size(); i++) s += " or " + ways[i];
+    return s + " for TV mode";
 }
 
 void TvMode::turnOn(Cause c) {

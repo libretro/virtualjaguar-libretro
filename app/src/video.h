@@ -4,6 +4,7 @@
 #pragma once
 #include <cstdint>
 
+#include "aspect_choices.h"
 #include "core_host.h"
 #include "imgui.h"
 #include "shaders.h"
@@ -15,7 +16,7 @@ struct Perf;
 struct PresentOptions {
     bool integerScale = false;
     bool linearFilter = false;
-    // 0 = use the core's reported aspect, otherwise width/height override
+    // 0 = use the core's reported aspect, otherwise width/height override (the choices: aspect_choices.h)
     float aspectOverride = 0.0f;
     bool stretch = false;  // ignore aspect, fill the area
 };

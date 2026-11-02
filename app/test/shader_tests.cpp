@@ -21,6 +21,7 @@
 
 #include "imgui_impl_opengl3_loader.h"
 #include "config.h"
+#include "gl_context.h"
 #include "paths.h"
 #include "present_util.h"
 #include "shaders.h"
@@ -480,7 +481,7 @@ static int runGl() {
         return 77;
     }
     SDL_GL_MakeCurrent(win, ctx);
-    if (imgl3wInit() != 0) {
+    if (!vj::initOpenGLLoader()) {
         std::printf("shader_tests gl: FAIL cannot load GL entry points\n");
         return 1;
     }

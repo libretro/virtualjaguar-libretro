@@ -4,6 +4,7 @@
 #include "audio_ring.h"
 #include "blitter_log.h"
 #include "debug_mock.h"
+#include "debug_views.h"
 
 #include <atomic>
 #include <thread>
@@ -230,6 +231,39 @@ static void testTrackerRestart() {
     CHECK(!c.blitLogOn);
 }
 
+static ViewBuffer blitBuf(unsigned since, unsigned head, unsigned lost, unsigned firstSeq, unsigned n) {
+    ViewBuffer b;  b.ok = true;  b.serial = 1;
+    b.req.kind = ViewRequest::Kind::BlitLog;  b.req.since = since;
+    b.blitHead = head;  b.blitLost = lost;
+    for (unsigned i = 0; i < n; i++) { vj_debug_blit x{}; x.seq = firstSeq + i; x.cmd = 0x100 + firstSeq + i; b.blits.push_back(x); }
+    return b;
+}
+static void testTrackerAbsorb() {
+    blit::LogTracker t;
+    ViewBuffer a = blitBuf(0, 5, 0, 0, 5);
+    CHECK(t.absorb(a) == 5 && t.total() == 5 && t.lost() == 0 && t.rows().back().seq == 4);
+    CHECK(t.absorb(a) == 0 && t.rows().size() == 5);                 // the same buffer twice: no duplicates
+    ViewBuffer stale = blitBuf(0, 7, 0, 0, 7);                       // filled for an older `since` after we moved on
+    CHECK(t.absorb(stale) == 0 && t.total() == 5);
+    CHECK(t.absorb(blitBuf(5, 2000, 971, 976, 1024)) == 1024);       // the ring wrapped: launches 5..975 are gone
+    CHECK(t.lost() == 971 && t.total() == 2000 && t.rows().back().seq == 1999);
+    CHECK(t.absorb(blitBuf(2000, 3, 0, 0, 3)) == 0 && t.total() == 0 && t.rows().empty());   // head < since: the log restarted
+    blit::LogTracker small(4);
+    small.absorb(blitBuf(0, 9, 0, 0, 9));
+    CHECK(small.rows().size() == 4 && small.rows().front().seq == 5);
+    ViewBuffer bad = blitBuf(0, 5, 0, 0, 5);  bad.ok = false;
+    blit::LogTracker u;
+    CHECK(u.absorb(bad) == 0 && u.total() == 0);
+    // never adds seq < total(): a buffer answering the right `since` that carries older rows keeps only the new ones
+    blit::LogTracker w;
+    w.absorb(blitBuf(0, 3, 0, 0, 3));
+    CHECK(w.absorb(blitBuf(3, 5, 0, 1, 4)) == 2 && w.total() == 5 && w.rows().back().seq == 4 && w.rows().size() == 5);
+    // a buffer for another kind of request is not a log answer
+    ViewBuffer mem = blitBuf(0, 5, 0, 0, 5);  mem.req.kind = ViewRequest::Kind::Memory;
+    blit::LogTracker m;
+    CHECK(m.absorb(mem) == 0 && m.total() == 0);
+}
+
 static void testAudioRing() {
     AudioRing r(8);
     CHECK(r.capacity() == 8 && r.available() == 0 && r.totalFrames() == 0);
@@ -333,6 +367,7 @@ int main() {
     testTrackerAgainstMock();
     testTrackerRingWrap();
     testTrackerRestart();
+    testTrackerAbsorb();
     testAudioRing();
     testAudioRingConcurrent();
     testPeakMeter();

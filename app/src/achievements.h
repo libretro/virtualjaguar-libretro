@@ -232,6 +232,8 @@ private:
     bool loading_ = false;           // an identify/load request is in flight
     bool gameKnown_ = false;         // the current content has an achievement set
     bool resetPending_ = false;      // rc_client asked for a reset (hardcore just turned on)
+    bool restartTried_ = false;      // the pending restart was attempted already (cheat reset posted, reload line logged)
+    bool restartGaveUpLogged_ = false;
     bool settingsOk_ = true;
     std::atomic<bool> memoryReady_{false};
     bool loadFailed_ = false;        // the last identify/load attempt did not produce a tracked game
@@ -240,6 +242,7 @@ private:
     unsigned mockFrames_ = 0;
     uint64_t framesSeen_ = 0;          // threaded: EmuThread::framesRun() at the last pump()
     double lastIdlePost_ = 0;          // threaded: when pump() last posted emuIdle()
+    std::atomic<bool> idlePosted_{false};   // threaded: an emuIdle() post is queued (cleared by the post itself)
     unsigned hardcoreResets_ = 0;      // clean-start restarts performed (tests)
     unsigned loginAt_ = 0;             // headless: delay the mock sign-in to this frame
     std::atomic<bool> ranUnrestricted_{false};     // frames ran (or states loaded) outside hardcore since boot/reset

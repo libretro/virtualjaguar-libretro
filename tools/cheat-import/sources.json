@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "sources": [
+    {
+      "author": "jguffer",
+      "branch": "main",
+      "commit": "24211503339a969f8494b8e189b8f2aa0cb9eba6",
+      "commit_date": "2026-04-15",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exclude": [
+        {
+          "path": "scripts/cheat_aliens_vs_predator.c",
+          "reason": "credits values to a third-party script bundled with BigPEmu (\"Taken from Whitehouse avp_common.c script\"); permission covers only the author's own work"
+        }
+      ],
+      "id": "jguffer",
+      "include": [
+        "scripts/cheat_*.c"
+      ],
+      "kind": "github",
+      "license": null,
+      "notes": {
+        "scripts/cheat_baldies.c": "disc title; v1 packs cover cartridges only (converter refuses discs, app has no disc CRC)",
+        "scripts/cheat_battlemorph.c": "disc title; v1 packs cover cartridges only (converter refuses discs, app has no disc CRC)",
+        "scripts/cheat_highlander.c": "disc title; v1 packs cover cartridges only (converter refuses discs, app has no disc CRC)"
+      },
+      "permission": "jguffer, the author of BigPEmu_Scripts and of #1050, gave the maintainer permission to convert and use the scripts (see libretro/virtualjaguar-libretro#1071 and #1050). The repository has no license file.",
+      "repo": "jguffer/BigPEmu_Scripts"
+    }
+  ]
+}

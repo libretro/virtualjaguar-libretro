@@ -1,0 +1,1069 @@
+{
+  "cartridges": [
+    {
+      "crc32": "008222AC",
+      "fnv1a64": "0005C718186DA209",
+      "name": "BadCode1 by Badcoder (bin) (1999) (PD)",
+      "size": 210272,
+      "title": "BadCode1 by Badcoder"
+    },
+    {
+      "crc32": "6B2B95AD",
+      "fnv1a64": "0030407D0269CE03",
+      "name": "Tempest 2000 (1994)",
+      "size": 2097152,
+      "title": "Tempest 2000"
+    },
+    {
+      "crc32": "9E925A24",
+      "fnv1a64": "00F73EBC9EF8E18A",
+      "name": "DEMO1 (PD)",
+      "size": 295064,
+      "title": "DEMO1"
+    },
+    {
+      "crc32": "B5A901DF",
+      "fnv1a64": "0222B09B2BA46B9F",
+      "name": "BadCode4N by Badcoder (bin) (2000) (PD)",
+      "size": 440192,
+      "title": "BadCode4N by Badcoder"
+    },
+    {
+      "crc32": "63D6C1C6",
+      "fnv1a64": "0534C13047F6CFEF",
+      "name": "SlamRacer Intro (PD)",
+      "size": 484255,
+      "title": "SlamRacer Intro"
+    },
+    {
+      "crc32": "82629A5B",
+      "fnv1a64": "0893CF9FFA6B30E0",
+      "name": "Asteroid (2000) (PD)",
+      "size": 296862,
+      "title": "Asteroid"
+    },
+    {
+      "crc32": "2A65C0D4",
+      "fnv1a64": "0A7002107AE6CA9B",
+      "name": "Joypad-TeamTap Tester by Matthias Domin (2000) (PD) [a1]",
+      "size": 176900,
+      "title": "Joypad-TeamTap Tester by Matthias Domin"
+    },
+    {
+      "crc32": "24ECB02B",
+      "fnv1a64": "0B8C419C13E1206F",
+      "name": "Chroma-Luma Color Pick by Matthias Domin (jag) (1996) (PD)[a1]",
+      "size": 9426,
+      "title": "Chroma-Luma Color Pick by Matthias Domin"
+    },
+    {
+      "crc32": "1EAC6CDE",
+      "fnv1a64": "0D28A46CB8F6D8B2",
+      "name": "BALLOONS",
+      "size": 15904,
+      "title": "BALLOONS"
+    },
+    {
+      "crc32": "75E3A725",
+      "fnv1a64": "0D40704E48FC0017",
+      "name": "BadCode4C by Badcoder (bin) (2000) (PD)",
+      "size": 300096,
+      "title": "BadCode4C by Badcoder"
+    },
+    {
+      "crc32": "4A08A2BD",
+      "fnv1a64": "0D7630DEBC0117D1",
+      "name": "Super Cross 3D (1995)",
+      "size": 2097152,
+      "title": "Super Cross 3D"
+    },
+    {
+      "crc32": "27C7C6A3",
+      "fnv1a64": "0FCC07BCAA2136A3",
+      "name": "Painter (1996) (PD)",
+      "size": 163146,
+      "title": "Painter"
+    },
+    {
+      "crc32": "85A70180",
+      "fnv1a64": "101F49996AA0A954",
+      "name": "Native Demo (bin) (1997)",
+      "size": 1097254,
+      "title": "Native Demo"
+    },
+    {
+      "crc32": "817A2273",
+      "fnv1a64": "10B52759119EF17A",
+      "name": "Pitfall - The Mayan Adventure (1995)",
+      "size": 4194304,
+      "title": "Pitfall - The Mayan Adventure"
+    },
+    {
+      "crc32": "0AC83D77",
+      "fnv1a64": "10B81F6BCF91C1B5",
+      "name": "NBA Jam TE (1996)",
+      "size": 4194304,
+      "title": "NBA Jam TE"
+    },
+    {
+      "crc32": "0F6A1C2C",
+      "fnv1a64": "13773A13560CA917",
+      "name": "Ultra Vortek (1995)",
+      "size": 4194304,
+      "title": "Ultra Vortek"
+    },
+    {
+      "crc32": "BC3C8272",
+      "fnv1a64": "1515847C30FDD9B5",
+      "name": "Arkanna Demo (PD)",
+      "size": 104924,
+      "title": "Arkanna Demo"
+    },
+    {
+      "crc32": "466A92C8",
+      "fnv1a64": "15801AA8982F627D",
+      "name": "BadCode0 by Badcoder (cof) (1999) (PD)",
+      "size": 161031,
+      "title": "BadCode0 by Badcoder"
+    },
+    {
+      "crc32": "EFFCA60E",
+      "fnv1a64": "17B8B9CC97DAFFD4",
+      "name": "JDC Demo V1 (2000) (PD)",
+      "size": 518848,
+      "title": "JDC Demo V1"
+    },
+    {
+      "crc32": "EEE8D61D",
+      "fnv1a64": "19359D79B2431503",
+      "name": "Club Drive (1994)",
+      "size": 2097152,
+      "title": "Club Drive"
+    },
+    {
+      "crc32": "55A0669C",
+      "fnv1a64": "1955492069AC67A8",
+      "name": "[BIOS] Atari Jaguar Developer CD (World)",
+      "size": 262144,
+      "title": "[BIOS] Atari Jaguar Developer CD"
+    },
+    {
+      "crc32": "6912ED13",
+      "fnv1a64": "19A164216D7A2484",
+      "name": "Jaguar Server 1.08 UPDATE - KEYB (PD)",
+      "size": 144,
+      "title": "Jaguar Server 1.08 UPDATE - KEYB"
+    },
+    {
+      "crc32": "4203E23D",
+      "fnv1a64": "1AB1BDFE4FB944EE",
+      "name": "Phase Zero (2000) (PD)",
+      "size": 2097152,
+      "title": "Phase Zero"
+    },
+    {
+      "crc32": "DC187F82",
+      "fnv1a64": "1BCB3230DB41AA47",
+      "name": "Alien vs Predator (1994)",
+      "size": 4194304,
+      "title": "Alien vs Predator"
+    },
+    {
+      "crc32": "FBDEDA89",
+      "fnv1a64": "1C78770A8F54AEC9",
+      "name": "SlamRacer Demo (PD)",
+      "size": 1809163,
+      "title": "SlamRacer Demo"
+    },
+    {
+      "crc32": "8FEA5AB0",
+      "fnv1a64": "1D72B9ED4D0094F2",
+      "name": "Dragon - The Bruce Lee Story (1994)",
+      "size": 2097152,
+      "title": "Dragon - The Bruce Lee Story"
+    },
+    {
+      "crc32": "6F8B2547",
+      "fnv1a64": "1D8C0621EB876398",
+      "name": "Super Burnout (1995)",
+      "size": 2097152,
+      "title": "Super Burnout"
+    },
+    {
+      "crc32": "DE51F0FE",
+      "fnv1a64": "1E026BF48E2AE7F3",
+      "name": "BadCode4 (Metal) by Badcoder (rom) (2000) (PD)",
+      "size": 406144,
+      "title": "BadCode4"
+    },
+    {
+      "crc32": "71269584",
+      "fnv1a64": "1F80DE36C7479EFB",
+      "name": "Painter (bin) (1996) (PD)",
+      "size": 163072,
+      "title": "Painter"
+    },
+    {
+      "crc32": "29E9E6AB",
+      "fnv1a64": "2564774D2C753863",
+      "name": "Joypad-TeamTap Tester by Matthias Domin (2000) (PD) [a2]",
+      "size": 179602,
+      "title": "Joypad-TeamTap Tester by Matthias Domin"
+    },
+    {
+      "crc32": "FFBB1FA3",
+      "fnv1a64": "29C8164E99E1D524",
+      "name": "BadCode3 by Badcoder (jag) (2000) (PD)",
+      "size": 470094,
+      "title": "BadCode3 by Badcoder"
+    },
+    {
+      "crc32": "2708D9FE",
+      "fnv1a64": "2A79069094C7238F",
+      "name": "Hubble Fade by Robert Jurziga (PD)",
+      "size": 865280,
+      "title": "Hubble Fade by Robert Jurziga"
+    },
+    {
+      "crc32": "AC95CA6D",
+      "fnv1a64": "2CF7A83516261777",
+      "name": "BadCode3 by Badcoder (bin) (2000) (PD)",
+      "size": 470048,
+      "title": "BadCode3 by Badcoder"
+    },
+    {
+      "crc32": "F11D319B",
+      "fnv1a64": "2E9AAF1D696B3D90",
+      "name": "BadCode0 by Badcoder (bin) (1999) (PD)",
+      "size": 160800,
+      "title": "BadCode0 by Badcoder"
+    },
+    {
+      "crc32": "F7F3462B",
+      "fnv1a64": "2EECBBC265BF9CDF",
+      "name": "Iron Soldier (1994) [a1]",
+      "size": 2097152,
+      "title": "Iron Soldier"
+    },
+    {
+      "crc32": "8D15DBC6",
+      "fnv1a64": "2FDFA745AAB905B2",
+      "name": "[BIOS] Atari Jaguar Stubulator '94 (World)",
+      "size": 131072,
+      "title": "[BIOS] Atari Jaguar Stubulator '94"
+    },
+    {
+      "crc32": "0E768B5A",
+      "fnv1a64": "315EE83D374DEAC7",
+      "name": "JagMania (Aug 31) (2000) (PD)",
+      "size": 130418,
+      "title": "JagMania"
+    },
+    {
+      "crc32": "1660F070",
+      "fnv1a64": "3381B57A63BBDBCB",
+      "name": "Power Drive Rally (1995) (TWI)",
+      "size": 2097152,
+      "title": "Power Drive Rally"
+    },
+    {
+      "crc32": "2A0C9443",
+      "fnv1a64": "34CFE4FA4B23945A",
+      "name": "BadCode2 by Badcoder (cof) (2000) (PD)",
+      "size": 327367,
+      "title": "BadCode2 by Badcoder"
+    },
+    {
+      "crc32": "7DAE6472",
+      "fnv1a64": "36C6FA1246B2B000",
+      "name": "JagFest Demo (2001) (PD)",
+      "size": 479952,
+      "title": "JagFest Demo"
+    },
+    {
+      "crc32": "3CF18719",
+      "fnv1a64": "373FA74AF3C63AD7",
+      "name": "PAULA Preview Demo 2 by Robert Jurziga (PD)",
+      "size": 419776,
+      "title": "PAULA Preview Demo 2 by Robert Jurziga"
+    },
+    {
+      "crc32": "D6C19E34",
+      "fnv1a64": "39159E865AB73158",
+      "name": "Iron Soldier 2 (World)",
+      "size": 2097152,
+      "title": "Iron Soldier 2"
+    },
+    {
+      "crc32": "0957A072",
+      "fnv1a64": "392906008D83777E",
+      "name": "Kasumi Ninja (1994)",
+      "size": 4194304,
+      "title": "Kasumi Ninja"
+    },
+    {
+      "crc32": "15DF5CF9",
+      "fnv1a64": "3F898C396D345EE5",
+      "name": "Jaguar Server (Program Examples) - INTRO (PD)",
+      "size": 83028,
+      "title": "Jaguar Server"
+    },
+    {
+      "crc32": "BDE67498",
+      "fnv1a64": "3F97A08E8550667C",
+      "name": "Cybermorph (1993)",
+      "size": 2097152,
+      "title": "Cybermorph"
+    },
+    {
+      "crc32": "1B57A623",
+      "fnv1a64": "4037ADFF7E51AE8C",
+      "name": "JagMarble (2000) (PD)",
+      "size": 64804,
+      "title": "JagMarble"
+    },
+    {
+      "crc32": "EE7B84EB",
+      "fnv1a64": "449010EF4D64CED4",
+      "name": "Doom (World) EX 2",
+      "size": 4194304,
+      "title": "Doom"
+    },
+    {
+      "crc32": "0B216C1A",
+      "fnv1a64": "4AB757BCBD2CC23F",
+      "name": "PlaySFX V1.0 by Robert Jurziga (2003) (PD)",
+      "size": 19968,
+      "title": "PlaySFX V1.0 by Robert Jurziga"
+    },
+    {
+      "crc32": "6ACC377B",
+      "fnv1a64": "4F0ABE40C1E7746D",
+      "name": "DEMO1C (PD)",
+      "size": 345132,
+      "title": "DEMO1C"
+    },
+    {
+      "crc32": "A9F8A00E",
+      "fnv1a64": "4F7E323A69447A71",
+      "name": "Rayman (1995) (UBI Soft)",
+      "size": 4194304,
+      "title": "Rayman"
+    },
+    {
+      "crc32": "2E967B0C",
+      "fnv1a64": "5347E6D05A82944D",
+      "name": "Chroma-Luma Color Pick by Matthias Domin (jag) (1996) (PD)",
+      "size": 7282,
+      "title": "Chroma-Luma Color Pick by Matthias Domin"
+    },
+    {
+      "crc32": "3615AF6A",
+      "fnv1a64": "537B347137EB7408",
+      "name": "Fever Pitch Soccer (1995)",
+      "size": 2097152,
+      "title": "Fever Pitch Soccer"
+    },
+    {
+      "crc32": "115254E1",
+      "fnv1a64": "53ED9518A24D4CE8",
+      "name": "Chroma-Luma Color Pick by Matthias Domin (bin) (1996) (PD)",
+      "size": 7236,
+      "title": "Chroma-Luma Color Pick by Matthias Domin"
+    },
+    {
+      "crc32": "6D3BAE95",
+      "fnv1a64": "54CEAD1CB064D704",
+      "name": "JSSDemo (Jaguar Sound System) V1.0b (08.11.2002) (PD)",
+      "size": 600128,
+      "title": "JSSDemo"
+    },
+    {
+      "crc32": "4491EC09",
+      "fnv1a64": "55A0A92C703D1E77",
+      "name": "BadCode4 by Badcoder (jag) (2000) (PD)",
+      "size": 479406,
+      "title": "BadCode4 by Badcoder"
+    },
+    {
+      "crc32": "8975F48B",
+      "fnv1a64": "55C927B5C2AD250E",
+      "name": "Zool 2 (1994)",
+      "size": 2097152,
+      "title": "Zool 2"
+    },
+    {
+      "crc32": "2E17D5DA",
+      "fnv1a64": "5C0C7827948F0F27",
+      "name": "Bubsy - Fractured Furry Tails (1994)",
+      "size": 2097152,
+      "title": "Bubsy - Fractured Furry Tails"
+    },
+    {
+      "crc32": "0509C85E",
+      "fnv1a64": "5FA30C19C9DCD87F",
+      "name": "Raiden (1994)",
+      "size": 2097152,
+      "title": "Raiden"
+    },
+    {
+      "crc32": "8F1586A9",
+      "fnv1a64": "601B5522561C10EA",
+      "name": "BadCode4 (Metal) by Badcoder (bin) (2000) (PD) [a1]",
+      "size": 405632,
+      "title": "BadCode4"
+    },
+    {
+      "crc32": "4899628F",
+      "fnv1a64": "67C944EE0406FAD9",
+      "name": "Hover Strike (1995)",
+      "size": 2097152,
+      "title": "Hover Strike"
+    },
+    {
+      "crc32": "1E451446",
+      "fnv1a64": "68E321F5ECF43196",
+      "name": "Trevor McFur in the Crescent Galaxy (1993)",
+      "size": 2097152,
+      "title": "Trevor McFur in the Crescent Galaxy"
+    },
+    {
+      "crc32": "1A68194C",
+      "fnv1a64": "69061DBB5C6BE0A3",
+      "name": "FORCE Design - Legion Force Jidai Intro Demo 0! (2001) (PD)",
+      "size": 276512,
+      "title": "FORCE Design - Legion Force Jidai Intro Demo 0!"
+    },
+    {
+      "crc32": "88F4D5ED",
+      "fnv1a64": "6A335876551AB10B",
+      "name": "JagMania (Jul 8) (2000) (PD)",
+      "size": 131844,
+      "title": "JagMania"
+    },
+    {
+      "crc32": "27594C6A",
+      "fnv1a64": "6B591BA55B0BCBD7",
+      "name": "Defender 2000 (1996)",
+      "size": 4194304,
+      "title": "Defender 2000"
+    },
+    {
+      "crc32": "4242DFA7",
+      "fnv1a64": "6B79D7B1A84B2300",
+      "name": "Alien vs Predator (Alpha)",
+      "size": 1635476,
+      "title": "Alien vs Predator"
+    },
+    {
+      "crc32": "8DC5D93C",
+      "fnv1a64": "6BFDCEF65B7DEF53",
+      "name": "JDC Demo V2 (2000) (PD)",
+      "size": 315902,
+      "title": "JDC Demo V2"
+    },
+    {
+      "crc32": "1ED4C963",
+      "fnv1a64": "6F7FC045FA7A48B1",
+      "name": "JagMania (Jan 06) (2001) (PD)",
+      "size": 241906,
+      "title": "JagMania"
+    },
+    {
+      "crc32": "687068D5",
+      "fnv1a64": "725B31B22C25A310",
+      "name": "[BIOS] Atari Jaguar CD (World)",
+      "size": 262144,
+      "title": "[BIOS] Atari Jaguar CD"
+    },
+    {
+      "crc32": "72DD1CB8",
+      "fnv1a64": "733821B859E54029",
+      "name": "Hubble Nebula by Robert Jurziga (PD)",
+      "size": 348992,
+      "title": "Hubble Nebula by Robert Jurziga"
+    },
+    {
+      "crc32": "5E2CDBC0",
+      "fnv1a64": "75F2216BD4F54AC2",
+      "name": "Doom - Evil Unleashed (1994)",
+      "size": 4194304,
+      "title": "Doom - Evil Unleashed"
+    },
+    {
+      "crc32": "47EBC158",
+      "fnv1a64": "75F4878C35A30A60",
+      "name": "Theme Park (1995) (Ocean)",
+      "size": 2097152,
+      "title": "Theme Park"
+    },
+    {
+      "crc32": "97757FC2",
+      "fnv1a64": "770964B17E7BF1D7",
+      "name": "BadCode4 (Modified) by Badcoder (jag) (2000) (PD)",
+      "size": 410926,
+      "title": "BadCode4"
+    },
+    {
+      "crc32": "40E1A1D0",
+      "fnv1a64": "7B94C22F2E84D795",
+      "name": "Aircars (USA)",
+      "size": 2097152,
+      "title": "Aircars"
+    },
+    {
+      "crc32": "892BC67C",
+      "fnv1a64": "7FB2D44F557ED585",
+      "name": "Flip Out (1995)",
+      "size": 2097152,
+      "title": "Flip Out"
+    },
+    {
+      "crc32": "5CFF14AB",
+      "fnv1a64": "8117C6D51B9DD788",
+      "name": "Pinball Fantasies (1995) (Computer West)",
+      "size": 2097152,
+      "title": "Pinball Fantasies"
+    },
+    {
+      "crc32": "39181742",
+      "fnv1a64": "81FC5AABF137F4DA",
+      "name": "Mandelbrot Demo (PD)",
+      "size": 15286,
+      "title": "Mandelbrot Demo"
+    },
+    {
+      "crc32": "08F15576",
+      "fnv1a64": "8429FDCFCDF35FA1",
+      "name": "Iron Soldier (1994)",
+      "size": 2097152,
+      "title": "Iron Soldier"
+    },
+    {
+      "crc32": "44091752",
+      "fnv1a64": "851FF5E7E88E2340",
+      "name": "Jaguar Server 1.08 UPDATE - JAGOS (PD)",
+      "size": 1740,
+      "title": "Jaguar Server 1.08 UPDATE - JAGOS"
+    },
+    {
+      "crc32": "C9608717",
+      "fnv1a64": "8551C87570272A14",
+      "name": "Val D'Isere Skiing & Snowboarding (1994)",
+      "size": 2097152,
+      "title": "Val D'Isere Skiing & Snowboarding"
+    },
+    {
+      "crc32": "AF81E751",
+      "fnv1a64": "877AD6161D8ACDA1",
+      "name": "Jaguar Server (Program Examples) - 27OBJ (PD)",
+      "size": 14450,
+      "title": "Jaguar Server"
+    },
+    {
+      "crc32": "C539EF03",
+      "fnv1a64": "898233020A9A17E7",
+      "name": "Jaguar Tetris (1995) (PD)",
+      "size": 131042,
+      "title": "Jaguar Tetris"
+    },
+    {
+      "crc32": "DA9C4162",
+      "fnv1a64": "8A324BEEC06140AB",
+      "name": "Missile Command 3D (1995)",
+      "size": 2097152,
+      "title": "Missile Command 3D"
+    },
+    {
+      "crc32": "EB135948",
+      "fnv1a64": "8CAA4F84A1E9DD45",
+      "name": "Jaguar Server (Program Examples) - 60HZ (PD)",
+      "size": 202,
+      "title": "Jaguar Server"
+    },
+    {
+      "crc32": "4750BBFF",
+      "fnv1a64": "8CF3B07DF61BC380",
+      "name": "Assassin Demo, The - Release 2 (PD)",
+      "size": 1006304,
+      "title": "Assassin Demo, The - Release 2"
+    },
+    {
+      "crc32": "58272540",
+      "fnv1a64": "8DE431284EC0FED4",
+      "name": "Syndicate (1995) (Ocean)",
+      "size": 2097152,
+      "title": "Syndicate"
+    },
+    {
+      "crc32": "0EC5369D",
+      "fnv1a64": "8ED8554F0955F6EF",
+      "name": "Evolution - Dino Dudes (1993)",
+      "size": 2097152,
+      "title": "Evolution - Dino Dudes"
+    },
+    {
+      "crc32": "33D8C132",
+      "fnv1a64": "8FBC65477B6AC7B8",
+      "name": "Music Demo (2002) (ScatoLOGIC)",
+      "size": 1161856,
+      "title": "Music Demo"
+    },
+    {
+      "crc32": "C5562581",
+      "fnv1a64": "911E3C8231EE1D7A",
+      "name": "Zoop! (1996)",
+      "size": 1048576,
+      "title": "Zoop!"
+    },
+    {
+      "crc32": "60E86BF6",
+      "fnv1a64": "917AE9FC56DA6A2F",
+      "name": "Jaguar Server (Program Examples) - SCALE (PD)",
+      "size": 10148,
+      "title": "Jaguar Server"
+    },
+    {
+      "crc32": "7D74B6F0",
+      "fnv1a64": "95CD66892534CA91",
+      "name": "BadCode4 (Metal) by Badcoder (jag) (2000) (PD)",
+      "size": 406094,
+      "title": "BadCode4"
+    },
+    {
+      "crc32": "1E68B4D1",
+      "fnv1a64": "97CBC5204C468FDB",
+      "name": "JagMania (Apr 18) (1998) (PD)",
+      "size": 131890,
+      "title": "JagMania"
+    },
+    {
+      "crc32": "97EB4651",
+      "fnv1a64": "99A14C375429A786",
+      "name": "I-War (1995)",
+      "size": 2097152,
+      "title": "I-War"
+    },
+    {
+      "crc32": "0DB47415",
+      "fnv1a64": "9A2BC515D977B0FA",
+      "name": "Assassin Demo, The Part 1 (1999) (PD)",
+      "size": 268096,
+      "title": "Assassin Demo, The Part 1"
+    },
+    {
+      "crc32": "BAF04511",
+      "fnv1a64": "9AF74FAB14D7E505",
+      "name": "Drumpad2 by Robert Jurziga (2002) (PD)",
+      "size": 196944,
+      "title": "Drumpad2 by Robert Jurziga"
+    },
+    {
+      "crc32": "48537047",
+      "fnv1a64": "9B6AEE63E23FAE65",
+      "name": "Drumpad by Robert Jurziga (2002) (PD)",
+      "size": 125536,
+      "title": "Drumpad by Robert Jurziga"
+    },
+    {
+      "crc32": "B4C74036",
+      "fnv1a64": "9D10FD7DC82F8DAB",
+      "name": "Gorf 2000 (PD)",
+      "size": 69296,
+      "title": "Gorf 2000"
+    },
+    {
+      "crc32": "0EB3579B",
+      "fnv1a64": "9F8B93BFFA1C391B",
+      "name": "Ladybug Demo (PD)",
+      "size": 293526,
+      "title": "Ladybug Demo"
+    },
+    {
+      "crc32": "EBAFD0DE",
+      "fnv1a64": "A3E9FC870FB99320",
+      "name": "JagMarble (1999) (PD)",
+      "size": 64850,
+      "title": "JagMarble"
+    },
+    {
+      "crc32": "C6C7BA62",
+      "fnv1a64": "A54BEF2B51E90410",
+      "name": "Fight For Your Life (1996) [a1]",
+      "size": 4194304,
+      "title": "Fight For Your Life"
+    },
+    {
+      "crc32": "BE069593",
+      "fnv1a64": "A806A086DFEFA28A",
+      "name": "Jaguar Server (Program Examples) - 50HZ (PD)",
+      "size": 202,
+      "title": "Jaguar Server"
+    },
+    {
+      "crc32": "CAF33BD6",
+      "fnv1a64": "A922F55DCAABCDFF",
+      "name": "Towers II (World)",
+      "size": 2097152,
+      "title": "Towers II"
+    },
+    {
+      "crc32": "D69D1F02",
+      "fnv1a64": "A9D332AAD70469AD",
+      "name": "BadCode2 by Badcoder (bin) (2000) (PD)",
+      "size": 327136,
+      "title": "BadCode2 by Badcoder"
+    },
+    {
+      "crc32": "D5C01E77",
+      "fnv1a64": "ABC7B2F842BC02B8",
+      "name": "Assassin Demo, The Part 1 (for BJL) (1999) (PD)",
+      "size": 268096,
+      "title": "Assassin Demo, The Part 1"
+    },
+    {
+      "crc32": "D9EC011A",
+      "fnv1a64": "AECE7171B895997D",
+      "name": "Memory Dump by Matthias Domin (1999) (PD)",
+      "size": 18706,
+      "title": "Memory Dump by Matthias Domin"
+    },
+    {
+      "crc32": "E89D0F72",
+      "fnv1a64": "AFC64D7B1C025346",
+      "name": "DEMO1 (bin) (PD)",
+      "size": 289512,
+      "title": "DEMO1"
+    },
+    {
+      "crc32": "DA061A4E",
+      "fnv1a64": "B0EBFE55279052CF",
+      "name": "PAULA Preview Demo by Robert Jurziga (PD)",
+      "size": 419296,
+      "title": "PAULA Preview Demo by Robert Jurziga"
+    },
+    {
+      "crc32": "ECF854E7",
+      "fnv1a64": "B16C980E3FB809BB",
+      "name": "Cybermorph_(1994)",
+      "size": 1048576,
+      "title": "Cybermorph"
+    },
+    {
+      "crc32": "BDA405C6",
+      "fnv1a64": "B1EDD5D934A2102C",
+      "name": "Cannon Fodder (1995) (Computer West)",
+      "size": 2097152,
+      "title": "Cannon Fodder"
+    },
+    {
+      "crc32": "AA25060D",
+      "fnv1a64": "B2DEDEC7FF77A511",
+      "name": "JDC Demo V3 - E-JagFest Demo by Lars Hannig (2000) (PD)",
+      "size": 656826,
+      "title": "JDC Demo V3 - E-JagFest Demo by Lars Hannig"
+    },
+    {
+      "crc32": "C7B6D7FC",
+      "fnv1a64": "B711762D1D27A851",
+      "name": "DEMO1B (PD) [a1]",
+      "size": 338840,
+      "title": "DEMO1B"
+    },
+    {
+      "crc32": "BA97C724",
+      "fnv1a64": "B9EE4A9EABAB8E46",
+      "name": "BadCode4 (Metal) by Badcoder (bin) (2000) (PD)",
+      "size": 406048,
+      "title": "BadCode4"
+    },
+    {
+      "crc32": "5E6D06B9",
+      "fnv1a64": "BDC2FE5B8D21F9F4",
+      "name": "BadCode4 (Modified) by Badcoder (rom) (2000) (PD)",
+      "size": 410976,
+      "title": "BadCode4"
+    },
+    {
+      "crc32": "1187FF8F",
+      "fnv1a64": "BE8C203491BC7052",
+      "name": "JDC Example by Lars Hannig (PD)",
+      "size": 56578,
+      "title": "JDC Example by Lars Hannig"
+    },
+    {
+      "crc32": "37DF04AB",
+      "fnv1a64": "BFDF5723879B6C56",
+      "name": "Chroma-Luma Color Pick (Mouse) by Matthias Domin (1996) (PD)",
+      "size": 9234,
+      "title": "Chroma-Luma Color Pick"
+    },
+    {
+      "crc32": "22178D94",
+      "fnv1a64": "C18DD788A64958FC",
+      "name": "BadCode4 by Badcoder (bin) (2000) (PD)",
+      "size": 479360,
+      "title": "BadCode4 by Badcoder"
+    },
+    {
+      "crc32": "CD5BF827",
+      "fnv1a64": "C1E15384328CDB32",
+      "name": "Attack of the Mutant Penguins (1996)",
+      "size": 2097152,
+      "title": "Attack of the Mutant Penguins"
+    },
+    {
+      "crc32": "549844D6",
+      "fnv1a64": "C3792006BEBB89A0",
+      "name": "Ladybug Demo (rom) (PD)",
+      "size": 288720,
+      "title": "Ladybug Demo"
+    },
+    {
+      "crc32": "EC130C25",
+      "fnv1a64": "C3EE06AD9A2A96F0",
+      "name": "Jaguar Server (Program Examples) - INTROMOD (PD)",
+      "size": 83028,
+      "title": "Jaguar Server"
+    },
+    {
+      "crc32": "B14C4753",
+      "fnv1a64": "C56B6F168A80E5EE",
+      "name": "Fight For Your Life (1996)",
+      "size": 4194304,
+      "title": "Fight For Your Life"
+    },
+    {
+      "crc32": "EA9B3FA7",
+      "fnv1a64": "C5EE4328C5254B32",
+      "name": "Phase Zero (2000) (PD) [a1]",
+      "size": 2097152,
+      "title": "Phase Zero"
+    },
+    {
+      "crc32": "3C044941",
+      "fnv1a64": "C6A8442BCE267C50",
+      "name": "Skyhammer (World)",
+      "size": 4194304,
+      "title": "Skyhammer"
+    },
+    {
+      "crc32": "CE5F0C11",
+      "fnv1a64": "C72DA630601E9AB8",
+      "name": "Kasumi Ninja (1994) [a1]",
+      "size": 4194304,
+      "title": "Kasumi Ninja"
+    },
+    {
+      "crc32": "FB731AAA",
+      "fnv1a64": "C97676F7B1875262",
+      "name": "[BIOS] Atari Jaguar (World)",
+      "size": 131072,
+      "title": "[BIOS] Atari Jaguar"
+    },
+    {
+      "crc32": "E1734368",
+      "fnv1a64": "C9BBA0B813416AA1",
+      "name": "DEMO1B (PD)",
+      "size": 344696,
+      "title": "DEMO1B"
+    },
+    {
+      "crc32": "348E6449",
+      "fnv1a64": "CCA2530A5A110E60",
+      "name": "Double Dragon V (1995) (Williams)",
+      "size": 2097152,
+      "title": "Double Dragon V"
+    },
+    {
+      "crc32": "A1B28439",
+      "fnv1a64": "CE5F86B698E5A412",
+      "name": "CRZ Demo (PD)",
+      "size": 251864,
+      "title": "CRZ Demo"
+    },
+    {
+      "crc32": "159EC9D3",
+      "fnv1a64": "D24FA538004A644C",
+      "name": "BadCode4N by Badcoder (jag) (2000) (PD)badcde4n",
+      "size": 440238,
+      "title": "BadCode4N by Badcoder"
+    },
+    {
+      "crc32": "E28756DE",
+      "fnv1a64": "D6821157BFC4A8B0",
+      "name": "Atari Karts (1995)",
+      "size": 4194304,
+      "title": "Atari Karts"
+    },
+    {
+      "crc32": "5A101212",
+      "fnv1a64": "D69687190B9108C8",
+      "name": "International Sensible Soccer (1995)",
+      "size": 2097152,
+      "title": "International Sensible Soccer"
+    },
+    {
+      "crc32": "14915F20",
+      "fnv1a64": "DC70C941F5AF75D6",
+      "name": "White Men Can't Jump (1995)",
+      "size": 4194304,
+      "title": "White Men Can't Jump"
+    },
+    {
+      "crc32": "FFC859F8",
+      "fnv1a64": "DD85918517A0D79E",
+      "name": "JSSDemoII (Jaguar Sound System) V1.0b (10.11.2002) (PD)",
+      "size": 624320,
+      "title": "JSSDemoII"
+    },
+    {
+      "crc32": "DE55DCC7",
+      "fnv1a64": "DE2D2EFB0D1B64DE",
+      "name": "Flashback (1995) (U.S. Gold)",
+      "size": 2097152,
+      "title": "Flashback"
+    },
+    {
+      "crc32": "EC22F572",
+      "fnv1a64": "DE60AFAFCF4B2035",
+      "name": "Super Cross 3D (1995) [a1]",
+      "size": 2097152,
+      "title": "Super Cross 3D"
+    },
+    {
+      "crc32": "2ABADB3D",
+      "fnv1a64": "E1A747782B20240F",
+      "name": "Fight For Your Life (1996) [a2]",
+      "size": 2097152,
+      "title": "Fight For Your Life"
+    },
+    {
+      "crc32": "B5BDFFA5",
+      "fnv1a64": "E24382D4C421592D",
+      "name": "Native Demo (jag) (1997)",
+      "size": 1097300,
+      "title": "Native Demo"
+    },
+    {
+      "crc32": "E60277BB",
+      "fnv1a64": "E336EFC511AB8436",
+      "name": "[BIOS] Atari Jaguar Stubulator '93 (World)",
+      "size": 131072,
+      "title": "[BIOS] Atari Jaguar Stubulator '93"
+    },
+    {
+      "crc32": "239662F4",
+      "fnv1a64": "E5A9EAB39974785B",
+      "name": "Joypad-TeamTap Tester by Matthias Domin (2000) (PD)",
+      "size": 176946,
+      "title": "Joypad-TeamTap Tester by Matthias Domin"
+    },
+    {
+      "crc32": "800D7C67",
+      "fnv1a64": "E67E47A3034666D5",
+      "name": "BadCode1 by Badcoder (cof) (1999) (PD)",
+      "size": 210503,
+      "title": "BadCode1 by Badcoder"
+    },
+    {
+      "crc32": "C1D3612C",
+      "fnv1a64": "E6E44DCC64FB997C",
+      "name": "JagMarble (Jul 13) (1997) (PD)",
+      "size": 64786,
+      "title": "JagMarble"
+    },
+    {
+      "crc32": "E6BD422C",
+      "fnv1a64": "EBBCA607B2ACAB04",
+      "name": "Rayman Demo (1995) (UBI Soft)",
+      "size": 2097152,
+      "title": "Rayman Demo"
+    },
+    {
+      "crc32": "F4454EFE",
+      "fnv1a64": "ED4D6CD5445E9CE8",
+      "name": "BadCode4C by Badcoder (jag) (2000) (PD)",
+      "size": 300142,
+      "title": "BadCode4C by Badcoder"
+    },
+    {
+      "crc32": "38A130ED",
+      "fnv1a64": "F0518496C40B956B",
+      "name": "Troy Aikman NFL Football (1995) (Williams)",
+      "size": 2097152,
+      "title": "Troy Aikman NFL Football"
+    },
+    {
+      "crc32": "111D4E2C",
+      "fnv1a64": "F5851AA378ACA180",
+      "name": "BadCode4 (Modified) by Badcoder (bin) (2000) (PD)",
+      "size": 410880,
+      "title": "BadCode4"
+    },
+    {
+      "crc32": "D0CDBD65",
+      "fnv1a64": "F5B197FE4271C363",
+      "name": "JagMania (Sep 10) (2000) (PD)",
+      "size": 131666,
+      "title": "JagMania"
+    },
+    {
+      "crc32": "E91BD644",
+      "fnv1a64": "F714BD1B17D9375D",
+      "name": "Wolfenstein 3D (1994)",
+      "size": 2097152,
+      "title": "Wolfenstein 3D"
+    },
+    {
+      "crc32": "5B6BB205",
+      "fnv1a64": "F8AA9F6B845DC022",
+      "name": "Ruiner Pinball (1995)",
+      "size": 2097152,
+      "title": "Ruiner Pinball"
+    },
+    {
+      "crc32": "BC62A2BF",
+      "fnv1a64": "F8D04F3D1D608D6E",
+      "name": "QSOUND Demo (PD)",
+      "size": 1040384,
+      "title": "QSOUND Demo"
+    },
+    {
+      "crc32": "FA7775AE",
+      "fnv1a64": "F9DDA93597C567F7",
+      "name": "Checkered Flag (1994)",
+      "size": 2097152,
+      "title": "Checkered Flag"
+    },
+    {
+      "crc32": "5F2C2774",
+      "fnv1a64": "FA0B9CAD2117BE41",
+      "name": "Battle Sphere (World)",
+      "size": 4194304,
+      "title": "Battle Sphere"
+    },
+    {
+      "crc32": "53E35744",
+      "fnv1a64": "FD2015E6F3717666",
+      "name": "Aircars (USA) (Beta) (1994-11-14)",
+      "size": 2097152,
+      "title": "Aircars"
+    },
+    {
+      "crc32": "A27823D8",
+      "fnv1a64": "FD4FA9913CE8AF5E",
+      "name": "Ultra Vortek (Beta) (1995)",
+      "size": 4194304,
+      "title": "Ultra Vortek"
+    },
+    {
+      "crc32": "CD61879B",
+      "fnv1a64": "FE10CF179218A00F",
+      "name": "Jaguar Server (Program Examples) - SCALE3 (PD)",
+      "size": 10244,
+      "title": "Jaguar Server"
+    }
+  ],
+  "format": 1
+}

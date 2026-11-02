@@ -1,0 +1,17 @@
+name: SteamPipe preparation
+on:
+  pull_request:
+    branches: [develop, master, 'release/**']
+    paths:
+      - 'app/packaging/steam/**'
+      - '.github/workflows/steam-package.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  manifests:
+    name: SteamPipe payload safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 app/packaging/steam/test_manifests.py

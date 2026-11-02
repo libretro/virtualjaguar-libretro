@@ -7,6 +7,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <winsock2.h>
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -36,7 +37,24 @@ std::wstring widen(const std::string& s) {
 
 }  // namespace
 
+void initNetworking() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    WSADATA wsa;
+    const int rc = WSAStartup(MAKEWORD(2, 2), &wsa);
+    if (rc != 0) std::fprintf(stderr, "[app] WSAStartup failed (%d): the core's sockets (GDB stub, netplay) will not open\n", rc);
+}
+
 void beforeWindow() {
+    // MSIX already supplies the package-family!application shell identity. An explicit
+    // unpackaged ID here would detach the running window from its Store Start-menu pin.
+    typedef LONG(WINAPI * GetPackageNameFn)(UINT32*, PWSTR);
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    GetPackageNameFn packageName = kernel ? (GetPackageNameFn)(void*)GetProcAddress(kernel, "GetCurrentPackageFullName") : nullptr;
+    UINT32 length = 0;
+    if (packageName && packageName(&length, nullptr) == ERROR_INSUFFICIENT_BUFFER) return;
+
     typedef HRESULT(WINAPI * SetAumidFn)(PCWSTR);
     HMODULE shell = LoadLibraryW(L"shell32.dll");
     if (!shell) return;
@@ -71,6 +89,8 @@ void setDarkChrome(bool dark) {
 
 bool installMenus() { return false; }   // the in-window menu bar is the Windows menu bar here
 void renderMenus(const MenuBar&, const std::vector<MenuItem>&) {}
+
+bool displayAsleep(SDL_Window*) { return false; }
 
 void noteRecent(const std::string& path) {
     // Explorer's Recent and the taskbar Jump List's "Recent" category (the latter once the installer

@@ -416,6 +416,37 @@ Five layers, in increasing cost:
    (digest-verified, C89-clean) rather than merged -- 0.7% did not justify
    an extracted-body header in the emulator's hottest function.
 
+   **Update (issue #1054, 2026-10): the DSP half is now specialised.**
+   By October develop had split DSPExec() into timed and untimed loops,
+   and the untimed loop is now built twice from `src/jerry/dsp_exec_untimed.h`:
+   a plain instance with no GDB code, and an armed instance that DSPExec()
+   enters only while `gdbArmedDSP` is set.  Measured on an M4 Max, A/B/B/A,
+   load 2-4 unless noted:
+
+   | Arms | ROM | Median | Best-run | p |
+   |---|---|---|---|---|
+   | develop vs DSP check compiled out (the ceiling) | yarc | +2.7% | +2.3% | 0.0003 |
+   | develop vs port | yarc | +2.6% | +3.5% | 0.0006 |
+   | develop vs port (repeat, 5-min load ~10) | yarc | +1.6% | +3.3% | 0.0092 |
+   | develop vs port, both DSP-armed (load rose 2 -> 17) | yarc | +2.5% | +0.3% | 0.1078 |
+   | develop vs port | Tempest 2000 | -0.2% | +0.2% | 0.7415 |
+   | develop vs port | Doom | -0.8% | -0.4% | 0.6801 |
+   | develop vs ceiling | Tempest 2000 | -1.0% | -1.3% | 0.0007 |
+   | develop vs ceiling | Doom | -0.6% | -1.3% | 0.0168 |
+   | ceiling vs port | yarc | +1.1% | +0.9% | 0.0018 |
+
+   Read the last three rows before quoting a cause.  Compiling the check
+   out makes real games about 1% *slower*, and the port beats the ceiling
+   on yarc although its plain loop is the same C.  Code layout moves this
+   loop by about +/-1%, the same size as the check.  So the claim is
+   narrow: the default DSP path carries no GDB code, yarc gains, and games
+   are neutral.  A "the check cost 2%" reading is not supported.
+
+   One consequence for the control arms: after this change
+   `VJ_GDB_STUB_DISABLE_DSP_HOOK=1` compares two nearly identical plain
+   loops, so the DSP row of a future attribution run should read about 0.
+   That does not mean the arm is broken.
+
    **Next step is real-hardware profiling, not more host measurement.**
    Every number here comes from an arm64 Mac that never dropped below load
    5. The residual should be re-attributed on a real target (tvOS/A-series,
@@ -429,7 +460,8 @@ Five layers, in increasing cost:
    confident-looking p-value.
 
    Shipped-by-default stands for now at a measured ~2% cost, deliberately,
-   pending those numbers.
+   pending those numbers.  (Since #1054 the default DSP path carries no GDB
+   code at all; see the update above.)
 
 
 

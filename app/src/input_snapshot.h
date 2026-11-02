@@ -9,10 +9,36 @@
 
 #include "remap.h"
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 namespace vj {
+
+// The Neuro agent's input (neuro_actions.h: InputQueue is the UI-side queue, AgentPlayer the emulation-thread replica)
+// travels as a whole program the emulation thread plays frame by frame, so it needs no per-frame round trip.
+struct AgentStep {
+    ControlSet held;
+    unsigned frames = 1;           // 1..600
+};
+struct AgentProgram {
+    uint64_t gen = 0;              // 0 = no program; bumped on every publish (takeAgent: only a newer gen)
+    uint64_t lineage = 0;          // bumped only by InputQueue::clear() (release_all, link drop, hardcore, input block,
+                                   // game change, Neuro off): a new lineage restarts the replica's count
+    uint64_t firstFrame = 0;       // frame index, inside the lineage, of steps[0]'s first frame (the UI trims played
+                                   // frames and raises it), so a new gen of the same lineage neither replays nor drops
+    bool enabled = false;          // Agent::allowed() && actions_.blocked().empty()
+    ControlSet hold;               // added to every frame
+    std::vector<AgentStep> steps;  // run in order after the frames already played
+};
+struct AgentProgress {
+    uint64_t gen = 0;              // the program this reports on
+    uint64_t lineage = 0;
+    unsigned played = 0;           // frames consumed from the steps, ABSOLUTE in the lineage (not the hold)
+    bool done = false;             // steps exhausted
+    ControlSet pressed;            // what the last frame pressed (hold | step)
+};
 
 class InputSnapshot {
 public:
@@ -49,12 +75,42 @@ public:
         return n;
     }
 
+    // The agent channel: its own lock, so the per-event mutex above is not touched.
+    void publishAgent(const AgentProgram& p) {      // UI thread; the whole program, newest wins
+        {
+            std::lock_guard<std::mutex> l(agentMu_);
+            agent_ = p;
+        }
+        agentGen_.store(p.gen, std::memory_order_release);
+    }
+    bool takeAgent(AgentProgram& out) {             // emulation thread: true (and `out` filled) only when gen changed
+        if (agentGen_.load(std::memory_order_acquire) == takenAgentGen_) return false;
+        std::lock_guard<std::mutex> l(agentMu_);
+        out = agent_;
+        takenAgentGen_ = out.gen;
+        return true;
+    }
+    void reportAgent(const AgentProgress& p) {      // emulation thread, after each frame()
+        std::lock_guard<std::mutex> l(agentMu_);
+        progress_ = p;
+    }
+    AgentProgress agentProgress() const {           // UI thread
+        std::lock_guard<std::mutex> l(agentMu_);
+        return progress_;
+    }
+
 private:
     std::mutex mu_;
     CoreInput latest_;
     uint64_t eventNs_ = 0;
     unsigned taken_ = 0;
     uint64_t seq_ = 0;   // publishes so far
+
+    mutable std::mutex agentMu_;
+    AgentProgram agent_;
+    AgentProgress progress_;
+    std::atomic<uint64_t> agentGen_{0};
+    uint64_t takenAgentGen_ = 0;   // emulation thread only
 };
 
 }  // namespace vj

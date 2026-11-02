@@ -39,6 +39,20 @@ static void testDpadRepeat() {
     CHECK(n.take(2000).empty());
 }
 
+// A screen can tell a repeat from a press: lastWasRepeat() is true only after a take() whose last intent was the timer's.
+static void testLastWasRepeat() {
+    NavInput n;
+    n.padButton(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true, 0);
+    CHECK(n.take(0) == Intents{Intent::Right} && !n.lastWasRepeat());   // the press
+    CHECK(n.take(100).empty() && !n.lastWasRepeat());
+    CHECK(n.take(350).size() == 1 && n.lastWasRepeat());                // the first repeat
+    CHECK(n.take(360).empty() && !n.lastWasRepeat());
+    CHECK(n.take(430).size() == 1 && n.lastWasRepeat());
+    n.padButton(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false, 440);
+    n.padButton(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true, 450);              // a new press arriving with the call: edge, then no repeat
+    CHECK(n.take(450) == Intents{Intent::Right} && !n.lastWasRepeat());
+}
+
 static void testNoRepeatForButtons() {
     NavInput n;
     n.padButton(SDL_GAMEPAD_BUTTON_SOUTH, true, 0);
@@ -355,6 +369,7 @@ static void testLegacyEntryPoints() {
 int main() {
     testBriefSequence();
     testDpadRepeat();
+    testLastWasRepeat();
     testNoRepeatForButtons();
     testStick();
     testStickDirections();

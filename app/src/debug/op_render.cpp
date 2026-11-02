@@ -10,7 +10,6 @@ namespace vj {
 
 namespace {
 
-const unsigned kClutBase = 0xF00400;
 const unsigned kVmode = 0xF00028;
 
 bool peekN(const vj_debug_iface* i, unsigned addr, uint8_t* dst, unsigned n) {
@@ -53,17 +52,33 @@ OpColorMode opResolveColorMode(const vj_debug_iface* iface, OpColorMode req) {
     return OpColorMode::Cry;
 }
 
+namespace {
+// tom.c TOMFillLookupTables: RRRRR BBBBB GGGGGG
+uint32_t rgb16ToRgb(unsigned x) {
+    return ((x & 0xF800u) << 8) | ((x & 0x003Fu) << 10) | ((x & 0x07C0u) >> 3);
+}
+}  // namespace
+
+uint32_t opColorToRgb(const std::vector<uint32_t>* cryTable, OpColorMode mode, unsigned v) {
+    v &= 0xFFFF;
+    auto cry = [&](unsigned x) -> uint32_t {
+        return cryTable && cryTable->size() == 0x10000 ? ((*cryTable)[x] & 0xFFFFFFu) : 0u;
+    };
+    switch (mode) {
+        case OpColorMode::Rgb16: return rgb16ToRgb(v);
+        case OpColorMode::Mixed: return (v & 1) ? rgb16ToRgb(v) : cry(v);
+        default: return cry(v);
+    }
+}
+
 uint32_t opColorToRgb(const vj_debug_iface* iface, OpColorMode mode, unsigned v) {
     v &= 0xFFFF;
-    auto rgb16 = [](unsigned x) -> uint32_t {   // tom.c TOMFillLookupTables: RRRRR BBBBB GGGGGG
-        return ((x & 0xF800u) << 8) | ((x & 0x003Fu) << 10) | ((x & 0x07C0u) >> 3);
-    };
     auto cry = [&](unsigned x) -> uint32_t {
         return iface && iface->cry_to_rgb ? (iface->cry_to_rgb(x) & 0xFFFFFFu) : 0u;
     };
     switch (mode) {
-        case OpColorMode::Rgb16: return rgb16(v);
-        case OpColorMode::Mixed: return (v & 1) ? rgb16(v) : cry(v);
+        case OpColorMode::Rgb16: return rgb16ToRgb(v);
+        case OpColorMode::Mixed: return (v & 1) ? rgb16ToRgb(v) : cry(v);
         default: return cry(v);
     }
 }
@@ -109,7 +124,7 @@ bool opRender(const vj_debug_iface* iface, const OpObject& o, const OpRenderOpti
     // CLUT for the indexed depths.
     if (o.bpp <= 8) {
         uint8_t cb[512];
-        if (!peekN(iface, kClutBase, cb, 512)) { std::memset(cb, 0, sizeof cb); out.unreadable = true; }
+        if (!peekN(iface, opt.clutAddress, cb, 512)) { std::memset(cb, 0, sizeof cb); out.unreadable = true; }
         out.clut.resize(256);
         for (unsigned i = 0; i < 256; i++) out.clut[i] = (uint16_t)((cb[i * 2] << 8) | cb[i * 2 + 1]);
     }
@@ -120,8 +135,17 @@ bool opRender(const vj_debug_iface* iface, const OpObject& o, const OpRenderOpti
     std::vector<uint8_t> line((size_t)phrasesNeeded * 8);
 
     for (unsigned y = 0; y < h; y++) {
-        unsigned lineAddr = (o.data + y * o.dwidth * 8) & 0xFFFFFF;
-        if (!readLinePhrases(iface, lineAddr, phrasesNeeded, o.pitch, line.data())) out.unreadable = true;
+        if (opt.rowStrideBytes) {
+            // The final phrase can be partial. Only fetch the bytes belonging to this raw row.
+            std::fill(line.begin(), line.end(), 0);
+            const uint64_t addr = (uint64_t)o.data + (uint64_t)y * opt.rowStrideBytes;
+            const unsigned n = std::min((unsigned)line.size(), opt.rowStrideBytes);
+            if (addr >= opt.sourceEnd || n > opt.sourceEnd - addr ||
+                !peekN(iface, (unsigned)addr, line.data(), n)) out.unreadable = true;
+        } else {
+            unsigned lineAddr = (o.data + y * o.dwidth * 8) & 0xFFFFFF;
+            if (!readLinePhrases(iface, lineAddr, phrasesNeeded, o.pitch, line.data())) out.unreadable = true;
+        }
         for (unsigned x = 0; x < w; x++) {
             unsigned s = x + o.skipPixels;
             unsigned k = s / ppp, p = s % ppp;

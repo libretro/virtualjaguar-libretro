@@ -65,6 +65,8 @@ public:
     static constexpr unsigned kMinOutcomes = 8;         // waits observed before the miss rate can release the lock
     static constexpr unsigned kCooldownSwaps = 300;     // swaps after a release before the lock may be taken again
     static constexpr unsigned kMaxLateExempt = 8;       // consecutive late-start waits excused; after that they count
+    static constexpr unsigned kMeasureMin = 120;        // vblanks spanned before the measured period is trusted (2 s)
+    static constexpr unsigned kMeasureMax = 1200;       // ... and before the estimate starts a fresh span (20 s)
 
     // The display's refresh period (SDL_DisplayMode), 0 = unknown: the latch stays off.
     void setPeriodNs(uint64_t ns) {
@@ -76,8 +78,28 @@ public:
         targetNs_ = 0;
         outcomeAt_ = recentMisses_ = 0;
         cooldown_ = 0;
+        resetMeasure();
     }
-    uint64_t periodNs() const { return periodNs_; }
+    uint64_t periodNs() const { return periodNs_; }   // the display mode's nominal period
+    // The display's real vblank period (mode B, #1038: the display lock follows it, not the mode's nominal rate), measured
+    // over the tracked vblanks since the lock: the tracked phase's travel divided by the vblanks it spanned.  A 59.94 Hz
+    // display announced as 60 Hz reads 16.683 ms.  0 until kMeasureMin vblanks were spanned; restarts when the grid is
+    // lost (an unlock, a new period) or on resetMeasure() (a display event).  Spans of kMeasureMax vblanks: a fresh span
+    // starts there, and the last span's value stands until the new one has kMeasureMin.
+    uint64_t measuredPeriodNs() const { return measuredNs_; }
+    void resetMeasure() {
+        measAnchorNs_ = measLastNs_ = measuredNs_ = 0;
+        measCount_ = 0;
+    }
+    // The vblank nearest `ns` on the tracked grid (0 before the first observation).
+    uint64_t nearestVblankNs(uint64_t ns) const {
+        if (!havePhase_ || !periodNs_) return 0;
+        const int64_t P = (int64_t)periodNs_;
+        int64_t r = (int64_t)(ns - phaseNs_) % P;
+        if (r < 0) r += P;
+        if (r > P / 2) r -= P;
+        return ns - (uint64_t)r;
+    }
 
     // The UI's own work in one iteration: from the end of the wait to the start of the swap.
     void noteBuild(uint64_t ns) {
@@ -148,6 +170,7 @@ public:
             phaseNs_ = endNs - (uint64_t)(r - r / 4);   // move a quarter of the way toward the observation
             outliers_ = 0;
             if (++tracked_ >= kLockAfter && jitterNs_ < kJitterMaxNs && !cooldown_) locked_ = true;
+            if (locked_) measure();
         } else if (++outliers_ >= kUnlockAfter) {   // the grid moved (a new display mode, a compositor hiccup)
             unlock();
             phaseNs_ = endNs;
@@ -169,6 +192,16 @@ public:
         return wakeNs_;
     }
 
+    // Mode B (#1038): the latest the UI may still start building for the vblank wakeAt() aimed at, while it waits for
+    // the frame of the tick it just published: the build estimate without the pad (the pad is for the wait's own
+    // overshoot; here a frame that arrives later is shown a vblank later anyway, so waiting longer costs nothing but a
+    // possible repeat).  0 when wakeAt() sized no wait.  A frame that finishes by then makes the vblank, as in the
+    // single-thread loop; one that does not is taken at the next one.
+    uint64_t lastChanceNs() const {
+        if (!targetNs_) return 0;
+        const uint64_t build = budgetNs() - padNs_;
+        return targetNs_ > build ? targetNs_ - build : 0;
+    }
     bool locked() const { return locked_; }
     uint64_t targetNs() const { return targetNs_; }   // the vblank the wait wakeAt() just sized aims at, 0 = none
     uint64_t padNs() const { return padNs_; }
@@ -195,6 +228,27 @@ private:
         locked_ = false;
         tracked_ = outliers_ = nonBlocking_ = 0;
         outcomeAt_ = recentMisses_ = 0;
+        resetMeasure();
+    }
+
+    // A tracked vblank while locked: the phase moved to it.  The vblanks between two observations are counted from that
+    // short gap (exact while the real period is within half a period's worth of the nominal one per gap), never from the
+    // whole span, where an off-nominal display (0.3% is 50 us a vblank) would round wrong after a few hundred.  The
+    // phase follows the real grid with a constant lag (the quarter step), so its travel over the span is count x real.
+    void measure() {
+        if (!measAnchorNs_) {
+            measAnchorNs_ = measLastNs_ = phaseNs_;
+            measCount_ = 0;
+            return;
+        }
+        const uint64_t gap = phaseNs_ - measLastNs_;
+        measCount_ += (gap + periodNs_ / 2) / periodNs_;
+        measLastNs_ = phaseNs_;
+        if (measCount_ >= kMeasureMin) measuredNs_ = (phaseNs_ - measAnchorNs_) / measCount_;
+        if (measCount_ >= kMeasureMax) {
+            measAnchorNs_ = phaseNs_;
+            measCount_ = 0;
+        }
     }
 
     uint64_t periodNs_ = 0;
@@ -214,6 +268,8 @@ private:
     uint64_t targetNs_ = 0;   // the vblank the current wait aims at (0 = no wait this iteration)
     uint64_t builds_[kBuilds] = {};
     unsigned buildAt_ = 0;
+    uint64_t measAnchorNs_ = 0, measLastNs_ = 0, measuredNs_ = 0;   // measuredPeriodNs(): span start, last phase, value
+    uint64_t measCount_ = 0;                                        // vblanks spanned since measAnchorNs_
 };
 
 }  // namespace vj

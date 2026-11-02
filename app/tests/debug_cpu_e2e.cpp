@@ -67,9 +67,10 @@ public:
     std::function<void()> onUi;
 
     Rig() {
-        dbg.onHalt.push_back([this](int t, unsigned pc, int r) { ctl.onHalt(t, pc, r); });
+        dbg.onHaltUi.push_back([this](int t, unsigned pc, int r) { ctl.onHalt(t, pc, r); });
         dbg.onForcedClose.push_back([this](const char*) { ctl.forget(); });
-        dbg.runUiFrame = [this] {
+        dbg.core().runUiFrame = [this] {
+            dbg.syncHalt();   // the mirror lags the core by one UI frame: App::syncDebug does this every frame
             CHECK(dbg.halted() && host.inFrame());
             if (onUi) onUi();
         };
@@ -92,12 +93,19 @@ public:
     vj_debug_regs regs(int target) {
         vj_debug_regs r;
         std::memset(&r, 0, sizeof r);
-        dbg.iface()->get_regs(target, &r);
+        dbg.core().iface()->get_regs(target, &r);
         return r;
+    }
+    // One emulated frame, then the UI frame's syncDebug(): frameEnded() closes a halt the core left on its own and completes a
+    // Detach's host drop, and the mirror sees what the frame left behind (App does both every frame).
+    void frame() {
+        host.runFrame();
+        dbg.core().frameEnded();
+        dbg.syncHalt();
     }
     // Runs frames until `done()` or the budget is spent.
     bool runUntil(const std::function<bool()>& done, int frames) {
-        for (int i = 0; i < frames && !done(); i++) host.runFrame();
+        for (int i = 0; i < frames && !done(); i++) frame();
         return done();
     }
 };
@@ -122,13 +130,13 @@ std::vector<Step> traceFromBoot(Rig& rig, int n) {
     CHECK(rig.load());
     rig.onUi = [&] {
         vj_debug_regs r = rig.regs(VJ_DBG_TARGET_M68K);
-        Line l = disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_M68K, r.pc);
+        Line l = disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_M68K, r.pc);
         tr.push_back({r.pc, l.text, l.len, rig.dbg.haltReason()});
         if ((int)tr.size() < n) rig.ctl.stepIn(VJ_DBG_TARGET_M68K);
-        else rig.dbg.detachAndResume();
+        else rig.dbg.detach();
     };
     CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_M68K));
-    rig.host.runFrame();
+    rig.frame();
     CHECK(!rig.dbg.halted() && !rig.host.inFrame());
     rig.onUi = nullptr;
     return tr;
@@ -205,7 +213,7 @@ int main(int argc, char** argv) {
         };
         CHECK(rig.dbg.addBreakpoint(VJ_DBG_TARGET_M68K, want.pc));
         CHECK(!rig.dbg.addBreakpoint(VJ_DBG_TARGET_M68K, want.pc));
-        for (int f = 0; f < 3; f++) rig.host.runFrame();
+        for (int f = 0; f < 3; f++) rig.frame();
         CHECK(!halts.empty());
         if (!halts.empty()) {
             CHECK(halts[0].pc == want.pc && halts[0].reason == VJ_DBG_STOP_BREAKPOINT);
@@ -215,7 +223,7 @@ int main(int argc, char** argv) {
         rig.dbg.setBreakpointEnabled(VJ_DBG_TARGET_M68K, want.pc, false);
         rig.load();
         halts.clear();
-        for (int f = 0; f < 3; f++) rig.host.runFrame();
+        for (int f = 0; f < 3; f++) rig.frame();
         CHECK(halts.empty());
         rig.dbg.clearBreakpoints();
         rig.onUi = nullptr;
@@ -233,7 +241,7 @@ int main(int argc, char** argv) {
             else rig.ctl.cont();
         };
         CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_M68K));
-        for (int f = 0; f < 3; f++) rig.host.runFrame();
+        for (int f = 0; f < 3; f++) rig.frame();
         CHECK(halts.size() == 2);
         if (halts.size() == 2) {
             CHECK(halts[0].pc == tr[0].pc && halts[0].reason == VJ_DBG_STOP_USER);
@@ -257,13 +265,13 @@ int main(int argc, char** argv) {
             vj_debug_regs r = rig.regs(VJ_DBG_TARGET_M68K);
             halts.push_back({r.pc, "", 0, rig.dbg.haltReason()});
             if (halts.size() == 1) {
-                CHECK(stepOverTarget(rig.dbg.iface(), VJ_DBG_TARGET_M68K, r.pc).next == after);
+                CHECK(stepOverTarget(rig.dbg.core().iface(), VJ_DBG_TARGET_M68K, r.pc).next == after);
                 usedTemp = rig.ctl.stepOver(VJ_DBG_TARGET_M68K);
             } else {
                 rig.ctl.cont();
             }
         };
-        for (int f = 0; f < 3; f++) rig.host.runFrame();
+        for (int f = 0; f < 3; f++) rig.frame();
         CHECK(usedTemp);
         CHECK(halts.size() == 2);   // the callee's instructions did not halt one by one
         if (halts.size() == 2) {
@@ -285,7 +293,7 @@ int main(int argc, char** argv) {
             if (halts.size() == 1) rig.ctl.stepOver(VJ_DBG_TARGET_M68K);
             else rig.ctl.cont();
         };
-        for (int f = 0; f < 3; f++) rig.host.runFrame();
+        for (int f = 0; f < 3; f++) rig.frame();
         CHECK(halts.size() >= 2);                         // (the callee is entered again later: more halts follow)
         if (halts.size() >= 2) CHECK(halts[1].pc == inside.pc);
         CHECK(!rig.ctl.temp().active());
@@ -297,7 +305,7 @@ int main(int argc, char** argv) {
     // ---- 7: the GPU -------------------------------------------------------------------------------------------------
     {
         CHECK(rig.load());
-        for (int f = 0; f < 30; f++) rig.host.runFrame();
+        for (int f = 0; f < 30; f++) rig.frame();
         vj_debug_regs gr = rig.regs(VJ_DBG_TARGET_GPU);
         CHECK((gr.ctrl & 1u) != 0);                       // yarc starts the GPU...
         CHECK(decodeRiscCtrl(gr.ctrl, false).go);
@@ -313,7 +321,7 @@ int main(int argc, char** argv) {
         std::vector<unsigned> isrPcs;
         rig.onUi = [&] {
             vj_debug_regs r = rig.regs(VJ_DBG_TARGET_GPU);
-            Line l = disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, r.risc_pc);
+            Line l = disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_GPU, r.risc_pc);
             CHECK(rig.dbg.haltedTarget() == VJ_DBG_TARGET_GPU && r.risc_pc == rig.dbg.haltedPc());
             if (gh.empty()) {
                 CHECK(rig.dbg.haltReason() == VJ_DBG_STOP_BREAKPOINT);
@@ -333,7 +341,7 @@ int main(int argc, char** argv) {
             }
         };
         unsigned f0 = (unsigned)rig.host.frameCount();
-        for (int f = 0; f < 3 && gh.size() < 14; f++) rig.host.runFrame();
+        for (int f = 0; f < 3 && gh.size() < 14; f++) rig.frame();
         CHECK(gh.size() >= 14);
         for (size_t k = 0; k < gh.size() && g_verbose; k++) VLOG("GPU %2zu $%06X %-44s len %u reason %d\n", k, gh[k].pc, gh[k].text.c_str(), gh[k].len, gh[k].reason);
         for (const Step& h : gh) CHECK(!h.text.empty() && h.text[0] != '$');   // prefix stripped, incl. the 6-byte movei
@@ -365,7 +373,7 @@ int main(int argc, char** argv) {
         };
         CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_GPU));
         CHECK(rig.ctl.pending(VJ_DBG_TARGET_GPU));
-        rig.host.runFrame();
+        rig.frame();
         CHECK(gh.size() == 1 && gh[0].reason == VJ_DBG_STOP_USER);
 
         // "Step the GPU" while the 68000 is the halted one: resumes, and halts on the GPU's next instruction.
@@ -377,7 +385,7 @@ int main(int argc, char** argv) {
             else rig.ctl.cont();
         };
         CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_M68K));
-        rig.host.runFrame();
+        rig.frame();
         CHECK(who.size() == 2 && who[0] == VJ_DBG_TARGET_M68K && who[1] == VJ_DBG_TARGET_GPU);
         rig.onUi = nullptr;
     }
@@ -390,10 +398,10 @@ int main(int argc, char** argv) {
     // documents this; if the core ever reports delay slots, this test fails and the docs need revisiting.
     {
         CHECK(rig.load());
-        for (int f = 0; f < 30; f++) rig.host.runFrame();
+        for (int f = 0; f < 30; f++) rig.frame();
         const unsigned jumpAddr = 0xF0303C, jumpSlot = 0xF0303E, jrAddr = 0xF03062, jrSlot = 0xF03064, vec = 0xF03030;
-        CHECK(disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, jumpAddr).text.compare(0, 4, "jump") == 0);
-        CHECK(disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, jrAddr).text.compare(0, 2, "jr") == 0);
+        CHECK(disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_GPU, jumpAddr).text.compare(0, 4, "jump") == 0);
+        CHECK(disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_GPU, jrAddr).text.compare(0, 2, "jr") == 0);
         const unsigned addrs[] = {vec, jumpAddr, jumpSlot, jrAddr, jrSlot};
         for (unsigned a : addrs) CHECK(rig.dbg.addBreakpoint(VJ_DBG_TARGET_GPU, a));
         std::map<unsigned, int> hits;
@@ -401,7 +409,7 @@ int main(int argc, char** argv) {
             hits[rig.dbg.haltedPc()]++;
             rig.ctl.cont();
         };
-        for (int f = 0; f < 6; f++) rig.host.runFrame();
+        for (int f = 0; f < 6; f++) rig.frame();
         for (unsigned a : addrs) VLOG("delay-slot probe: $%06X hit %d times\n", a, hits[a]);
         CHECK(hits[vec] >= 5 && hits[jumpAddr] >= 5);
         CHECK(hits[jumpSlot] == 0);                       // the slot of a taken jump: never a stop
@@ -417,12 +425,12 @@ int main(int argc, char** argv) {
         int ui = 0;
         rig.onUi = [&] {
             ui++;
-            rig.dbg.detachAndResume();
+            rig.dbg.detach();
         };
         CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_M68K));
-        rig.host.runFrame();
+        rig.frame();
         CHECK(ui == 1 && !rig.dbg.halted() && !rig.dbg.attached());
-        for (int f = 0; f < 20; f++) rig.host.runFrame();
+        for (int f = 0; f < 20; f++) rig.frame();
         CHECK(ui == 1);
         rig.onUi = nullptr;
         // and a fresh attach works afterwards

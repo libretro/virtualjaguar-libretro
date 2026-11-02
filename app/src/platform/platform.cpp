@@ -28,6 +28,8 @@ bool active();
 void render(const std::vector<MenuItem>& items);
 }  // namespace tray
 
+void initNetworking() { os::initNetworking(); }
+
 void beforeWindow() { os::beforeWindow(); }
 
 void windowCreated(SDL_Window* w) {
@@ -93,6 +95,8 @@ void setGameRunning(bool running, bool keepAwake) {
         os::setActivity(running);
     }
 }
+
+bool displayAsleep(SDL_Window* w) { return os::displayAsleep(w); }
 
 void noteRecent(const std::string& path) { os::noteRecent(path); }
 void clearRecents() { os::clearRecents(); }

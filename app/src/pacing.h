@@ -131,4 +131,111 @@ private:
     bool dropped_ = false;
 };
 
+// Inline step times on the display's vblank grid (#1141).  With the swap interval at 1 the inline loop is locked to the
+// display, but plan() is handed the real time between steps, and a step starts when its swap returned plus whatever the
+// loop did since (events, input, the cheat pump): 0.3-1 ms of jitter on a quiet host, several ms on a loaded one.  The
+// core's period is a hair shorter than a 60 Hz refresh (60.05 Hz), so the backlog's phase creeps across a period
+// boundary about every 18 s, and while it sits near one, that jitter decides step by step whether 0, 1 or 2 frames run:
+// bursts of repeated and dropped images (16-60 a minute on Cybermorph, more when a cheaper core frame leaves a longer
+// and less even swap block).  SwapGrid books each step at the vblank its swap returned at instead.  It tracks the grid
+// from swaps that blocked (as LateLatch does for the threaded loop), and correct() turns the step's real time into that
+// grid time, so the backlog gains exactly the time between those vblanks and crosses a boundary once: one two-frame step
+// per crossing, the only slip a 60.05 Hz core has to make on a 60 Hz display.  The tracked phase follows the real
+// vblanks (a 59.94 Hz panel announced as 60 Hz included), so the sum stays real time and the game speed is unchanged.
+// Not locked (vsync off or released, swaps that do not block, a grid that does not hold: VRR, a compositor hiccup):
+// correct() is 0 and the pacer sees real time, as before.  Seconds on any one monotonic clock.
+class SwapGrid {
+public:
+    static constexpr double kBlocked = 0.00025;      // a swap that took this long waited for a vblank (LateLatch::kBlockedNs)
+    static constexpr double kTrack = 0.0015;         // an observation within this of the grid is tracked
+    static constexpr double kJitterMax = 0.001;      // locked only while the smoothed |residual| stays under this
+    static constexpr double kUnlockJitter = 0.002;   // ... and let go only when it reaches this (hysteresis)
+    static constexpr int kLockAfter = 30;            // tracked observations before the grid is trusted
+    static constexpr int kUnlockAfter = 4;           // consecutive outliers (or non-blocking swaps x 8) to let go
+    static constexpr double kGain = 1.0 / 32;        // locked: the phase moves this share toward each observation
+
+    void reset() {
+        refresh_ = 0;
+        havePhase_ = false;
+        unlock();
+    }
+    // A step that is not paced (paused, halted, fast-forward, a new game): the next correct() starts a new chain.
+    void restart() {
+        haveAt_ = haveLag_ = false;
+    }
+
+    // Right after the swap: when it began and returned, and the display's refresh period (0 = unknown: off).
+    void onSwap(double begin, double end, double refresh) {
+        if (refresh != refresh_) {
+            reset();
+            refresh_ = refresh;
+        }
+        haveAt_ = false;
+        if (refresh <= 0) return;
+        if (end - begin < kBlocked) {   // vsync off, or a driver that queued the swap: nothing learned
+            if (++nonBlocking_ >= kUnlockAfter * 8) unlock();
+            return;
+        }
+        nonBlocking_ = 0;
+        if (!havePhase_) {
+            phase_ = end;
+            havePhase_ = true;
+            return;
+        }
+        const double pred = phase_ + std::floor((end - phase_) / refresh + 0.5) * refresh;   // the nearest grid point
+        const double r = end - pred;
+        jitter_ += (std::fabs(r) - jitter_) / 8;
+        if (std::fabs(r) < kTrack) {
+            phase_ = pred + r * (locked_ ? kGain : 0.25);
+            outliers_ = 0;
+            if (++tracked_ >= kLockAfter && jitter_ < kJitterMax) locked_ = true;
+        } else if (++outliers_ >= kUnlockAfter) {   // the grid moved (a new mode, a compositor hiccup)
+            unlock();
+            phase_ = end;
+            return;
+        } else {
+            phase_ = pred;   // one late swap: booked at its vblank, the grid kept
+        }
+        if (locked_ && jitter_ >= kUnlockJitter) unlock();
+        if (locked_) {
+            at_ = phase_;
+            haveAt_ = true;
+        }
+    }
+
+    // At the start of a step (`stepAt`, the clock onSwap() was given): the seconds to add to plan()'s dt, so that from
+    // one step to the next the backlog gains the time between their swaps' vblanks.  0 while not locked, and on the first
+    // step of a chain.
+    double correct(double stepAt) {
+        if (!haveAt_) {
+            haveLag_ = false;
+            return 0;
+        }
+        haveAt_ = false;
+        const double lag = stepAt - at_;
+        const double c = haveLag_ ? lag_ - lag : 0;
+        lag_ = lag;
+        haveLag_ = true;
+        return c;
+    }
+
+    bool locked() const { return locked_; }
+
+private:
+    void unlock() {
+        locked_ = false;
+        tracked_ = outliers_ = nonBlocking_ = 0;
+        jitter_ = 0;
+        restart();
+    }
+
+    double refresh_ = 0;
+    double phase_ = 0;     // a vblank on the tracked grid
+    double jitter_ = 0;    // smoothed |residual| of the observations
+    double at_ = 0;        // the vblank the last swap returned at (haveAt_)
+    double lag_ = 0;       // the last step's start minus its swap's vblank (haveLag_)
+    int tracked_ = 0, outliers_ = 0, nonBlocking_ = 0;
+    bool havePhase_ = false, locked_ = false, haveAt_ = false, haveLag_ = false;
+};
+
 }  // namespace vj

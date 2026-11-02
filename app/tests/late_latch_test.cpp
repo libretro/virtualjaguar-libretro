@@ -4,6 +4,8 @@
 // "Decided: input latency in mode A").
 #include "late_latch.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -293,6 +295,64 @@ void testOffNominal() {
     CHECK(l.misses() == 0, "no misses (%u)", l.misses());
 }
 
+// The measured period (mode B, #1038): the real grid, whatever the mode announces; 0 until two seconds were spanned.
+void testMeasuredPeriod() {
+    struct Case {
+        uint64_t nominal, real;
+        double jitterNs;
+        const char* what;
+    };
+    const Case cases[] = {
+        {kP60, kP60, 0, "60 Hz announced as 60"},
+        {kP60, 16683350, 0, "59.94 Hz announced as 60"},
+        {kP60, 16716667, 300000, "0.3% slow, 0.3 ms jitter"},
+        {8333333, 8341675, 200000, "119.88 Hz announced as 120, 0.2 ms jitter"},
+    };
+    for (const Case& c : cases) {
+        LateLatch l;
+        l.setPeriodNs(c.nominal);
+        uint64_t v = kV0;
+        unsigned firstAt = 0;
+        double worst = 0;
+        for (unsigned k = 1; k <= 3000; k++) {
+            v += c.real;
+            const uint64_t end = v + 50000 + (uint64_t)(unit() * c.jitterNs);
+            l.noteBuild(2 * kMs);
+            l.onSwap(end - 3 * kMs, end);
+            if (l.measuredPeriodNs() && !firstAt) firstAt = k;
+            if (l.measuredPeriodNs() && k > 600) {
+                const double e = std::fabs((double)l.measuredPeriodNs() - (double)c.real) / (double)c.real;
+                worst = std::max(worst, e);
+            }
+        }
+        CHECK(firstAt >= LateLatch::kLockAfter + LateLatch::kMeasureMin && firstAt < LateLatch::kLockAfter + LateLatch::kMeasureMin + 20,
+              "%s: measured after the lock plus %u vblanks (swap %u)", c.what, LateLatch::kMeasureMin, firstAt);
+        CHECK(worst < 0.0002, "%s: within 0.02%% of the real period past 10 s, across fresh spans (%.4f%%)", c.what, worst * 100);
+    }
+    // Lost grid: an unlock or a new period starts over; resetMeasure() too.
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t end = 0;
+    runGrid(l, kP60, 300, end);
+    CHECK(l.measuredPeriodNs() > 0, "measured on an exact grid");
+    l.resetMeasure();
+    CHECK(l.measuredPeriodNs() == 0, "resetMeasure() clears it");
+    runGrid(l, kP60, 300, end);
+    CHECK(l.measuredPeriodNs() > 0, "and it comes back");
+    l.setPeriodNs(8333333);
+    CHECK(l.measuredPeriodNs() == 0, "a new nominal period clears it");
+    LateLatch u;
+    u.setPeriodNs(kP60);
+    runGrid(u, kP60, 300, end);
+    for (unsigned k = 0; k < LateLatch::kUnlockAfter * 8; k++) u.onSwap(end + k * kP60, end + k * kP60 + 1000);   // non-blocking
+    CHECK(!u.locked() && u.measuredPeriodNs() == 0, "an unlock clears it");
+    const uint64_t at = kV0 + 7 * kP60 + 50000;
+    LateLatch nv;
+    nv.setPeriodNs(kP60);
+    runGrid(nv, kP60, 50, end);
+    CHECK(nv.nearestVblankNs(at + 3 * kMs) - at < 200000, "nearestVblankNs: the grid point near a time");
+}
+
 // ---- the pipeline model ---------------------------------------------------------------------------------------------
 
 struct Iter {
@@ -406,6 +466,91 @@ void testModel() {
     CHECK(b.misses * 100 <= b.iters, "at most 1%% missed vblanks (%u of %u)", b.misses, b.iters);
 }
 
+// Mode B (#1038): every frame starts on a display tick, just after the swap that returned there (the UI hands its
+// input over first), or 2 ms past the vblank when the UI missed it (the emulation thread's own backstop).  The UI's
+// wait ends when the tick's frame is finished, or at LateLatch::lastChanceNs() without it.  Same display, builds and
+// events as model().  Returns event -> present for mode B and inline, the misses, and how many frames were shown one
+// period after their tick.
+struct ResultB {
+    double inlineMs, modeBMs;
+    unsigned misses, iters, onePeriod;
+};
+ResultB modelB(uint64_t frameNs) {
+    const uint64_t kEnd = 50000, kWork = 200000, kPump = 50000, kStart = 200000, kSlack = 2000000;
+    const unsigned K = 22000;
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    g_rng = 777;
+    std::vector<uint64_t> start(K + 4, 0), fin(K + 4, 0);   // per vblank: its tick's frame
+    std::vector<uint64_t> shownAt;                          // per iteration: the vblank its swap returned at ...
+    std::vector<uint64_t> shownFrame;                       // ... and the frame (tick) it showed
+    ResultB r = {};
+    uint64_t m = 0;
+    start[0] = kV0 + kEnd + kPump + kStart;
+    fin[0] = start[0] + frameNs;
+    uint64_t newest = 0;
+    for (unsigned k = 0; k < K && m + 2 < K; k++) {
+        const uint64_t now = kV0 + m * kP60 + kEnd + kWork;
+        uint64_t w = l.wakeAt(now);
+        if (w < now) w = now;
+        const uint64_t until = std::max(w, l.lastChanceNs());
+        const uint64_t end = fin[m] <= now ? now : (fin[m] <= until ? fin[m] : until);
+        while (newest < m && fin[newest + 1] <= end) newest++;
+        if (fin[m] <= end) newest = m;
+        const uint64_t take = end + kPump;
+        const uint64_t build = (uint64_t)(1.7e6 + unit() * 0.6e6);
+        const uint64_t begin = take + build;
+        const uint64_t n = (begin - kV0 + kP60 - 1) / kP60;
+        l.noteWaitEnd(end);
+        l.noteBuild(begin - end);
+        l.onSwap(begin, kV0 + n * kP60 + kEnd);
+        shownAt.push_back(kV0 + n * kP60);
+        shownFrame.push_back(newest);
+        if (newest == m && n == m + 1) r.onePeriod++;
+        for (uint64_t v = m + 1; v <= n && v < K + 4; v++) {   // the ticks up to this swap's: missed ones on the backstop
+            start[v] = kV0 + v * kP60 + (v == n ? kEnd + kPump + kStart : kSlack + kStart);
+            start[v] = std::max(start[v], fin[v - 1]);
+            fin[v] = start[v] + frameNs;
+        }
+        m = n;
+        r.iters++;
+    }
+    r.misses = l.misses();
+    double sum = 0, inl = 0;
+    unsigned cnt = 0;
+    size_t it = 0;
+    uint64_t v = 0;
+    g_rng = 4242;
+    for (uint64_t e0 = kV0 + 120 * kP60; e0 + 240 * kP60 < shownAt.back(); e0 += kP60) {
+        const uint64_t e = e0 + (uint64_t)(unit() * (double)kP60);
+        while (start[v] < e) v++;                                  // the first frame to poll it
+        while (it < shownFrame.size() && shownFrame[it] < v) it++;  // the first swap to show that frame (or a newer one)
+        if (it >= shownFrame.size()) break;
+        sum += (double)(shownAt[it] - e);
+        const uint64_t vi = (e - kV0 + kP60 - 1) / kP60;
+        inl += (double)(kV0 + (vi + 1) * kP60 - e);
+        cnt++;
+    }
+    r.modeBMs = sum / cnt / 1e6;
+    r.inlineMs = inl / cnt / 1e6;
+    return r;
+}
+
+void testModelB() {
+    for (uint64_t f : {5 * kMs, 12 * kMs, 14 * kMs}) {
+        const ResultB b = modelB(f);
+        std::printf("model B, %2llu ms frames: inline %.1f ms, mode B %.1f ms, shown one period after the tick %u of %u, "
+                    "misses %u\n",
+                    (unsigned long long)(f / kMs), b.inlineMs, b.modeBMs, b.onePeriod, b.iters, b.misses);
+        CHECK(b.modeBMs <= b.inlineMs + 2.0, "%llu ms frames: mode B is within 2 ms of inline (%.2f vs %.2f)",
+              (unsigned long long)(f / kMs), b.modeBMs, b.inlineMs);
+        CHECK(b.onePeriod * 100 >= b.iters * 99, "%llu ms frames: 99%% shown one period after their tick (%u of %u)",
+              (unsigned long long)(f / kMs), b.onePeriod, b.iters);
+        CHECK(b.misses * 100 <= b.iters, "%llu ms frames: at most 1%% missed vblanks (%u of %u)",
+              (unsigned long long)(f / kMs), b.misses, b.iters);
+    }
+}
+
 // #967 final-review minor 3: with vsync off (or a swap that did not block), the threaded loop naps until the display's
 // next refresh instead of a flat 4 ms (which presented at ~250 Hz for nothing).
 void testIdleNap() {
@@ -474,7 +619,9 @@ int main() {
     testLateStartIsNotAMiss();
     testLateStartsAreCapped();
     testOffNominal();
+    testMeasuredPeriod();
     testModel();
+    testModelB();
     testIdleNap();
     testPresentGrid();
     testCompositorDeadline();

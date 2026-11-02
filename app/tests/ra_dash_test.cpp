@@ -304,6 +304,29 @@ static void testAchievementViews() {
     CHECK(ra::viewAchievements({}, ra::AchFilter::All, ra::AchSort::Title, "").empty());
 }
 
+// The status line the desktop list and the TV screen both show.
+static void testStatusLine() {
+    ra::AchRow r;
+    CHECK(ra::achStatusLine(r) == "Locked");
+    r.progress = "5/10";
+    CHECK(ra::achStatusLine(r) == "Locked  Progress: 5/10");
+    r.rarity = 12.46f;
+    r.type = 1;
+    CHECK(ra::achStatusLine(r) == "Locked  Progress: 5/10  12.5% of players  [Missable]");
+    r.unofficial = r.unsupported = true;
+    CHECK(ra::achStatusLine(r) == "Locked  Progress: 5/10  12.5% of players  [Missable]  [unofficial]  [not supported by this version]");
+    ra::AchRow e;
+    e.unlockedSoft = true;
+    e.progress = "10/10";   // measured progress is for a locked achievement only
+    CHECK(ra::achStatusLine(e) == "Unlocked (softcore)");
+    e.unlockedHard = true;
+    CHECK(ra::achStatusLine(e) == "Unlocked in hardcore");
+    e.unlockTime = 1760000000;   // a time of day depends on the zone: check the shape ("YYYY-MM-DD HH:MM")
+    const std::string line = ra::achStatusLine(e);
+    CHECK(line == "Unlocked in hardcore  " + ra::clockText(e.unlockTime) && ra::clockText(e.unlockTime).size() == 16);
+    CHECK(ra::clockText(e.unlockTime)[4] == '-' && ra::clockText(e.unlockTime)[10] == ' ' && ra::clockText(e.unlockTime)[13] == ':');
+}
+
 // ---- the image cache -----------------------------------------------------------------------------
 
 struct Gl {
@@ -538,6 +561,7 @@ int main() {
     testCacheFile();
     testGameViews();
     testAchievementViews();
+    testStatusLine();
     testImageCache();
     if (g_fail) {
         std::fprintf(stderr, "ra_dash_test: %d of %d checks FAILED\n", g_fail, g_checks);

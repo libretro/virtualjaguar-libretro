@@ -227,6 +227,12 @@ public:
     // `sessionOnly` = the --option overrides; false = the saved config.ini ones.
     std::vector<std::string> checkOverrides(bool sessionOnly) const;
     unsigned visibleOptionCount() const;
+    // Reads the core's option definitions without a game (#991): the table the settings screens show from the first
+    // frame.  UI thread, once, before the emulation thread exists (App::run, after loadUserOptions and wireHost);
+    // a no-op once the options are known or while a session runs.  Only the option commands are answered (everything else is
+    // refused), the core's display pass runs once, and the core is then reset to a fresh process's state (retro_deinit), so the
+    // first load re-pushes everything (startSession) and sees exactly what it would have without a probe.
+    void probeOptions();
 
     // ---- memory (achievements) --------------------------------------------
     // The map the core published with SET_MEMORY_MAPS (valid while content is
@@ -333,6 +339,7 @@ private:
     bool inFrame_ = false;      // inside retro_run()
     uint64_t eventsSeen_ = 0;
     bool initialized_ = false;  // retro_init has run (and retro_deinit has not)
+    bool probing_ = false;      // probeOptions() is inside retro_set_environment: env() answers the option commands only
     bool loaded_ = false;
     std::string contentPath_, contentName_;   // the disc in the tray after a swap
     std::string loadedPath_, loadedName_;     // what was opened

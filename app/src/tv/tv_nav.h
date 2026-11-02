@@ -46,6 +46,9 @@ public:
     void forgetPad(uint32_t pad);            // pad unplugged: drop what it held; emits nothing, edges already queued stay
     void key(int scancode, bool down, bool shift, uint64_t ms);
     std::vector<Intent> take(uint64_t ms);   // edges since the last call, plus repeats (directions only)
+    // The last intent take() returned was a repeat of a held direction (not a press).  A screen that does something once per press
+    // (leave a level on Left at its first choice) asks Shell::repeatIntent().
+    bool lastWasRepeat() const { return repeated_; }
     void reset();                            // forget everything held and pending
 
 private:
@@ -64,6 +67,7 @@ private:
     bool longAccept_ = false;
     std::vector<HeldAccept> acceptHeld_;   // pad Accepts down, waiting to become a tap or AcceptLong
     std::vector<int> trigOn_;          // padTrigger latches that are on, by (pad, axis) source
+    bool repeated_ = false;            // take()'s last intent was a repeat
     bool rearm_ = false;               // forgetPad handed the repeat to an older hold: restart its delay at the next take
 };
 

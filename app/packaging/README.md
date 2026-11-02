@@ -9,6 +9,14 @@ CI builds every installable package from one reusable workflow,
 | `app.yml` | pull requests | artifacts plus one sticky PR comment linking them; signed and notarized like a release when the secrets exist (same-repo PRs), ad-hoc signed for fork PRs |
 | manual dispatch | on demand | artifacts only; the `sign` input exercises the signing path |
 
+## Microsoft Store (MSIX)
+
+The separate Windows Store MSIX workflow prepares unsigned x64/ARM64 submission
+packages for the reserved product, outside the website release artifact run.
+See [`windows/msix/README.md`](windows/msix/README.md) for identity, build commands,
+validation and remaining Windows install/upgrade qualification. Website ZIP/EXE
+packages retain their existing delivery path.
+
 ## Assets
 
 `X.Y.Z` is the tag without `v`; nightlies use `nightly`, PRs `prNNN`, the `release/**` lane `prerelease`.
@@ -299,6 +307,16 @@ universal file.
   executable by `cmake --install`; it is not a linked dependency (no rpath needed, the app `dlopen`s it by
   absolute path from `SDL_GetBasePath()`), so linuxdeploy and `dpkg-shlibdeps` leave it alone.
 
+## Build channel
+
+`-DVJ_BUILD_CHANNEL=` (`release` | `nightly` | `dev`, default `dev`) decides what Settings > Interface > Emulation thread
+starts as for a user who never chose (a stored choice always wins): `nightly` on, `release` and `dev` off. `dev` is everything
+else: pull-request artifacts, `prerelease`, local builds. `app-package.yml` derives `CHANNEL` from `release_tag` (`nightly` ->
+nightly, `v*` -> release, anything else -> dev) in its top-level `env:` beside `TV_DEFAULT`, and passes it to the macOS, Windows
+and Linux configures. The Flatpak manifest commits `-DVJ_BUILD_CHANNEL=release` (so the Flathub render is a release build);
+the flatpak job rewrites that line to `$CHANNEL` and fails if the rewrite matched nothing. About shows the channel and the start-up
+log prints `[emu] channel=...`.
+
 ## Flatpak notes
 
 * **Manifest:** [`flatpak/io.github.libretro.VirtualJaguar.yml`](flatpak/io.github.libretro.VirtualJaguar.yml),
@@ -405,3 +423,21 @@ PNG, `.ico` and `.icns` files.
 Gatekeeper first-run on a freshly downloaded signed zip, SmartScreen on the installer, Intel Mac behavior
 (CI may not run the x86_64 slice), Wayland/X11/PipeWire sound on real Linux desktops, and the AppImage on
 distributions older than Ubuntu 22.04.
+
+Windows packages also stage a bundled Mesa OpenGL through
+`windows/stage-software-gl.py` (MSYS2 Mesa, Python and objdump required) in
+the `software-opengl/` folder (the name predates the Direct3D 12 path below).
+The normal executable automatically retries once with the bundled app if
+graphics startup fails, which on a stock Windows 10/11 install without a vendor
+OpenGL driver (Windows on ARM, VMs, Remote Desktop, the basic display adapter)
+means WGL handed us the GDI Generic OpenGL 1.1 driver. The retry preserves game
+arguments, working directory and the original config/save root; users do not
+need a separate launcher. The launcher picks Mesa's driver: `d3d12` (OpenGL on
+the machine's Direct3D 12 driver, hardware rendering, the same layer as
+Microsoft's OpenGL Compatibility Pack) when a hardware D3D12 adapter exists,
+pinned to that adapter; `llvmpipe` (CPU rendering, slower) otherwise, including
+when the only D3D12 adapter is the Microsoft Basic Render Driver (WARP), which
+is software too and slower than llvmpipe. A `GALLIUM_DRIVER` already in the
+environment wins. The `[gl]` log lines name the choice and the renderer that
+came up. Keep the dependency notices and matching architecture alongside the
+bundled executable.

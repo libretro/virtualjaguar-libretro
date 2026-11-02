@@ -20,6 +20,8 @@ const char* sectionLabel(Section s) {
     switch (s) {
     case Section::Home: return "Home";
     case Section::Library: return "Library";
+    case Section::Achievements: return "Achievements";
+    case Section::Settings: return "Settings";
     }
     return "";
 }
@@ -63,6 +65,9 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     // Under every desktop window: ImGui puts a window it creates in front, and this one can appear (TV mode turned on) with
     // Settings or the state manager already open.
     ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
+    // With a desktop window over this layer ("More settings", driven by a pad) the shell is handed no events, so the pointer's return
+    // is seen here: the mouse moved.
+    if (padDriven_ && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) padDriven_ = false;
     if (padDriven_) ImGui::SetMouseCursor(ImGuiMouseCursor_None);   // a pad is driving: no pointer until the mouse moves
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImGuiIO& io = ImGui::GetIO();
@@ -86,7 +91,7 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     if (prev.empty()) prev = "LB";
     if (next.empty()) next = "RB";
     x += keyPill(dl, m, x, barY, prev) + 20 * u;
-    const Section sections[] = {Section::Home, Section::Library};
+    const Section sections[] = {Section::Home, Section::Library, Section::Achievements, Section::Settings};
     for (size_t i = 0; i < sizeof sections / sizeof sections[0]; i++) {
         const Section s = sections[i];
         const bool active = s == section_;
@@ -146,11 +151,12 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     if (tabClicked >= 0 && sections[tabClicked] != section_) setSection(sections[tabClicked]);
 
     // ---- the hint bar: the top screen's hints, with the section hint ahead of the way out ----------------------------
+    // A desktop window over this layer ("More settings") has the pads: none of these buttons does anything, so none is listed.
     std::vector<widgets::Hint> hints;
-    if (Screen* t = top()) hints = t->hints();
+    if (Screen* t = top(); t && !host_.desktopWindowOpen()) hints = t->hints();
     widgets::dropUnbound(hints);   // a button this input device lacks (Menu / Alt / Aux on the keyboard) is not listed
     const widgets::Hint sections_hint{prev + " " + next, "Sections"};
-    hints.insert(hints.empty() ? hints.end() : hints.end() - 1, sections_hint);
+    if (!host_.desktopWindowOpen()) hints.insert(hints.empty() ? hints.end() : hints.end() - 1, sections_hint);
     widgets::hintBar(dl, m, ImVec2(pos.x + m.safeX, pos.y + kHintTop * u), size.x - 2 * m.safeX, hints);
     ImGui::End();
 }

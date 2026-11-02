@@ -119,6 +119,10 @@ static void testStyle() {
     tw.retarget(0, 0.060);                                               // starts from where it is now
     float mid = tw.from;
     CHECK(mid > 0.5f && mid < 1 && tw.to == 0 && tw.at(0.060) == mid && tw.at(0.060 + kTweenSeconds) == 0);
+    // "More settings" in TV mode: the desktop window's text is scaled to the TV body size (30u), never down, 1 with no font.
+    CHECK(bodyFontScale(15, 1080) == 2 && bodyFontScale(15, 2160) == 4 && bodyFontScale(30, 720) == 1);   // (20 px wanted at 720p: already bigger)
+    CHECK(bodyFontScale(15, 720) > 1.33f && bodyFontScale(15, 720) < 1.34f && bodyFontScale(60, 1080) == 1);
+    CHECK(bodyFontScale(0, 1080) == 1 && bodyFontScale(-3, 1080) == 1);
 }
 
 int main() {

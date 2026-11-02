@@ -80,6 +80,9 @@ modules:
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DVJ_APP_BUILD_TESTS=OFF
+      # app-package.yml's flatpak job rewrites this value to its CHANNEL (nightly for nightly builds; the manifest is committed,
+      # so the sed is the only per-channel knob, like VJ_TV_DEFAULT).  render.sh's Flathub variant keeps "release".
+      - -DVJ_BUILD_CHANNEL=release
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_SDL3=/run/build/virtualjaguar/third_party/SDL3
       - -DFETCHCONTENT_SOURCE_DIR_IMGUI=/run/build/virtualjaguar/third_party/imgui

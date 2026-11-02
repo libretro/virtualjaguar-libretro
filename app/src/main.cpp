@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "app.h"
+#include "software_gl.h"
 #include "platform/commands.h"
 #include "platform/platform.h"
 
@@ -26,7 +27,10 @@ static void usage(const char* argv0) {
         "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
         "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
         "  --pace-steer on|off   dev: with the emulation thread and vsync, keep frame ends off the take point (default on)\n"
+        "  --pacing jaguar|display  dev: Video > Frame pacing for this run (not saved; default: the setting)\n"
         "  --emu-wake precise|plain  dev: the emulation thread's frame wake-ups (default precise)\n"
+        "  --emu-priority realtime|normal  dev: the emulation thread's scheduling class (default realtime; the [emu] log line says what it got)\n"
+        "  --latch-wake timer|plain  dev: macOS, how the UI thread's timed event waits end (default timer; plain keeps the QoS raise)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
@@ -43,13 +47,13 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
-        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-halt] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
         "     [--font retro|system|mono[:SIZE]|custom:FILE] [--font-then SPEC]   (this run only; --font-then switches live after 60 frames)\n"
         "     [--show-window settings[-video|-input|-audio|-bios|-storage|-interface]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
-        "     [--show-window memory|palette|scanner|objects|blitter|textures|scope]   (Tools windows; needs a game)\n"
+        "     [--show-window memory|bitmap|palette|scanner|cpu|objects|blitter|textures|scope|tools]   (Tools windows; needs a game; tools = all)\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -73,6 +77,8 @@ static void usage(const char* argv0) {
         "  --cheat-set NAME      use the cheat set NAME.cht for the loaded game (remembered)\n"
         "  --cheat-on CHEAT      turn on a database cheat by description, id or position (repeatable)\n"
         "  --cheat CODE          add a manual code, hex ADDRESS:VALUE e.g. 00007D3D:05 (repeatable)\n"
+        "  --cheats-community-install  headless: fetch the community cheat store (cheats.community.url in config.ini,\n"
+        "                        else the project site) and install the loaded cartridge's pack\n"
         "  --expect-ram A=VV     headless: fail unless main-RAM byte A (hex) is VV (hex) at the end\n"
         "\n"
         "RetroAchievements test hooks (headless only; the only server is a directory of canned\n"
@@ -195,6 +201,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--perf-frames")) a.perfFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--perf-gpu")) a.perfGpu = true;
         else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;
+        else if (!std::strcmp(s, "--perf-halt")) a.perfHalt = true;
         else if (!std::strcmp(s, "--emu-thread")) {
             const std::string v = need(s);
             if (v != "on" && v != "off") {
@@ -212,6 +219,14 @@ int main(int argc, char** argv) {
             }
             a.lateLatch = v == "on" ? 1 : 0;
         }
+        else if (!std::strcmp(s, "--pacing")) {
+            const std::string v = need(s);
+            if (v != "jaguar" && v != "display") {
+                std::fprintf(stderr, "--pacing wants jaguar or display, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.pacing = v == "display" ? 1 : 0;
+        }
         else if (!std::strcmp(s, "--pace-steer")) {
             const std::string v = need(s);
             if (v != "on" && v != "off") {
@@ -227,6 +242,22 @@ int main(int argc, char** argv) {
                 return 2;
             }
             a.emuWake = v == "precise" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--emu-priority")) {
+            const std::string v = need(s);
+            if (v != "realtime" && v != "normal") {
+                std::fprintf(stderr, "--emu-priority wants realtime or normal, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.emuPriority = v == "realtime" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--latch-wake")) {
+            const std::string v = need(s);
+            if (v != "timer" && v != "plain") {
+                std::fprintf(stderr, "--latch-wake wants timer or plain, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.latchWake = v == "timer" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {
@@ -257,6 +288,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--cheat-set")) a.cheatSet = need(s);
         else if (!std::strcmp(s, "--cheat-on")) a.cheatOn.emplace_back(need(s));
         else if (!std::strcmp(s, "--cheat")) a.cheatCodes.emplace_back(need(s));
+        else if (!std::strcmp(s, "--cheats-community-install")) a.cheatsCommunityInstall = true;
         else if (!std::strcmp(s, "--expect-ram")) {
             std::string kv = need(s);
             size_t eq = kv.find('=');
@@ -296,6 +328,17 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (a.dumpNativeMenu) return vj::platform::dumpNativeMenu();
-    vj::App app;
-    return app.run(a);
+    int result = 1;
+    std::string graphicsError, dataDir;
+    {
+        vj::App app;
+        result = app.run(a);
+        graphicsError = app.graphicsStartupError;
+        dataDir = app.paths.root;
+    } // Release workers, streams and the instance lock before the software retry.
+    if (!graphicsError.empty()) {
+        if (vj::retrySoftwareOpenGL(argc, argv, dataDir, result)) return result;
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Virtual Jaguar graphics initialization", graphicsError.c_str(), nullptr);
+    }
+    return result;
 }

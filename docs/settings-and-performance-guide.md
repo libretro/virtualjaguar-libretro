@@ -299,10 +299,10 @@ landed afterwards and the option now drives both.
 |---|---|
 | **DRAM Timing** | enabled |
 | **GPU/DSP Pipeline Timing** | enabled |
-| **Blit Memoization** | enabled or verify |
 
 It stays active under **RISC (GPU/DSP) Clock Scale** and **M68K Clock Scale** at
-any value, and under **Blitter Bus Timing**. (Verified against
+any value, under **Blitter Bus Timing**, and under **Blit Memoization** (which
+was on the list before v4.0). (Verified against
 `src/jerry/dsp.c`, `DSPExec()`.) The RISC clock scale used to be on the list
 above; the skip is exact under any scale now (it measures the cost of a loop
 iteration in the same scaled currency the budget is handed out in), so an

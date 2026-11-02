@@ -463,11 +463,12 @@ int netplayHeadlessCheck(App& app, const CliArgs& a) {
     const auto t0 = Clock::now();
     auto elapsed = [&]() { return std::chrono::duration<double>(Clock::now() - t0).count(); };
     unsigned frame = 0;
+    bool advancePending = false;   // the last advance gave up on a halt: its frame is still budgeted, do not add another
     auto step = [&]() {
         if (app.threaded()) {
-            app.emu.advance(1);
+            advancePending = !app.emu.advance(advancePending ? 0 : 1, app.haltGiveUp());
             app.host.pinSnapshot();   // the core's link lines and events arrive here
-            if ((++frame & 15) == 15) app.emu.call([&app] { app.audio.clear(); });
+            if ((++frame & 15) == 15) app.emuCall([&app] { app.audio.clear(); });
         } else {
             app.audio.update();
             app.host.runFrame();

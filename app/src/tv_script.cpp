@@ -15,6 +15,8 @@
 // InputManager through the ordinary SDL_EVENT_GAMEPAD_ADDED hot-plug path, exactly like a real pad.  If it does not
 // open there, the run FAILS: nothing here fakes GAMEPAD_* events for an unopened id.  Windowed runs attach it too.
 //
+// `fullscreen on|off` is F11 without the window: App::setFullscreen(), so TvMode hears the edge (the Auto fullscreen trigger).
+//
 // Windowed-only verbs (for screenshots of the TV screens): `wait library` blocks the script until the Library has
 // scanned (the LibraryService threads run only in a windowed run), `shot PATH` saves the window at the end of the
 // next UI frame (App::tvScriptFrameEnd, called after the UI is drawn and before the swap), `quit` ends the run through
@@ -33,7 +35,9 @@
 #include "app.h"
 #include "devices_ui.h"
 #include "libretro.h"
+#include "platform/commands.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 
 namespace vj {
 
@@ -103,6 +107,8 @@ struct App::TvScriptRun {
     uint64_t prevExec = 0, prevMs = 0;
     unsigned expects = 0;
     // windowed-only verbs
+    float mouseX = 0.0f, mouseY = 0.0f;   // where the last `mouse` line put the pointer (windowed: seeded from the real one)
+    bool mouseSeeded = false;
     bool waitLibrary = false;    // `wait library` is blocking the script
     uint64_t waitStart = 0;
     std::string shotPath;        // `shot PATH`: saved at the end of the next UI frame
@@ -257,11 +263,28 @@ int App::tvScriptStep() {
             tvScriptDrain();
             tick();
         } else if (verb == "mouse") {
-            if (!run.windowed || !window_) return fail(l, "mouse is windowed only");
             char* endX = nullptr; char* endY = nullptr;
             const float x = std::strtof(arg1.c_str(), &endX), y = std::strtof(arg2.c_str(), &endY);
             if (arg1.empty() || arg2.empty() || *endX || *endY) return fail(l, "mouse wants X Y");
-            SDL_WarpMouseInWindow(window_, x, y);
+            if (run.windowed && window_ && !run.mouseSeeded) SDL_GetMouseState(&run.mouseX, &run.mouseY);
+            run.mouseSeeded = true;
+            // A warp moves the pointer (hover tests) but SDL reports it with xrel = yrel = 0, which is nothing the TV mode's mouse
+            // budget can count.  So the move is also pushed the way the OS reports a real one: a MOUSE_MOTION with the travel in
+            // xrel / yrel.  (Headless has no pointer: only the event.)
+            if (run.windowed && window_) SDL_WarpMouseInWindow(window_, x, y);
+            SDL_Event ev;
+            SDL_zero(ev);
+            ev.type = SDL_EVENT_MOUSE_MOTION;
+            ev.motion.windowID = window_ ? SDL_GetWindowID(window_) : 0;
+            ev.motion.x = x;
+            ev.motion.y = y;
+            ev.motion.xrel = x - run.mouseX;
+            ev.motion.yrel = y - run.mouseY;
+            run.mouseX = x;
+            run.mouseY = y;
+            SDL_PushEvent(&ev);
+            tvScriptDrain();
+            tick();
         } else if (verb == "focus") {
             SDL_Event ev;
             SDL_zero(ev);
@@ -275,6 +298,27 @@ int App::tvScriptStep() {
         } else if (verb == "tvsetting") {   // what Settings > Interface will do: store the setting, reconfigure TV mode
             if (!tv::settingFromKey(arg1, tvSetting)) return fail(l, "tvsetting wants off|manual|auto");
             configureTvMode();
+        } else if (verb == "fullscreen") {   // fullscreen on|off -- as F11 does (headless: the flag, and the edge TvMode is told)
+            if (arg1 != "on" && arg1 != "off") return fail(l, "fullscreen wants on|off");
+            setFullscreen(arg1 == "on");
+        } else if (verb == "command") {   // command settings|bios|library|tvmode -- what the native macOS menu / tray click runs (App::runNativeCommand)
+            platform::Cmd c = platform::Cmd::None;
+            if (arg1 == "settings") c = platform::Cmd::Settings;
+            else if (arg1 == "bios") c = platform::Cmd::BiosSettings;
+            else if (arg1 == "library") c = platform::Cmd::Library;
+            else if (arg1 == "tvmode") c = platform::Cmd::TvMode;
+            else return fail(l, "command wants settings|bios|library|tvmode");
+            runNativeCommand(c, 0);
+        } else if (verb == "hardcore-pause") {   // hardcore-pause deny|allow -- allowPause() refuses (rc_client_can_pause between pauses) or not
+            if (arg1 != "deny" && arg1 != "allow") return fail(l, "hardcore-pause wants deny|allow");
+            testDenyPause = arg1 == "deny";
+        } else if (verb == "settings-group") {   // settings-group KEY -- the TV Settings rail will open on that group (interface, sound, core:video ...): the shell's focus memory, so a walk need not count rail items (the rail's length varies with the build and the session)
+            if (arg1.empty()) return fail(l, "settings-group wants a group key");
+            tvShell().memory().putItem("settings/rail", arg1);
+        } else if (verb == "hintreset") {   // the one-time TV mode hint is due again (a Settings > Reset of Interface); toast-count starts over
+            cfg.erase("ui.tv_hint_shown");
+            tvHintShownThisRun_ = false;
+            toastCount_ = 0;
         } else if (verb == "saveconfig") {   // App::saveConfig() (a headless run keeps its config in a private temp dir)
             saveConfig();
         } else if (verb == "wait" || verb == "shot" || verb == "quit") {   // windowed only
@@ -316,17 +360,39 @@ int App::tvScriptStep() {
             tvScriptDrain();
             const size_t eq = arg1.find('=');
             if (eq == std::string::npos) return fail(l, "expect wants name=value");
-            const std::string name = arg1.substr(0, eq), want = arg1.substr(eq + 1);
+            const std::string name = arg1.substr(0, eq);
+            std::string want = arg1.substr(eq + 1);
+            if (name == "tv-focus" || name == "toast")   // a label or a sentence with spaces: the rest of the line
+                for (size_t i = 2; i < l.w.size(); i++) want += " " + l.w[i];
             run.expects++;
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
             std::string got;
             if (name == "fullscreen") got = flag(fullscreen);
+            else if (name == "tv-setting") got = tv::settingKey(tvSetting);
             else if (name == "menu-visible") got = flag(inWindowMenuBar());
             else if (name == "menu-pinned") got = flag(menuPinned);
             else if (name == "menu-open") got = flag(tvShell().menuOpen());
             else if (name == "tv") got = flag(tvMode.active());
+            else if (name == "toast") got = osd_.empty() ? std::string() : osd_.back().text;   // the last toast
+            else if (name == "toast-count") got = std::to_string(toastCount_);
             else if (name == "tv-screen") got = tvShell().screenId();
+            else if (name == "menu-owns-input") got = flag(input.menuOwnsInput());   // the in-game menu has the pads (open, paused or running on)
+            else if (name == "menu-page") {   // the in-game menu's page: root | save | load | confirm-reset | confirm-close | confirm-launch
+                switch (tvShell().menuPage()) {
+                case tv::Shell::Page::Root: got = "root"; break;
+                case tv::Shell::Page::SaveSlots: got = "save"; break;
+                case tv::Shell::Page::LoadSlots: got = "load"; break;
+                case tv::Shell::Page::ConfirmReset: got = "confirm-reset"; break;
+                case tv::Shell::Page::ConfirmClose: got = "confirm-close"; break;
+                case tv::Shell::Page::ConfirmLaunch: got = "confirm-launch"; break;
+                }
+            }
+            else if (name == "menu-slot") got = tvShell().menuHasScreen() ? tvShell().menuScreenId() : std::string("none");   // the screen in the in-game menu's slot
+            else if (name == "tv-group") got = tvShell().focusGroup();   // the key of the group on the TV Settings rail (picture, sound, core:video ...)
+            else if (name == "tv-focus") got = tvShell().focusLabel();   // the focused group / row / tile label of the top TV screen ("" = none)
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
+            else if (name == "settings-open") got = flag(showSettings);             // the desktop Settings window
+            else if (name == "tv-more") got = flag(tvMoreSettingsLive(*this));      // ... opened by "More settings..." in TV mode: its pads are its own
             else if (name == "home-visible") got = flag(homeVisible());            // the desktop library standing in for the game
             else if (name == "library-window") got = flag(library.show);           // the desktop Game library window
             else if (name == "desk-pad") got = flag(deskPadActive(*this));          // the desktop library owns the pads (#1021)
@@ -346,6 +412,15 @@ int App::tvScriptStep() {
                 }
                 const std::string have = cfg.has(key) ? cfg.get(key) : std::string("absent");
                 if (have != val) rc = fail(l, "expected config " + key + "=" + val + ", got " + have);
+                if (rc) return rc;
+                continue;
+            }
+            else if (name == "core-option") {   // KEY:VALUE -- what the core will read for the option ("absent": nothing is set for it)
+                const size_t colon = want.find(':');
+                if (colon == std::string::npos) return fail(l, "core-option wants KEY:VALUE or KEY:absent");
+                const std::string key = want.substr(0, colon), val = want.substr(colon + 1);
+                const std::string have = host.optionValueFor(key, "absent");
+                if (have != val) rc = fail(l, "expected core option " + key + "=" + val + ", got " + have);
                 if (rc) return rc;
                 continue;
             }

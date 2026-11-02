@@ -67,6 +67,7 @@ test/tools/dsp_idle_probe_falsify
 test/tools/gpu_idle_ab
 test/tools/gpu_idle_probe_falsify
 test/tools/i2s_lag_probe
+test/tools/kart_line_probe
 test/tools/test_memory_map
 test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
@@ -209,3 +210,4 @@ test/roms/tier1/
 
 # Standalone app (app/): CMake build trees
 /app/build*/
+/app/CMakeUserPresets.json

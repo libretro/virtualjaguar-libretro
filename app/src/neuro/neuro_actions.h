@@ -13,8 +13,9 @@
 // game ("fire", "superzapper") as button macros, describes its controls to the model, and can read RAM values
 // (score, lives) into the state text Neuro is shown.  See docs/neuro.md.
 //
-// Everything here is pure: no sockets, no SDL, no core.  InputQueue turns accepted actions into one ControlSet per
-// emulated frame; the app ORs it into Player 1's controls (InputManager::agentControls).
+// Everything here is pure: no sockets, no SDL, no core.  InputQueue turns accepted actions into a program the app's
+// input poll plays one ControlSet per emulated frame (AgentPlayer, pollAgent) and ORs into Player 1
+// (InputManager::addAgentControls).
 #pragma once
 
 #include <cstdint>
@@ -23,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "input_snapshot.h"
 #include "neuro_json.h"
 #include "remap.h"
 
@@ -55,18 +57,50 @@ class InputQueue {
 public:
     // false (and nothing queued) when the steps would push the queue past kMaxQueuedFrames.
     bool enqueue(const std::vector<Step>& steps);
-    void setHold(ControlSet s) { hold_ = s; }
+    void setHold(ControlSet s) {
+        if (s != hold_) {
+            hold_ = s;
+            version_++;
+        }
+    }
     ControlSet hold() const { return hold_; }
-    void clear();                      // drops the queue and the hold
+    void clear();                      // drops the queue and the hold; starts a new lineage
     ControlSet frame();                // advances one emulated frame; returns what is pressed in it
     ControlSet peek() const;           // what the next frame() would press, without advancing
     bool busy() const { return !steps_.empty(); }
     unsigned queuedFrames() const;
 
+    // The agent channel (input_snapshot.h): the queue as a program the emulation thread replays.
+    uint64_t version() const { return version_; }   // bumped by every successful enqueue, every setHold that changes
+                                                    // the hold, every clear
+    uint64_t lineage() const { return lineage_; }
+    uint64_t firstFrame() const { return firstFrame_; }
+    void trim(unsigned frames);        // drops the first `frames` frames of the steps (clamped); raises firstFrame
+    AgentProgram program(uint64_t gen, bool enabled) const;   // steps + hold + lineage + firstFrame as a program
+
 private:
     std::deque<Step> steps_;
     ControlSet hold_;
+    uint64_t version_ = 0, lineage_ = 0, firstFrame_ = 0;
 };
+
+// The emulation-thread replica of InputQueue (pure; no sockets, no core).
+class AgentPlayer {
+public:
+    void load(const AgentProgram& p);     // a new lineage restarts played at 0; the same lineage keeps it and skips
+                                          // played - firstFrame frames into the new steps (clamped up to firstFrame)
+    ControlSet frame();                   // one emulated frame: hold | current step; advances.  !enabled: empty, no advance
+    AgentProgress progress() const;
+    uint64_t gen() const { return gen_; }
+
+private:
+    InputQueue q_;
+    bool enabled_ = false;
+    uint64_t gen_ = 0, lineage_ = 0, played_ = 0;
+    ControlSet last_;
+};
+// The one function the app's input poll and the tests call: takeAgent + load on a new gen, frame(), reportAgent.
+ControlSet pollAgent(InputSnapshot& s, AgentPlayer& p);
 
 // ---- game profiles ----
 struct Watch {
@@ -102,8 +136,10 @@ const std::vector<std::string>& builtinProfileSources();   // the JSON of the pr
 // The first profile (in order) that matches the content; nullptr = none.
 const Profile* findProfile(const std::vector<Profile>& all, const std::string& title, uint32_t crc);
 
-// Formats a watch from RAM (`ram` = main RAM, `size` bytes); "?" when out of range.
-std::string watchValue(const Watch& w, const uint8_t* ram, size_t size);
+// Formats a watch from `bytes` (`size` of them, the first at address `base`); "?" when `bytes` is null or the watch
+// is not wholly inside them.  The 3-argument form is base 0: `ram` = main RAM.
+std::string watchValue(const Watch& w, const uint8_t* bytes, size_t size, uint32_t base);
+inline std::string watchValue(const Watch& w, const uint8_t* ram, size_t size) { return watchValue(w, ram, size, 0); }
 
 // ---- the action set of the current game ----
 struct ActionResult {

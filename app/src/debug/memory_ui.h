@@ -7,6 +7,9 @@
 // DebugSession::tick() must also run once per frame (it drives the 10 Hz refresh the windows follow).
 #pragma once
 
+#include <cstdint>
+#include "bitmap_ui.h"
+
 namespace vj {
 
 class DebugSession;
@@ -17,10 +20,10 @@ class CheatManager;
 void registerMemoryTools(DebugSession& s);
 
 // Draws whichever of the two windows is open.  `cheats` may be null (then "Add as cheat" is not offered).
-void drawMemoryTools(DebugSession& s, CheatManager* cheats);
+void drawMemoryTools(DebugSession& s, CheatManager* cheats, const BitmapUiContext& ctx = {});
 
 // Individual windows (drawMemoryTools calls these).
-void drawMemoryWindow(DebugSession& s, CheatManager* cheats);
+void drawMemoryWindow(DebugSession& s, CheatManager* cheats, const BitmapUiContext& ctx = {});
 void drawClutWindow(DebugSession& s);
 
 // Open state, for menu code that wants it directly.
@@ -29,5 +32,14 @@ bool& clutWindowOpen();
 
 // Opens the Memory viewer on `addr` (for other tools: "show this in memory", a register value, a pointer).
 void showMemoryAt(DebugSession& s, unsigned addr);
+void showMemoryBitmapAt(DebugSession& s, unsigned addr);
+
+// Test hook (debug_memory_ui_smoke): a byte of the window the grid last adopted from its published view.
+namespace memory_test {
+bool byteAt(unsigned addr, uint8_t& v);
+}
+namespace clut_test {
+bool entryA(unsigned index, unsigned& raw);   // table A's entry `index` as the Palette window last adopted it
+}
 
 }  // namespace vj

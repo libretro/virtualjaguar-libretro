@@ -6,6 +6,7 @@
 #include "app.h"
 #include "devices_ui.h"
 #include "imgui.h"
+#include "tv_more_settings.h"
 #include "ui_util.h"
 
 namespace vj {
@@ -27,7 +28,10 @@ void syncToConfig(App& app) { app.saveConfig(); }
 
 void applyAfterErase(App& app, const std::vector<KeyClass>& touched) {
     app.applySettingsFromConfig();
-    if (has(touched, KeyClass::Interface)) app.library.resetDisplaySettings();
+    if (has(touched, KeyClass::Interface)) {
+        app.library.resetDisplaySettings();
+        app.tvHintShownThisRun_ = false;   // ui.tv_hint_shown was erased with the group: the one-time TV mode hint may show again
+    }
     if (has(touched, KeyClass::Shader)) {
         app.video.shader.clearPreset();   // the shader switch and preset came back from the config; drop the loaded chain
         app.video.shader.retry();
@@ -153,7 +157,15 @@ void drawCoreGroupReset(App& app, const std::string& categoryKey, bool filterAct
 void drawResetAllSettings(App& app) {
     static const char* kTitle = "Reset all settings";
     static bool alsoMappings = false, alsoPerGame = false;
-    if (rightButton("Reset all settings...")) {
+    // Not where pad / keyboard navigation starts, and with "More settings" from TV mode up (the pad and the keyboard drive the window) not
+    // reachable by them at all: two stray presses would open this modal.  The mouse still reaches it.
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+    const bool tvNav = tvMoreSettingsLive(app);
+    if (tvNav) ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    const bool resetAll = rightButton("Reset all settings...");
+    if (tvNav) ImGui::PopItemFlag();
+    ImGui::PopItemFlag();
+    if (resetAll) {
         alsoMappings = alsoPerGame = false;   // the destructive extras are never remembered between openings
         ImGui::OpenPopup(kTitle);
     }

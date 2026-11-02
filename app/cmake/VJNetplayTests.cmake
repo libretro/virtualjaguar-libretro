@@ -12,6 +12,7 @@
 #                            and the client are instances 2 and 3.  The link must still come up, the shared
 #                            config.ini must be untouched, each copy gets its own save folder, and the
 #                            client hands the core its address through the environment (no vj_netlink.txt).
+#                            (netplay_pair_shared_threaded: both copies with --emu-thread on.)
 #   netplay_no_partner       control: with nobody to talk to both must FAIL, so the check can fail.
 #   netplay_discovery        a client must FIND the host by LAN discovery and join it.  Skipped (77) when
 #                            no host is discovered: CI runners and many VMs do not deliver broadcast.
@@ -58,9 +59,11 @@ add_test(NAME netplay_pair_voicemodem_threaded
     COMMAND vj_netplay_test pair $<TARGET_FILE:virtualjaguar> "${_yarc}" voicemodem on on)
 add_test(NAME netplay_pair_mixed COMMAND vj_netplay_test pair $<TARGET_FILE:virtualjaguar> "${_yarc}" jaglink on off)
 add_test(NAME netplay_no_partner_threaded COMMAND vj_netplay_test control $<TARGET_FILE:virtualjaguar> "${_yarc}" on)
+add_test(NAME netplay_pair_shared_threaded COMMAND vj_netplay_test pair-shared $<TARGET_FILE:virtualjaguar> "${_yarc}" on)
 set_tests_properties(netplay_pair_threaded netplay_pair_voicemodem_threaded netplay_pair_mixed netplay_no_partner_threaded
+                     netplay_pair_shared_threaded
     PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE LABELS "emu_thread")
-set_tests_properties(netplay_pair_threaded netplay_pair_voicemodem_threaded netplay_pair_mixed
+set_tests_properties(netplay_pair_threaded netplay_pair_voicemodem_threaded netplay_pair_mixed netplay_pair_shared_threaded
     PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
 set_tests_properties(netplay_no_partner_threaded PROPERTIES FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
 

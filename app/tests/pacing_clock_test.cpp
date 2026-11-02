@@ -1,8 +1,10 @@
-// Mode A pacing (pacing_clock.h) against a fake clock and a fake SDL audio device: no thread, no sleeping, no core
-// (#967).  The device pulls 512-frame chunks like SDL's (SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, audio.cpp).
+// Mode A and mode B pacing (pacing_clock.h) against a fake clock, fake vblank ticks and a fake SDL audio device: no
+// thread, no sleeping, no core (#967, #1038).  The device pulls 512-frame chunks like SDL's (SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, audio.cpp).
 //
 //   vj_pacing_clock_test
 #include "pacing_clock.h"
+
+#include "audio.h"   // AudioOut::nextRatio, mode B's stream ratio
 
 #include <algorithm>
 #include <cmath>
@@ -480,6 +482,245 @@ void testWindowTooWideDoesNotSteer() {
           (unsigned long long)r.steers);
 }
 
+// ---- Mode B (#1038): frames on the display's vblank ticks -------------------------------------------------------
+
+struct ModeRun : Run {
+    uint64_t droppedTicks = 0, refillFrames = 0;
+    std::vector<unsigned> kAtStart;   // the mode each frame started in (0 = A)
+};
+
+// The emulation thread under either mode, one model for both: a display refreshing at `hz` swaps at each vblank and
+// publishes a tick 0.5 ms later; kAt(t) is DisplayLock's verdict (0 = mode A, else ticks per frame).  Mode A runs as
+// simulate() does (the stream's ratio stays 1: update(false)); mode B waits for ticks, and before each frame the
+// stream's ratio takes AudioOut's step around base = (hz / k) / core (update(true)).  The device consumes the stream
+// at its rate times that ratio.  extra(t) adds to a frame's cost (a stall).
+ModeRun simulateModes(double secs, double hz, const std::function<unsigned(double)>& kAt, Device& dev,
+                      const std::function<double(size_t)>& cost, const std::function<double(double)>& extra = nullptr,
+                      double targetMs = kTargetMs) {
+    PacingClock clock;
+    ModeRun r;
+    double t = 0, ratio = 1.0;
+    const double tickLag = 0.0005, nominal = dev.rate;
+    uint64_t seq = 0;
+    double nextTick = tickLag;
+    clock.reset(t);
+    size_t i = 0;
+    while (t < secs) {
+        while (nextTick <= t + 1e-12) {
+            seq++;
+            nextTick += 1.0 / hz;
+        }
+        const unsigned k = kAt(t);
+        const double base = k ? (hz / k) * kPeriod : 1.0;
+        if (!k) ratio = 1.0;                 // leaving B: setBaseRatio(1)
+        else if (!clock.ticking()) ratio = base;   // entering B: setBaseRatio(base)
+        dev.rate = nominal * ratio;
+        dev.advanceTo(t);
+        PacingInput in;
+        in.now = t;
+        in.period = kPeriod;
+        in.audioQueuedMs = dev.ms();
+        in.targetMs = targetMs;
+        in.tickSeq = seq;
+        in.ticksPerFrame = k;
+        if (k) {
+            if (!clock.tickDue(in)) {
+                t = nextTick;
+                continue;
+            }
+            ratio = vj::AudioOut::nextRatio(ratio, base, (float)dev.ms(), (float)targetMs);
+            dev.rate = nominal * ratio;
+            clock.tickStarted(in);
+        } else {
+            const double due = clock.nextDue(in);
+            if (due > t + 1e-12) {
+                t = due;
+                continue;
+            }
+            clock.frameStarted(in);
+        }
+        r.starts.push_back(t);
+        r.kAtStart.push_back(k);
+        t += cost(i++) + (extra ? extra(t) : 0.0);
+        dev.advanceTo(t);
+        dev.queued += kBatch;
+        r.ends.push_back(t);
+        clock.frameEnded(t);
+    }
+    r.dropped = clock.droppedFrames();
+    r.droppedTicks = clock.droppedTicks();
+    r.refillFrames = clock.refillFrames();
+    dev.rate = nominal;
+    return r;
+}
+
+size_t startsBetween(const Run& r, double from, double to) {
+    size_t n = 0;
+    for (double s : r.starts) n += (s >= from && s < to) ? 1 : 0;
+    return n;
+}
+
+void testTicksPerFrame() {
+    for (unsigned k : {1u, 2u}) {
+        const double hz = 60.0 * k;
+        Device dev;
+        dev.prime();
+        ModeRun r = simulateModes(20.0, hz, [k](double) { return k; }, dev, fiveMs);
+        const double got = rateBetween(r, 5.0, 20.0);
+        CHECK(std::fabs(got - hz / k) < 1e-6, "k=%u on %.0f Hz: one frame every %u ticks (%.5f Hz)", k, hz, k, got);
+        // Every frame starts on a tick: 0.5 ms after a vblank.
+        double worst = 0;
+        for (size_t i = 0; i < r.starts.size(); i++) {
+            if (r.starts[i] < 1.0) continue;
+            const double ph = r.starts[i] * hz - std::floor(r.starts[i] * hz);
+            worst = std::max(worst, std::fabs(ph / hz - 0.0005));
+        }
+        CHECK(worst < 1e-6, "k=%u: every frame starts on a tick (worst %.3f ms off)", k, 1000.0 * worst);
+        CHECK(r.dropped == 0 && r.droppedTicks == 0, "k=%u: nothing dropped", k);
+        CHECK(dev.underruns == 0, "k=%u: no underrun (%llu)", k, (unsigned long long)dev.underruns);
+        CHECK(std::fabs(dev.ms() - kTargetMs) < 0.25 * kTargetMs, "k=%u: the queue holds near the target (%.1f ms)", k,
+              dev.ms());
+    }
+}
+
+// Steady state never refills, over the whole audio.target_ms range (20-200 ms, ui.cpp) and a jittery audio thread: at
+// 20 ms one frame's audio is most of the target, so a refill keyed on the queue level alone would fire every frame.
+void testTickSteadyStateNeverRefills() {
+    for (double target : {20.0, 64.0, 200.0})
+        for (unsigned k : {1u, 2u})
+            for (double jitter : {0.0, 0.002, 0.005}) {
+                Device dev;
+                dev.queued = target / 1000.0 * kStreamHz;
+                dev.pullJitter = jitter;
+                dev.countFrom = 2.0;
+                const double hz = 60.0 * k;
+                ModeRun r = simulateModes(30.0, hz, [k](double) { return k; }, dev, fiveMs, nullptr, target);
+                CHECK(r.refillFrames == 0 && r.droppedTicks == 0,
+                      "target %.0f ms, k=%u, pull jitter %.0f ms: no refill (%llu extra frames, %llu dropped ticks)",
+                      target, k, 1000.0 * jitter, (unsigned long long)r.refillFrames, (unsigned long long)r.droppedTicks);
+                CHECK(std::fabs(rateBetween(r, 5.0, 30.0) - hz / k) < 1e-6, "target %.0f ms, k=%u: one frame per k ticks",
+                      target, k);
+                CHECK(jitter > 0.0 || dev.underruns == 0, "target %.0f ms, k=%u: no underrun (%llu)", target, k,
+                      (unsigned long long)dev.underruns);
+            }
+}
+
+// The reason mode B exists: a 60.05 Hz core on a 60.00 / 59.94 Hz panel skips a frame every 18 s / 9 s in mode A, and
+// never in mode B.  Both arms through the same loop, device and display model.
+void testNoPeriodicSkipInModeB() {
+    struct Panel {
+        double hz;
+        int aMin, aMax;
+    };
+    for (const Panel& p : {Panel{60.0, 2, 5}, Panel{59.94, 5, 9}}) {
+        Device devA, devB;
+        devA.prime();
+        devB.prime();
+        ModeRun a = simulateModes(70.0, p.hz, [](double) { return 0u; }, devA, fiveMs);
+        ModeRun b = simulateModes(70.0, p.hz, [](double) { return 1u; }, devB, fiveMs);
+        const Shown sa = present(a, p.hz, 10.0, 70.0), sb = present(b, p.hz, 10.0, 70.0);
+        CHECK(sa.skips + sa.repeats >= p.aMin && sa.skips + sa.repeats <= p.aMax,
+              "mode A on %.2f Hz: the beat's %d-%d skips in 60 s (%d skips, %d repeats)", p.hz, p.aMin, p.aMax, sa.skips,
+              sa.repeats);
+        CHECK(sb.skips == 0 && sb.repeats == 0, "mode B on %.2f Hz: no skip or repeat in 60 s (%d skips, %d repeats)",
+              p.hz, sb.skips, sb.repeats);
+        CHECK(devB.underruns == 0, "mode B on %.2f Hz: no underrun (%llu)", p.hz, (unsigned long long)devB.underruns);
+        CHECK(std::fabs(devB.ms() - kTargetMs) < 0.25 * kTargetMs, "mode B on %.2f Hz: the queue holds (%.1f ms)", p.hz,
+              devB.ms());
+    }
+}
+
+// A stall of 3.5 periods: the owed ticks are dropped and counted, and at most one catch-up frame follows.
+void testTickStallDropsOwedTicks() {
+    Device dev;
+    dev.prime();
+    bool stalled = false;
+    double stallEnd = 0;
+    ModeRun r = simulateModes(15.0, 60.0, [](double) { return 1u; }, dev, fiveMs, [&](double t) {
+        if (stalled || t < 10.0) return 0.0;
+        stalled = true;
+        stallEnd = t + 0.005 + 3.5 / 60.0;
+        return 3.5 / 60.0;
+    });
+    CHECK(r.droppedTicks >= 1 && r.droppedTicks <= 3, "a 3.5-period stall drops the owed ticks (%llu)",
+          (unsigned long long)r.droppedTicks);
+    CHECK(startsBetween(r, stallEnd, stallEnd + 1.0 / 60.0) <= 2, "at most one catch-up frame after it (%zu starts)",
+          startsBetween(r, stallEnd, stallEnd + 1.0 / 60.0));
+    CHECK(std::fabs(rateBetween(r, 11.0, 15.0) - 60.0) < 1e-6, "then one frame per tick again");
+}
+
+// A stall longer than the target empties the queue.  The frame that ends it and the catch-up frame leave it near half
+// the target; the refill after the dropped ticks puts it back at once, where the +/-0.5% trim alone takes about 6 s.
+void testTickRefillAfterAStall() {
+    Device dev;
+    dev.prime();
+    bool stalled = false;
+    double stallEnd = 1e9, qSum = 0, qMin = 1e9;
+    int qN = 0;
+    ModeRun r = simulateModes(11.25, 60.0, [](double) { return 1u; }, dev, fiveMs, [&](double t) {
+        if (!stalled && t >= 10.0) {
+            stalled = true;
+            stallEnd = t + 0.205;
+            dev.countFrom = stallEnd + 0.1;
+            return 0.2;
+        }
+        if (t >= stallEnd + 0.5) {   // the queue at each frame start, before its audio
+            qSum += dev.ms();
+            qN++;
+        }
+        if (t >= stallEnd + 0.1) qMin = std::min(qMin, dev.ms());
+        return 0.0;
+    });
+    const double qMean = qN ? qSum / qN : 0.0;
+    CHECK(stallEnd < 10.25, "the stall ran (ends %.3f s)", stallEnd);
+    CHECK(qMean > 0.75 * kTargetMs, "half a second after a 200 ms stall the queue is back near the target (mean %.1f ms)",
+          qMean);
+    CHECK(dev.underruns == 0 && qMin > 0.5 * kTargetMs, "no underrun after it (%llu; lowest %.1f ms)",
+          (unsigned long long)dev.underruns, qMin);
+    CHECK(std::fabs(rateBetween(r, 10.75, 11.25) - 60.0) < 1e-6, "and frames are back on one per tick (%.4f Hz)",
+          rateBetween(r, 10.75, 11.25));
+}
+
+// A <-> B: no owed time crosses the switch (no burst either way), mode A starts its grid over, and the ratio is
+// mode A's 1 again after B.
+void testModeSwitches() {
+    Device dev;
+    dev.prime();
+    auto kAt = [](double t) { return (t >= 5.0 && t < 10.0) ? 1u : 0u; };
+    ModeRun r = simulateModes(15.0, 60.0, kAt, dev, fiveMs);
+    for (double sw : {5.0, 10.0}) {
+        size_t n = startsBetween(r, sw, sw + 0.1);
+        CHECK(n >= 5 && n <= 7, "switch at %.0f s: no burst (%zu frames in the next 100 ms)", sw, n);
+    }
+    double minGap = 1.0;
+    for (size_t i = 1; i < r.starts.size(); i++) minGap = std::min(minGap, r.starts[i] - r.starts[i - 1]);
+    CHECK(minGap >= 0.005 - 1e-9, "frames never overlap or burst (closest starts %.2f ms apart)", 1000.0 * minGap);
+    CHECK(r.dropped == 0 && r.droppedTicks == 0, "nothing dropped across the switches");
+    CHECK(std::fabs(rateBetween(r, 6.0, 10.0) - 60.0) < 1e-6, "B in the middle: one frame per tick");
+    const double wantA = kStreamHz / kBatch;
+    CHECK(std::fabs(rateBetween(r, 12.0, 15.0) - wantA) / wantA <= PacingClock::kMaxTrim,
+          "A after: the audio clock's rate within mode A's trim (%.4f Hz)", rateBetween(r, 12.0, 15.0));
+    CHECK(dev.underruns == 0, "no underrun across the switches (%llu)", (unsigned long long)dev.underruns);
+
+    PacingClock c;
+    PacingInput in;
+    in.now = 1.0;
+    in.tickSeq = 100;
+    in.ticksPerFrame = 1;
+    in.audioQueuedMs = kTargetMs;
+    CHECK(!c.tickDue(in) && c.ticking(), "entering B: the first frame waits for the next tick");
+    in.tickSeq = 101;
+    CHECK(c.tickDue(in), "and runs on it");
+    c.tickStarted(in);
+    CHECK(c.trim() == 1.0 && !c.audioLocked(), "B has no trim of its own (the stream's ratio does it)");
+    in.tickSeq = 40;   // a new stream of ticks (counted from 0 again)
+    CHECK(!c.tickDue(in), "a tick count that went back starts over: wait for the next tick");
+    in.tickSeq = 41;
+    CHECK(c.tickDue(in), "...and run on it");
+    in.now = 2.0;
+    CHECK(c.nextDue(in) <= in.now && !c.ticking(), "back to A: due at once, nothing owed from B");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -500,6 +741,12 @@ int main(int argc, char** argv) {
     testSteeringFollowsTheTrimmedDrift();
     testNoSteeringOffAWholeRatio();
     testWindowTooWideDoesNotSteer();
+    testTicksPerFrame();
+    testTickSteadyStateNeverRefills();
+    testNoPeriodicSkipInModeB();
+    testTickStallDropsOwedTicks();
+    testTickRefillAfterAStall();
+    testModeSwitches();
     std::printf(g_fail ? "pacing_clock_test: %d FAILED\n" : "pacing_clock_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

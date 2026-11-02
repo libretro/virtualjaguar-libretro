@@ -4,6 +4,7 @@
 // whole path from a typed hex digit to a poke -- including that a refused write never reaches the interface.
 #include "debug_mock.h"
 #include "debug_session.h"
+#include "debug_ui_fixture.h"
 #include "memory_ui.h"
 #include "memory_view.h"
 
@@ -32,6 +33,8 @@ static void acknowledgeTextures() {
     }
 }
 
+static UiFixture* g_fx = nullptr;
+
 static void frame(DebugSession& s) {
     ImGui::GetIO().DeltaTime = 1.0f / 60.0f;
     ImGui::NewFrame();
@@ -39,6 +42,7 @@ static void frame(DebugSession& s) {
     drawMemoryTools(s, nullptr);
     ImGui::Render();
     acknowledgeTextures();
+    g_fx->fill();   // the emulation thread's share of the frame
 }
 
 static void settle(DebugSession& s, int n = 3) {
@@ -74,10 +78,11 @@ int main() {
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     ImGui::LoadIniSettingsFromMemory("[Window][Memory]\nPos=8,8\nSize=660,560\n[Window][Palette (CLUT)]\nPos=680,8\nSize=410,740\n");
 
-    MockDebugIface mock;
-    DebugSession s;
-    s.setIface(mock.iface());
-    s.setContentLoaded(true);
+    CountingIface::reset();
+    UiFixture fx;
+    g_fx = &fx;
+    DebugSession& s = fx.s;
+    MockDebugIface& mock = fx.mock;
     registerMemoryTools(s);
     CHECK(s.findTool("memory") && s.findTool("memory")->toggle);
     CHECK(s.findTool("clut") && s.findTool("clut")->toggle);
@@ -140,10 +145,80 @@ int main() {
     showMemoryAt(s, memview::clutAddrA(5));
     settle(s, 5);
 
+    // 8. #967 3a: the draw path never reaches the core.  After a settle, idle frames make no coreCall, no corePost,
+    //    and the counting iface saw no call outside the emulation side at all.
+    memoryWindowOpen() = true;
+    clutWindowOpen() = true;
+    showMemoryAt(s, 0x1000);
+    settle(s, 6);
+    const UiFixture::Mark quiet = fx.mark();
+    for (int i = 0; i < 30; i++) frame(s);
+    CHECK(fx.quietSince(quiet));
+    CHECK(CountingIface::offCore() == 0);
+
+    // 9. The bytes on screen are the published ones: change RAM behind the interface; nothing shows until a refresh.
+    mock.dram()[0x1002] = 0x5A;
+    uint8_t v = 0;
+    CHECK(memory_test::byteAt(0x1002, v) && v != 0x5A);
+    s.requestRefresh();
+    settle(s, 2);
+    CHECK(memory_test::byteAt(0x1002, v) && v == 0x5A);
+    CHECK(fx.mark().total > quiet.total);
+
+    // 10. Scrolling far away asks for a new window, and keeps drawing the old rows until it arrives.
+    showMemoryAt(s, 0x100005);
+    settle(s, 8);
+    CHECK(memory_test::byteAt(0x100005, v) && v == 5);
+    CHECK(CountingIface::offCore() == 0);
+
+    // 11. The CLUT bytes arrive through one request (both tables), and idle Palette frames stay quiet.
+    mock.regwin()[0x400] = 0x12;
+    s.requestRefresh();
+    settle(s, 3);
+    CHECK(mock.regwin()[0x400] == 0x12);   // (the mock holds it; the window must too -- a quiet window proves nothing)
+    unsigned e0 = 0;
+    CHECK(clut_test::entryA(0, e0) && e0 == 0x12FF);   // entry 0 = bytes (0x12, 255)
+    const UiFixture::Mark q2 = fx.mark();
+    settle(s, 20);
+    CHECK(fx.quietSince(q2));
+
+    // 12. A paused window that is resized (its bytes-per-row changes, the request's length with it) adopts the new
+    //     buffer although the serial and the start address are unchanged (the region top is where the viewer opens).
+    ImGui::SetWindowSize("Memory", ImVec2(300, 560));
+    settle(s, 3);
+    showMemoryAt(s, 0);
+    settle(s, 8);
+    CHECK(memory_test::byteAt(0x10, v) && v == 0x10);
+    CHECK(!memory_test::byteAt(0x1E0, v));                    // the narrow window asked for fewer bytes
+    ImGui::SetWindowSize("Memory", ImVec2(660, 560));
+    settle(s, 8);
+    CHECK(memory_test::byteAt(0x1E0, v) && v == 0xE0);        // ...and the wide one's far end arrived with no refresh
+
     // 7. A core going away mid-session does not crash the windows.
     s.setIface(nullptr);
     settle(s, 3);
     CHECK(!memoryWindowOpen() && !clutWindowOpen());
+
+    s.setIface(fx.counted.iface());
+    // Raw bitmap mode uses only marshalled core jobs, and keys affect bitmap geometry.
+    s.setHardcore(false);
+    showMemoryBitmapAt(s, MockDebugIface::kBitmapData);
+    settle(s, 5);
+    CHECK(bitmap_test::model().result().ok);
+    ImGui::SetWindowFocus("Memory");
+    settle(s);
+    const unsigned beforeWidth = bitmap_test::model().settings.width;
+    key(s, ImGuiKey_RightArrow);
+    settle(s);
+    CHECK(bitmap_test::model().settings.width == beforeWidth + 1);
+    CHECK(bitmap_test::model().result().image.w == (int)beforeWidth + 1);
+    const unsigned beforeAddress = bitmap_test::model().settings.address;
+    key(s, ImGuiKey_DownArrow);
+    settle(s);
+    CHECK(bitmap_test::model().settings.address == beforeAddress + bitmapRowBytes(beforeWidth + 1, 3));
+    CHECK(CountingIface::offCore() == 0);
+    s.closeAllTools("bitmap close");
+    CHECK(!bitmap_test::model().result().ok);
 
     ImGui::DestroyContext();
     std::printf("debug_memory_ui_smoke: %d checks, %d failed\n", g_checks, g_fail);

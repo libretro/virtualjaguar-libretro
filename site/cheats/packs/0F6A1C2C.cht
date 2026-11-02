@@ -1,0 +1,11 @@
+# Community cheats for Ultra Vortek (1995); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_ultra_vortek.c
+# Source SHA256: fa5a8cfcdee39e29048c837bfdb0db530ee8cc602ca4c39a42d079297c710987
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "0F6A1C2C"
+cheats = 1
+
+cheat0_desc = "Infinite Health"
+cheat0_code = "00005776:0019"
+cheat0_enable = false

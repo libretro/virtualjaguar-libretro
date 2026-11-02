@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "generated_from": {"sources": [{"id": "fixture", "commit": null}]},
+  "packs": [
+    {
+      "bytes": 350,
+      "cheats": 3,
+      "crc32": "5E2CDBC0",
+      "credit": "Cheats by the test suite.",
+      "exceeds_core_limit": false,
+      "file": "packs/5E2CDBC0.cht",
+      "messages": ["Fixture message one.", "Fixture message two."],
+      "name": "Test Game (1994)",
+      "notes": [
+        {"reason": "parameter setting requires manual value selection", "setting": "Start At Level"},
+        {"reason": "no writes activated", "setting": null}
+      ],
+      "partial": true,
+      "sha256": "d82825f7ba8e9248a37a5f45f0c39694dc131e3ea8df842310b7b7cd8ae54446",
+      "title": "Test Game",
+      "updated": "2026-04-15",
+      "writes": 4
+    }
+  ]
+}

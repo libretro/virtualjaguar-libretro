@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "debug_views.h"
 #include "vj_debug_iface.h"
 
 namespace vj {
@@ -93,10 +94,15 @@ std::string statusText(unsigned bcmdRead);
 // ---- the launch ring ------------------------------------------------------------------------------------------------
 // Follows blit_log_head()/blit_log_get(): each sync() fetches the launches since the previous one.  A
 // launch that scrolled out of the core's ring before it was read is counted in lost(), never replayed.
+// The window gets the same rows from a published BlitLog view buffer through absorb() instead.
 class LogTracker {
 public:
     explicit LogTracker(size_t maxRows = VJ_DBG_BLIT_LOG_SIZE) : max_(maxRows ? maxRows : 1) {}
     size_t sync(const vj_debug_iface* iface);   // returns the number of new rows
+    // Takes the rows of a BlitLog buffer; returns the rows added.  A buffer that does not answer `since == total()`
+    // (an older request, or a failed fill) is ignored, so the same buffer twice adds nothing and a seq below total()
+    // is never added.  A head below total() means the log restarted: the list is reset (nothing added).
+    size_t absorb(const ViewBuffer& b);
     void reset();
     const std::deque<vj_debug_blit>& rows() const { return rows_; }   // oldest first
     unsigned total() const { return next_; }    // launches seen by the core since the log was enabled

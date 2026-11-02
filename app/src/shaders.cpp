@@ -172,10 +172,12 @@ void ShaderChain::loadSettings(const Config& cfg, const std::string& dataRoot) {
         d.push_back(std::string(base) + "../Frameworks/");   // inside a .app bundle
 #endif
     }
+#ifndef VJ_MAC_APP_STORE
     if (!dataRoot.empty()) d.push_back(dataRoot + "librashader/");
 #if defined(__APPLE__)
     d.push_back("/opt/homebrew/lib/");   // Homebrew, which dlopen's fallback path misses
     d.push_back("/usr/local/lib/");
+#endif
 #endif
     dirs_ = std::move(d);
 }
@@ -226,7 +228,11 @@ bool ShaderChain::probeLibrary(bool retry) {
     const std::string leaf = libraryFileName();
     std::vector<std::string> cands;
     std::string searched;
+#ifdef VJ_MAC_APP_STORE
+    const char* env = nullptr; // Store code comes only from this signed bundle.
+#else
     const char* env = std::getenv("VJ_LIBRASHADER");
+#endif
     bool forced = env && *env;
     auto addDir = [&](std::string d) {
         if (d.empty()) return;
@@ -243,7 +249,9 @@ bool ShaderChain::probeLibrary(bool retry) {
         searched = "VJ_LIBRASHADER=" + e;
     } else {
         for (const std::string& d : dirs_) addDir(d);
+#ifndef VJ_MAC_APP_STORE
         cands.push_back(leaf);   // the system loader path
+#endif
         searched = "the app folder, the data folder and the system library path";
     }
 

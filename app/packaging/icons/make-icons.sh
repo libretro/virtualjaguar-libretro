@@ -10,6 +10,10 @@ for s in 16 32 48 64 128 256 512; do
 done
 magick png/virtualjaguar-16.png png/virtualjaguar-32.png png/virtualjaguar-48.png \
        png/virtualjaguar-64.png png/virtualjaguar-128.png png/virtualjaguar-256.png virtualjaguar.ico
+mkdir -p ../windows/msix/Assets
+for entry in Square44x44Logo:44 Square150x150Logo:150 StoreLogo:50; do
+  rsvg-convert -w "${entry#*:}" -h "${entry#*:}" "$svg" -o "../windows/msix/Assets/${entry%:*}.png"
+done
 if command -v iconutil >/dev/null; then
   set_dir=$(mktemp -d)/virtualjaguar.iconset
   mkdir -p "$set_dir"

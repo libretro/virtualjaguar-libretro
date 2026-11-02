@@ -339,13 +339,11 @@ bool parseCht(const std::string& textIn, std::vector<ChtCheat>& out) {
     return !out.empty();
 }
 
-bool loadChtFile(const std::string& path, ChtSet& out) {
+bool loadChtText(const std::string& raw, const std::string& path, ChtSet& out) {
     out = ChtSet();
-    std::vector<unsigned char> bytes;
-    if (!readFile(path, bytes)) return false;
     out.stem = pathStem(path);
     out.path = path;
-    std::string text(bytes.begin(), bytes.end());
+    std::string text = raw;
     if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
     // Optional exact-revision binding for locally converted script cheats.
     // Scan independently of the permissive legacy entry parser: an invalid or
@@ -376,6 +374,13 @@ bool loadChtFile(const std::string& path, ChtSet& out) {
         seen = true;
     }
     return parseCht(text, out.cheats);
+}
+
+bool loadChtFile(const std::string& path, ChtSet& out) {
+    out = ChtSet();
+    std::vector<unsigned char> bytes;
+    if (!readFile(path, bytes)) return false;
+    return loadChtText(std::string(bytes.begin(), bytes.end()), path, out);
 }
 
 // ---------------------------------------------------------------------------------
@@ -428,8 +433,9 @@ std::string CheatManager::statePath() const { return stateDir_ + game_.key + ".i
 void CheatManager::loadState() {
     state_.load(statePath());
     enabled_.clear();
-    for (const auto& kv : state_.withPrefix("on."))
-        if (kv.second == "1") enabled_[kv.first] = true;
+    for (const char* prefix : {"on.", "cp."})   // enabled_ holds the full ini key, so the two sets never collide
+        for (const auto& kv : state_.withPrefix(prefix))
+            if (kv.second == "1") enabled_[std::string(prefix) + kv.first] = true;
     user_.clear();
     int n = state_.getInt("user.count", 0);
     for (int i = 0; i < n && i < 500; i++) {
@@ -488,6 +494,69 @@ void CheatManager::loadSelectedSet() {
     }
 }
 
+// The community pack for the current cartridge: <communityDir_>/<CRC32 %08X>.cht.  Looked up by CRC only (never by
+// name), and guarded exactly like a revision-bound database set: a file that is unbound, malformed or bound to
+// another CRC comes back with every cheat unsupported and `restriction` set.
+void CheatManager::loadCommunity() {
+    community_ = ChtSet();
+    communityLoaded_ = false;
+    lastPrunedEnabled_ = 0;
+    if (!game_.valid() || game_.crc == 0 || communityDir_.empty()) return;
+    char name[16];
+    std::snprintf(name, sizeof name, "%08X.cht", (unsigned)game_.crc);
+    const std::string path = (fs::path(communityDir_) / name).string();
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::path(path), ec)) return;
+    communityLoaded_ = loadChtFile(path, community_);
+    if (!communityLoaded_) {
+        community_ = ChtSet();
+        if (warn) warn("cheats: could not read community pack " + path);
+        return;
+    }
+    if (community_.restriction.empty()) {
+        if (!community_.revisionBound)
+            community_.restriction = "Community pack has no cartridge revision guard.";
+        else if (community_.romCrc != game_.crc)
+            community_.restriction = "Community pack is for a different cartridge revision (CRC32).";
+    }
+    if (!community_.restriction.empty()) {
+        for (ChtCheat& cheat : community_.cheats) {
+            cheat.supported = false;
+            cheat.code.clear();
+            cheat.segments = 0;
+            cheat.note = community_.restriction;
+        }
+    }
+    // Drop toggles of cheats this pack no longer has (an update changed or removed them), so the ini cannot grow.
+    // Only done while a pack is loaded: a pack that is merely absent keeps its toggles until removeCommunityToggles().
+    std::map<std::string, bool> known;
+    for (const ChtCheat& cheat : community_.cheats) known["cp." + cheat.id] = true;
+    bool pruned = false;
+    for (const auto& kv : state_.withPrefix("cp.")) {
+        const std::string key = "cp." + kv.first;
+        if (known.count(key)) continue;
+        state_.erase(key);
+        if (enabled_.erase(key)) lastPrunedEnabled_++;
+        pruned = true;
+    }
+    if (pruned) touch();
+}
+
+void CheatManager::reloadCommunity() {
+    if (!game_.valid()) return;
+    loadCommunity();
+    apply();
+}
+
+void CheatManager::removeCommunityToggles() {
+    if (!game_.valid()) return;
+    for (const auto& kv : state_.withPrefix("cp.")) state_.erase("cp." + kv.first);
+    for (auto it = enabled_.begin(); it != enabled_.end();)
+        it = it->first.compare(0, 3, "cp.") == 0 ? enabled_.erase(it) : std::next(it);
+    touch();
+    apply();
+}
+
 void CheatManager::gameLoaded(const GameIdentity& id) {
     game_ = id;
     if (!game_.valid()) {
@@ -496,6 +565,7 @@ void CheatManager::gameLoaded(const GameIdentity& id) {
     }
     loadState();
     pickSet();
+    loadCommunity();
     apply();
 }
 
@@ -508,6 +578,8 @@ void CheatManager::gameClosed() {
     selectedSaved_ = false;
     set_ = ChtSet();
     setLoaded_ = false;
+    community_ = ChtSet();
+    communityLoaded_ = false;
     enabled_.clear();
     user_.clear();
     apply();
@@ -548,19 +620,28 @@ bool CheatManager::selectSet(const std::string& stem) {
     return true;
 }
 
-void CheatManager::setEnabled(const ChtCheat& c, bool on) {
+static std::string toggleKey(const ChtCheat& c, CheatOrigin origin) {
+    return (origin == CheatOrigin::Community ? "cp." : "on.") + c.id;
+}
+
+bool CheatManager::isEnabled(const ChtCheat& c, CheatOrigin origin) const {
+    return enabled_.count(toggleKey(c, origin)) != 0;
+}
+
+void CheatManager::setEnabled(const ChtCheat& c, bool on, CheatOrigin origin) {
     if (!game_.valid()) return;
     if (on && !c.supported) return;
-    if (!selectedSaved_) {   // an automatic choice becomes explicit once the user relies on it
+    if (origin == CheatOrigin::Database && !selectedSaved_) {   // an automatic choice becomes explicit once the user relies on it
         state_.set("set", selected_);
         selectedSaved_ = true;
     }
+    const std::string key = toggleKey(c, origin);
     if (on) {
-        enabled_[c.id] = true;
-        state_.set("on." + c.id, "1");
+        enabled_[key] = true;
+        state_.set(key, "1");
     } else {
-        enabled_.erase(c.id);
-        state_.erase("on." + c.id);
+        enabled_.erase(key);
+        state_.erase(key);
     }
     touch();
     apply();
@@ -569,21 +650,26 @@ void CheatManager::setEnabled(const ChtCheat& c, bool on) {
 bool CheatManager::setEnabledByName(const std::string& name, bool on) {
     if (!game_.valid()) return false;
     std::string want = lowerStr(trim(name));
-    if (setLoaded_) {
-        for (size_t i = 0; i < set_.cheats.size(); i++) {
-            const ChtCheat& c = set_.cheats[i];
+    // Database set, then community pack: description (case-insensitive) or id, then list position.
+    auto inSet = [&](bool loaded, const ChtSet& set, CheatOrigin origin) {
+        if (!loaded) return false;
+        for (size_t i = 0; i < set.cheats.size(); i++) {
+            const ChtCheat& c = set.cheats[i];
             if (lowerStr(c.desc) == want || c.id == want) {
                 if (on && !c.supported) return false;
-                setEnabled(c, on);
+                setEnabled(c, on, origin);
                 return true;
             }
         }
         uint64_t idx;
-        if (parseU64(want, idx) && idx < set_.cheats.size() && (!on || set_.cheats[idx].supported)) {
-            setEnabled(set_.cheats[idx], on);
+        if (parseU64(want, idx) && idx < set.cheats.size() && (!on || set.cheats[idx].supported)) {
+            setEnabled(set.cheats[idx], on, origin);
             return true;
         }
-    }
+        return false;
+    };
+    if (inSet(setLoaded_, set_, CheatOrigin::Database)) return true;
+    if (inSet(communityLoaded_, community_, CheatOrigin::Community)) return true;
     for (size_t i = 0; i < user_.size(); i++) {
         if (lowerStr(user_[i].desc) == want) {
             setUserEnabled(i, on);
@@ -595,8 +681,7 @@ bool CheatManager::setEnabledByName(const std::string& name, bool on) {
 
 void CheatManager::disableAll() {
     if (!game_.valid()) return;
-    for (const auto& kv : std::vector<std::pair<std::string, bool>>(enabled_.begin(), enabled_.end()))
-        state_.erase("on." + kv.first);
+    for (const auto& kv : enabled_) state_.erase(kv.first);
     enabled_.clear();
     for (size_t i = 0; i < user_.size(); i++) {
         user_[i].enabled = false;
@@ -610,7 +695,10 @@ unsigned CheatManager::enabledCount() const {
     unsigned n = 0;
     if (setLoaded_)
         for (const ChtCheat& c : set_.cheats)
-            if (c.supported && enabled_.count(c.id)) n++;
+            if (c.supported && isEnabled(c)) n++;
+    if (communityLoaded_)
+        for (const ChtCheat& c : community_.cheats)
+            if (c.supported && isEnabled(c, CheatOrigin::Community)) n++;
     for (const UserCheat& u : user_)
         if (u.enabled) n++;
     return n;
@@ -705,8 +793,16 @@ void CheatManager::apply() {
     if (setLoaded_) {
         for (size_t i = 0; i < set_.cheats.size(); i++) {
             const ChtCheat& c = set_.cheats[i];
-            if (!c.supported || !enabled_.count(c.id)) continue;
+            if (!c.supported || !isEnabled(c)) continue;
             b.push_back(CheatOp{false, (unsigned)i, true, c.code});
+            appliedSegments_ += c.segments;
+        }
+    }
+    if (communityLoaded_) {   // after the database set: the CRC-bound pack is the more specific one
+        for (size_t i = 0; i < community_.cheats.size(); i++) {
+            const ChtCheat& c = community_.cheats[i];
+            if (!c.supported || !isEnabled(c, CheatOrigin::Community)) continue;
+            b.push_back(CheatOp{false, kCommunityIndexBase + (unsigned)i, true, c.code});
             appliedSegments_ += c.segments;
         }
     }

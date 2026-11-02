@@ -1715,6 +1715,36 @@ uint8_t * GetRamPtr(void)
 }
 
 
+/* Slice progress for JaguarSliceElapsedUs().  Never serialized: a
+ * savestate is taken between frames, where all of it is back at its
+ * idle value. */
+static bool     m68kSliceActive = false;
+static uint32_t m68kSliceStall  = 0;	/* 68K cycles stalled before executing */
+static uint32_t m68kSliceBudget = 0;	/* cycles handed to m68k_execute() */
+static double   sliceDoneUs     = 0.0;
+
+double JaguarSliceElapsedUs(void)
+{
+   double cycleUs = vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC
+                                         : M68K_CYCLE_PAL_IN_USEC;
+   int run;
+
+   if (!m68kSliceActive)
+      return sliceDoneUs;
+
+   /* m68k_cycles_run() is not monotonic after m68k_end_timeslice() (see
+    * its comment); the budget bound keeps it inside the slice. */
+   run = m68k_cycles_run();
+   if (run < 0)
+      run = 0;
+   if ((uint32_t)run > m68kSliceBudget)
+      run = (int)m68kSliceBudget;
+
+   /* Executed cycles are scaled cycles; wall time is unscaled. */
+   return ((double)m68kSliceStall
+         + (double)run * 100.0 / (double)m68kClockScalePct) * cycleUs;
+}
+
 /* Run a 68K slice minus any pending OP-fetch/refresh stall.  pending
  * is in system clocks; the 68K runs at system/2, so two pending clocks
  * consume one 68K cycle.  A slice can be fully consumed (the 68K runs
@@ -1723,6 +1753,7 @@ uint8_t * GetRamPtr(void)
 static void M68KExecuteWithStalls(uint32_t cycles)
 {
    uint32_t stall;
+   m68kSliceStall = 0;
    /* The drain is deliberately NOT gated on busArbiter.enabled: the
     * pending-stall channel is shared by the dram_timing model (whose
     * charge sites gate on the option) and blitter bus-time charges
@@ -1749,6 +1780,7 @@ static void M68KExecuteWithStalls(uint32_t cycles)
          stall = cycles - keep;
       busArbiter.m68k_pending_stall -= stall << 1;
       cycles -= stall;
+      m68kSliceStall = stall;
       VJT_BUS_M68K_STALL(stall);
       /* A slice fully consumed by stall must not fall through to
        * m68k_execute(0): the UAE core's main loop is a do/while, so
@@ -1779,11 +1811,17 @@ static void M68KExecuteWithStalls(uint32_t cycles)
       m68kScaleAccum  = (uint32_t)(budget % 100u);
       if (scaled == 0)
          return;
+      m68kSliceBudget = scaled;
+      m68kSliceActive = true;
       m68k_execute(scaled);
+      m68kSliceActive = false;
       VJT_BUS_M68K_END(regs.remainingCycles);
       return;
    }
+   m68kSliceBudget = cycles;
+   m68kSliceActive = true;
    m68k_execute(cycles);
+   m68kSliceActive = false;
    VJT_BUS_M68K_END(regs.remainingCycles);
 }
 
@@ -1833,8 +1871,10 @@ void JaguarExecuteNew(void)
          VJP_ENTER(VJP_M68K);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          VJP_LEAVE(VJP_M68K);
+         sliceDoneUs = timeDelta;
          GPUExec(GPUSliceRemaining());
          DSPExec(DSPSliceRemaining());
+         sliceDoneUs = 0.0;
          SubtractEventTimes(timeDelta, EVENT_MAIN);
          HandleNextEvent(EVENT_JERRY);
       }
@@ -1853,8 +1893,10 @@ void JaguarExecuteNew(void)
          VJP_ENTER(VJP_M68K);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          VJP_LEAVE(VJP_M68K);
+         sliceDoneUs = timeDelta;
          GPUExec(GPUSliceRemaining());
          DSPExec(DSPSliceRemaining());
+         sliceDoneUs = 0.0;
          SubtractEventTimes(timeDelta, EVENT_JERRY);
          HandleNextEvent(EVENT_MAIN);
       }

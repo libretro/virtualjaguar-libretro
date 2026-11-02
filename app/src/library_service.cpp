@@ -1,3 +1,4 @@
+#include "platform/file_access.h"
 #include "library_service.h"
 
 #include <algorithm>
@@ -350,6 +351,7 @@ void LibraryService::addFolder(const std::string& pathIn) {
 
 void LibraryService::removeFolder(size_t index) {
     if (index >= folders_.size()) return;
+    files::forget(folders_[index].c_str());
     folders_.erase(folders_.begin() + (long)index);
     saveSettings();
     rescan();
@@ -365,7 +367,7 @@ void SDLCALL LibraryService::folderDone(void* ud, const char* const* list, int) 
 
 void LibraryService::addFolderDialog(SDL_Window* parent) {
     std::string def = folders_.empty() ? std::string() : folders_.back();
-    SDL_ShowOpenFolderDialog(&LibraryService::folderDone, this, parent, def.empty() ? nullptr : def.c_str(), false);
+    vj::files::openFolder(&LibraryService::folderDone, this, parent, def.empty() ? nullptr : def.c_str(), false);
 }
 
 bool LibraryService::installBios(const lib::Entry& e) {
@@ -652,7 +654,7 @@ void SDLCALL LibraryService::coverDone(void* ud, const char* const* list, int) {
 
 void LibraryService::setCoverDialog(SDL_Window* parent, const lib::Entry& e) {
     static const SDL_DialogFileFilter filters[] = {{"PNG images", "png"}};
-    SDL_ShowOpenFileDialog(&LibraryService::coverDone, new CoverDialog{this, lib::coverKey(e)}, parent, filters, 1, nullptr,
+    vj::files::openFile(&LibraryService::coverDone, new CoverDialog{this, lib::coverKey(e)}, parent, filters, 1, nullptr,
                            false);
 }
 

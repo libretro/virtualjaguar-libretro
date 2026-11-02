@@ -1,6 +1,7 @@
 // The Cheats window: pick a cheat set for the running game (matched by name
 // from the libretro cheat database), toggle its cheats, add manual codes.
 #include "app.h"
+#include "cheat_store.h"
 #include "cheats.h"
 #include "ui_util.h"
 #include "window_chrome.h"
@@ -22,6 +23,10 @@ struct UiState {
     bool dirInit = false;
     std::string error;
     char filter[64] = "";
+    // The community store is told when the window becomes visible (or the game changes under it): the frame of the
+    // last draw and the game it was told about.
+    int lastDrawFrame = -10;
+    std::string openedKey;
 };
 UiState g_ui;
 
@@ -59,34 +64,194 @@ void drawSetPicker(App& app) {
         ImGui::EndCombo();
     }
     std::string st = cm.setStatus();
-    if (!st.empty()) ui::coloredWrapped(ui::vec4(ui::pal().warning), st.c_str());
+    if (!st.empty()) {
+        // "No set matches by name" is not a problem when the game's community pack already supplies cheats.
+        const ChtSet* pack = cm.communitySet();
+        const bool packCovers = pack && pack->restriction.empty() && !pack->cheats.empty();
+        if (packCovers && cm.selectedStem().empty() && cm.matches().empty() && !lib.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", st.c_str());
+            ImGui::PopStyleColor();
+        } else
+            ui::coloredWrapped(ui::vec4(ui::pal().warning), st.c_str());
+    }
 }
 
-void drawSetCheats(App& app) {
-    CheatManager& cm = app.cheats;
-    const ChtSet* set = cm.selectedSet();
-    if (!set) return;
-    ImGui::SeparatorText("Database cheats");
-    if (set->cheats.empty()) ImGui::TextDisabled("This file has no cheats.");
-    for (size_t i = 0; i < set->cheats.size(); i++) {
-        const ChtCheat& c = set->cheats[i];
+// The cheat rows of one set: a checkbox, the wrapped description (clicking it toggles too) and a tooltip with the code
+// or the reason it is unsupported.  `origin` says which of the game's two sets the toggles belong to.
+void drawCheatRows(CheatManager& cm, const ChtSet& set, CheatOrigin origin) {
+    for (size_t i = 0; i < set.cheats.size(); i++) {
+        const ChtCheat& c = set.cheats[i];
         ImGui::PushID((int)i);
-        bool on = cm.isEnabled(c);
+        bool on = cm.isEnabled(c, origin);
         ImGui::BeginDisabled(!c.supported);
         std::string label = c.desc + (c.parts > 1 ? "  (" + std::to_string(c.parts) + " parts)" : std::string());
         // A checkbox label cannot wrap, so the description is a wrapped text beside an empty-label box;
         // clicking the text toggles too.
-        if (ImGui::Checkbox("##on", &on)) cm.setEnabled(c, on);
+        if (ImGui::Checkbox("##on", &on)) cm.setEnabled(c, on, origin);
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextWrapped("%s", label.c_str());
-        if (ImGui::IsItemClicked()) cm.setEnabled(c, !on);
+        if (ImGui::IsItemClicked()) cm.setEnabled(c, !on, origin);
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (c.supported) ImGui::SetTooltip("%s", c.code.c_str());
             else ImGui::SetTooltip("Not supported: %s", c.note.c_str());
         }
         ImGui::PopID();
+    }
+}
+
+void drawSetCheats(App& app, bool hardcore) {
+    CheatManager& cm = app.cheats;
+    const ChtSet* set = cm.selectedSet();
+    if (!set) return;
+    ImGui::SeparatorText("Database cheats");
+    if (set->cheats.empty()) ImGui::TextDisabled("This file has no cheats.");
+    ImGui::BeginDisabled(hardcore);
+    ImGui::PushID("db");
+    drawCheatRows(cm, *set, CheatOrigin::Database);
+    ImGui::PopID();
+    ImGui::EndDisabled();
+}
+
+// "Community cheats": the downloaded pack for this cartridge's CRC32 (design: docs/cheat-store-design.md, App section 5).
+// The buttons are data-only and stay live in hardcore mode; only the toggles are disabled there.
+void drawCommunity(App& app, bool hardcore) {
+    CheatManager& cm = app.cheats;
+    CheatStore& store = app.cheatStore;
+    ImGui::SeparatorText("Community cheats");
+    const uint32_t crc = cm.game().crc;
+    if (crc == 0) {
+        ImGui::TextDisabled("Community packs cover cartridges only.");
+        return;
+    }
+    char crcText[16];
+    std::snprintf(crcText, sizeof crcText, "%08X", (unsigned)crc);
+
+    const PackState st = store.state(crc);
+    const PackMeta* off = store.offered(crc);
+    const PackMeta* inst = store.installed(crc);
+    const PackMeta* m = inst ? inst : off;   // what was verified at install wins; the manifest's entry before that
+    const ChtSet* set = cm.communitySet();
+    const bool downloads = store.downloadsAllowed && store.downloadsAllowed();
+    const bool busy = store.busy();
+    // A pack file is on disk: Remove (and Update when offered) follow from the store state alone, so a file that does
+    // not parse is never a dead end.  Only the cheat rows need the parsed `set`.
+    const bool packOnDisk = st == PackState::Installed || st == PackState::UpdateAvailable ||
+                            st == PackState::NoLongerOffered || st == PackState::EditedLocally;
+    const bool havePack = packOnDisk && set;
+    const bool updateOffered = st == PackState::UpdateAvailable || (st == PackState::EditedLocally && off);
+
+    // ---- what the store knows about it ----
+    if (m && st != PackState::NotOffered) {
+        ImGui::TextWrapped("%s", m->title.empty() ? m->name.c_str() : m->title.c_str());
+        ui::hint("%u cheat%s, %u write%s, updated %s", m->cheats, m->cheats == 1 ? "" : "s", m->writes,
+                 m->writes == 1 ? "" : "s", m->updated.c_str());
+        if (!m->credit.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", m->credit.c_str());
+            ImGui::PopStyleColor();
+        }
+        if (m->partial)
+            ui::coloredWrapped(ui::vec4(ui::pal().warning),
+                               "Partial pack: some of the source script's cheats could not be converted.");
+        if (m->exceedsCoreLimit)
+            ui::coloredWrapped(ui::vec4(ui::pal().warning),
+                               "Enabling every cheat here exceeds the core's 256-write limit; the first 256 writes win.");
+        if (!m->notes.empty()) {
+            char head[64];
+            std::snprintf(head, sizeof head, "%zu setting%s could not be converted", m->notes.size(),
+                          m->notes.size() == 1 ? "" : "s");
+            if (ImGui::TreeNode("##notes", "%s", head)) {
+                for (const auto& n : m->notes) {
+                    ImGui::Bullet();
+                    ImGui::TextWrapped("%s", n.first.empty() ? n.second.c_str() : (n.first + ": " + n.second).c_str());
+                }
+                ImGui::TreePop();
+            }
+        }
+    } else if (packOnDisk && !inst) {
+        ImGui::TextDisabled(updateOffered ? "Credits unavailable (no record of where this pack came from). Use Update to replace it."
+                                          : "Credits unavailable (no record of where this pack came from).");
+    }
+
+    // ---- state line ----
+    switch (st) {
+        case PackState::DownloadsOff:
+            ImGui::TextWrapped("Downloads are off (Library: Download art and cheat packs). "
+                               "Turn it on to see community packs.");
+            break;
+        case PackState::Checking:
+            ImGui::TextDisabled("Checking the community store...");
+            break;
+        case PackState::NotOffered:
+            if (store.manifestLoaded()) ImGui::TextWrapped("No community pack for this cartridge (CRC %s).", crcText);
+            else ImGui::TextWrapped("Community store not reached yet.");   // no list cached and the fetch failed or has not run
+            break;
+        case PackState::UpdateAvailable:
+            ui::coloredWrapped(ui::vec4(ui::pal().warning),
+                               ((off && !off->updated.empty() ? "Update available (pack changed " + off->updated + ")."
+                                                              : std::string("Update available.")) +
+                                (downloads ? "" : " (downloads are off)"))
+                                   .c_str());
+            break;
+        case PackState::NoLongerOffered:
+            ImGui::TextDisabled("No longer offered by the store; installed copy kept.");
+            break;
+        case PackState::EditedLocally:
+            ui::coloredWrapped(ui::vec4(ui::pal().warning),
+                               "This pack was edited on disk. Update replaces it with the store's copy.");
+            break;
+        default:
+            break;
+    }
+    if (packOnDisk && (!set || !set->restriction.empty()))
+        ui::coloredWrapped(ui::vec4(ui::pal().warning),
+                           set ? set->restriction.c_str() : "This pack could not be read; Remove it, or Update if offered.");
+    if (havePack && store.turnedOff() > 0) {
+        char m[96];
+        std::snprintf(m, sizeof m, "%u cheat%s changed in the update and %s turned off.", store.turnedOff(),
+                      store.turnedOff() == 1 ? "" : "s", store.turnedOff() == 1 ? "was" : "were");
+        ui::coloredWrapped(ui::vec4(ui::pal().warning), m);
+    }
+    if (havePack && hardcore)
+        ui::coloredWrapped(ui::vec4(ui::pal().warning), "Installed; cheats cannot be enabled in hardcore mode.");
+    if (!store.status().empty()) ImGui::TextWrapped("%s", store.status().c_str());
+
+    // ---- buttons ----
+    ui::Flow flow;
+    bool first = true;
+    auto button = [&](const char* label, bool enabled, const char* tip) {
+        if (!first) flow.next(ui::Flow::buttonW(label));
+        first = false;
+        ImGui::BeginDisabled(!enabled);
+        const bool hit = ImGui::Button(label);
+        ImGui::EndDisabled();
+        if (tip && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tip);
+        return hit;
+    };
+    const bool canInstall = off && downloads && !busy;
+    if (st == PackState::Offered && button("Install", canInstall, "Downloads this pack from the project's website."))
+        store.install(crc);
+    if (updateOffered &&
+        button("Update", canInstall,
+               downloads ? "Replaces the installed pack. Cheats that changed come back off."
+                         : "Downloads are off (Library: Download art and cheat packs)."))
+        store.install(crc);
+    if (packOnDisk && button("Remove", !busy, "Deletes the pack and forgets which of its cheats were on."))
+        store.remove(crc, cm);
+    if (button("Check for updates", downloads && !busy && st != PackState::Checking,
+               "Asks the project's website for its current list of packs."))
+        store.checkNow();
+
+    // ---- the cheats ----
+    if (havePack) {
+        ImGui::BeginDisabled(hardcore);
+        ImGui::PushID("community");
+        drawCheatRows(cm, *set, CheatOrigin::Community);
+        ImGui::PopID();
+        ImGui::EndDisabled();
     }
 }
 
@@ -193,6 +358,16 @@ void drawCheats(App& app) {
     }
     const GameIdentity& g = cm.game();
     const bool hardcore = cm.blockedNow();
+    // The community store: told once when the window becomes visible (or the game changes under it); it decides
+    // whether a manifest check is due.  Responses are applied every frame by cheatsPump, not here.
+    {
+        const int frame = ImGui::GetFrameCount();
+        if (frame - g_ui.lastDrawFrame > 1 || g_ui.openedKey != g.key) {
+            app.cheatStore.windowOpened(g.crc, app.cfg);
+            g_ui.openedKey = g.key;
+        }
+        g_ui.lastDrawFrame = frame;
+    }
     ImGui::TextWrapped("%s", !g.title.empty() ? g.title.c_str() : g.fileStem.c_str());
     ui::hint("%s    %u on", g.key.c_str(), cm.enabledCount());
     ImGui::SameLine();
@@ -213,8 +388,11 @@ void drawCheats(App& app) {
     drawSetPicker(app);
     ImGui::EndDisabled();
     ImGui::BeginChild("##cheatlist", ImVec2(0, 0), ImGuiChildFlags_Borders);
-    ImGui::BeginDisabled(hardcore);   // toggles, set choice and manual codes: nothing changes in hardcore
-    drawSetCheats(app);
+    // Toggles, set choice and manual codes: nothing changes in hardcore.  The community section's buttons are data-only
+    // (install / update / remove) and stay live, so each section applies the disabling itself.
+    drawSetCheats(app, hardcore);
+    drawCommunity(app, hardcore);
+    ImGui::BeginDisabled(hardcore);
     drawUserCheats(app);
     ImGui::EndDisabled();
     ImGui::Spacing();

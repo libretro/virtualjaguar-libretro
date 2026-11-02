@@ -1,0 +1,15 @@
+# Community cheats for Test Game; nothing is enabled automatically.
+vj_rom_crc32 = "5E2CDBC0"
+cheats = 3
+
+cheat0_desc = "Infinite lives"
+cheat0_code = "001F0000:AB"
+cheat0_enable = false
+
+cheat1_desc = "Max score"
+cheat1_code = "001F0010:1234"
+cheat1_enable = false
+
+cheat2_desc = "Gold"
+cheat2_code = "001F0020:01+001F0021:02"
+cheat2_enable = false

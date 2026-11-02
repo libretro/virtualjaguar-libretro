@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
                 for (size_t i = 0; i < objs.size(); i++) {
                     OpImage im;
                     std::string e2;
-                    if (objs[i].drawable() && opRender(dbg.iface(), objs[i], OpRenderOptions(), im, e2))
+                    if (objs[i].drawable() && opRender(dbg.core().iface(), objs[i], OpRenderOptions(), im, e2))
                         opSavePng(im, std::string(keep) + std::to_string(i) + ".png", e2);
                 }
             }

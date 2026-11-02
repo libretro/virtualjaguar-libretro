@@ -537,6 +537,49 @@ static void test_movei(void)
    else FAIL("movei -> %08X (expected DEADBEEF)", REG(0));
 }
 
+/* movei's immediate is read straight from gpu_ram_8 when both words lie in
+ * local RAM (#1137); #1139 rewrote the upper bound so a pc near 0xFFFFFFFF
+ * cannot wrap into that path.  Two placements at the end of the 4 KB pin
+ * the bound from both sides.  The exec loop does one instruction per call
+ * here (every GPU opcode costs 1 cycle in gpu_opcode_cycles), so the word
+ * after local RAM is never fetched as an opcode.
+ *   A: opcode at $FFA, immediate at $FFC/$FFE -- the last position the fast
+ *      path may take (pc == GPU_WORK_RAM_BASE + 0xFFC after the opcode).
+ *   B: opcode at $FFE, immediate at $1000/$1002 -- one word past the end,
+ *      so it must take the general path.  A bound off by one in the other
+ *      direction reads gpu_ram_8[0x1000..0x1003]; the sanitizer CI job
+ *      (ASan on this suite) is what turns that into a failure.
+ * A pc of 0xFFFFFFFC itself cannot be exercised: the opcode fetched there
+ * goes through JaguarReadWord, which masks to 24 bits and lands in unmapped
+ * space, so no movei can be made to execute at that address. */
+static void test_movei_ram_end(void)
+{
+   printf("\n--- MOVEI at the end of local RAM ---\n");
+   prep();
+   gwmovei(0xFFA, 0xC0FFEE42, 3);
+   p_GPUWriteLong(GPU_PC_ADDR, GPU_RAM_BASE + 0xFFA, 1);
+   p_GPUWriteLong(GPU_CTRL_ADDR, GPUGO, 1);
+   p_GPUExec(1);
+   p_GPUWriteLong(GPU_CTRL_ADDR, 0, 1);
+   if (REG(3) == 0xC0FFEE42 && *p_gpu_pc == GPU_RAM_BASE + 0x1000)
+      PASS("immediate in the last two words: R3=$%08X pc=$%08X", REG(3), *p_gpu_pc);
+   else
+      FAIL("immediate in the last two words: R3=$%08X (expected C0FFEE42) pc=$%08X (expected %08X)",
+           REG(3), *p_gpu_pc, GPU_RAM_BASE + 0x1000);
+
+   prep();
+   gw16(0xFFE, OP(38, 0, 4));
+   REG(4) = 0x12345678;
+   p_GPUWriteLong(GPU_PC_ADDR, GPU_RAM_BASE + 0xFFE, 1);
+   p_GPUWriteLong(GPU_CTRL_ADDR, GPUGO, 1);
+   p_GPUExec(1);
+   p_GPUWriteLong(GPU_CTRL_ADDR, 0, 1);
+   if (*p_gpu_pc == GPU_RAM_BASE + 0x1004)
+      PASS("immediate past the end takes the general path: R4=$%08X pc=$%08X", REG(4), *p_gpu_pc);
+   else
+      FAIL("immediate past the end: pc=$%08X (expected %08X)", *p_gpu_pc, GPU_RAM_BASE + 0x1004);
+}
+
 static void test_moveta_movefa(void)
 {
    printf("\n--- MOVETA/MOVEFA ---\n");
@@ -1190,6 +1233,7 @@ int main(int argc, char *argv[])
    test_move();
    test_moveq();
    test_movei();
+   test_movei_ram_end();
    test_moveta_movefa();
 
    /* Memory */

@@ -1,0 +1,19 @@
+# Community cheats for Skyhammer (World); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_skyhammer.c
+# Source SHA256: d4fc6d187b9fda9ea32415760d7849396adb1f3d80d2d82bc3c97610765ae33f
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "3C044941"
+cheats = 3
+
+cheat0_desc = "Infinite Health"
+cheat0_code = "001C1BB0:00190000+001C1BB4:00190000"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Ammo"
+cheat1_code = "001C1BBB:80+001C1BBF:20+001C1BC3:08+001C1BC7:08+001C1BCB:08+001C1BCE:08+001C1BCF:00"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Fuel"
+cheat2_code = "001C1BD4:0008F03F"
+cheat2_enable = false

@@ -171,6 +171,7 @@ void NavInput::padAxis(int axis, int16_t v, uint64_t ms) {
 std::vector<Intent> NavInput::take(uint64_t ms) {
     std::vector<Intent> out;
     out.swap(pending_);
+    repeated_ = false;
     for (HeldAccept& a : acceptHeld_) {
         if (a.swallowed || ms < a.downAt || ms - a.downAt < kLongMs) continue;
         a.swallowed = true;   // fires once; its release is swallowed
@@ -182,6 +183,7 @@ std::vector<Intent> NavInput::take(uint64_t ms) {
     }
     if (!held_.empty() && ms >= nextRepeat_) {
         out.push_back(held_.back().dir);
+        repeated_ = true;   // always the last of the call
         // One repeat per call however late the call is; the clock catches up so a stall does not burst.
         nextRepeat_ += kRepeatMs * ((ms - nextRepeat_) / kRepeatMs + 1);
     }
@@ -195,6 +197,7 @@ void NavInput::reset() {
     acceptHeld_.clear();
     trigOn_.clear();
     rearm_ = false;
+    repeated_ = false;
     nextRepeat_ = 0;
     for (int& s : stickState_) s = 0;
     trig_[0] = trig_[1] = false;

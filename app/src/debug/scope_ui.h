@@ -7,6 +7,8 @@
 // While the window is closed the tap does nothing (one flag test per audio block).
 #pragma once
 
+#include <cstddef>
+
 namespace vj {
 
 class CoreHost;
@@ -14,5 +16,10 @@ class DebugSession;
 
 void scopeToolInit(DebugSession& session, CoreHost& host);
 void scopeToolDraw();
+
+// Test hook: audio frames the tap has captured since the window was opened (a pure read of the ring).
+namespace scope_test {
+size_t framesSeen();
+}
 
 }  // namespace vj

@@ -1,6 +1,7 @@
 // The Blitter inspector window.  See blitter_ui.h.
 #include "blitter_ui.h"
 
+#include "blitter_feed.h"
 #include "blitter_log.h"
 #include "debug_session.h"
 #include "ui_util.h"
@@ -21,38 +22,12 @@ namespace {
 struct State {
     DebugSession* session = nullptr;
     bool open = false;
-    bool logOn = false;                     // we turned the core's log on
-    const vj_debug_iface* logIface = nullptr;   // ... on this interface
-    blit::LogTracker tracker;
-    uint64_t serial = 0;
+    blit::LogFeed feed;                     // the list and the live registers, from published view buffers
     bool frozen = false;
     char filter[40] = "";
     int64_t selected = -1;                  // launch seq
-    std::vector<uint8_t> regImage;
-    bool haveRegs = false;
 };
 State g;
-
-// Switches the core's launch log on or off to match `want`.  A replaced interface (the core was torn down
-// and reloaded) is forgotten, never called.
-void setLog(bool want) {
-    const vj_debug_iface* f = g.session ? g.session->iface() : nullptr;
-    if (g.logOn && g.logIface != f) {
-        g.logOn = false;
-        g.logIface = nullptr;
-        g.tracker.reset();
-    }
-    if (want && !g.logOn && f && f->blit_log_enable) {
-        f->blit_log_enable(1);
-        g.logOn = true;
-        g.logIface = f;
-        g.tracker.reset();
-    } else if (!want && g.logOn) {
-        if (g.logIface && g.logIface->blit_log_enable) g.logIface->blit_log_enable(0);
-        g.logOn = false;
-        g.logIface = nullptr;
-    }
-}
 
 std::string lower(std::string s) {
     for (char& c : s) c = (char)std::tolower((unsigned char)c);
@@ -104,12 +79,12 @@ void drawDetail(const vj_debug_blit& b) {
 
 void drawLiveRegs() {
     if (!ImGui::CollapsingHeader("Live registers")) return;
-    if (!g.haveRegs) {
+    if (!g.feed.haveRegs()) {
         ImGui::TextDisabled("Not readable right now.");
         return;
     }
     ui::hint("Read without side effects. B_CMD reads back as the status register, not the last command.");
-    std::vector<blit::RegValue> v = blit::decodeRegisters(g.regImage.data());
+    std::vector<blit::RegValue> v = blit::decodeRegisters(g.feed.regImage().data());
     if (ImGui::BeginTable("##regs", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Register", ImGuiTableColumnFlags_WidthFixed, ui::em(8.0f));
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, ui::em(13.0f));
@@ -134,7 +109,7 @@ void drawLiveRegs() {
 }
 
 void drawTable() {
-    const auto& rows = g.tracker.rows();
+    const auto& rows = g.feed.tracker.rows();
     const std::string f = lower(g.filter);
     const float h = std::max(ui::em(10.0f), ImGui::GetContentRegionAvail().y * 0.5f);
     if (!ImGui::BeginTable("##blits", 7,
@@ -190,16 +165,22 @@ void blitterToolInit(DebugSession& session) {
     session.registerTool(t);
     session.onForcedClose.push_back([](const char*) {
         g.open = false;
-        setLog(false);
+        if (!g.session) return;
+        g.feed.setLog(*g.session, false);
+        g.feed.release(*g.session);
     });
 }
 
 void blitterToolDraw() {
     if (!g.session) return;
+    DebugSession& session = *g.session;
     // The core's log runs only while the window is open and usable.
-    const bool want = g.open && g.session->enabled();
-    setLog(want);
-    if (!g.open) return;
+    const bool want = g.open && session.enabled();
+    g.feed.setLog(session, want);
+    if (!g.open) {
+        g.feed.release(session);
+        return;
+    }
 
     ui::nextWindow(84.0f, 42.0f, 40.0f, 20.0f);
     bool shown = ui::beginWindow("Blitter log", &g.open);
@@ -208,35 +189,25 @@ void blitterToolDraw() {
         ui::hint("The blitter launches the game made, newest first. The core keeps the last %d; launches that scroll "
                  "out before this list is refreshed are counted as missed.",
                  (int)VJ_DBG_BLIT_LOG_SIZE);
-        if (!g.session->enabled()) {
-            ui::coloredWrapped(ui::vec4(ui::pal().warning), g.session->disabledReason().c_str());
+        if (!session.enabled()) {
+            g.feed.release(session);
+            ui::coloredWrapped(ui::vec4(ui::pal().warning), session.disabledReason().c_str());
         } else {
-            const vj_debug_iface* f = g.session->iface();
-            const uint64_t ser = g.session->refreshSerial();
-            if (ser != g.serial) {
-                g.serial = ser;
-                if (!g.frozen) g.tracker.sync(f);
-                g.haveRegs = g.session->read(blit::kRegBase, g.regImage, blit::kRegBytes);
-            }
+            g.feed.update(session, g.frozen);
             ImGui::Checkbox("Freeze", &g.frozen);
             ImGui::SameLine();
             if (ImGui::Button("Clear")) {
-                g.tracker.reset();
                 g.selected = -1;
-                // restart the core's numbering so the list and the core stay in step
-                if (f && f->blit_log_enable) {
-                    f->blit_log_enable(0);
-                    f->blit_log_enable(1);
-                }
+                g.feed.clear(session);   // also restarts the core's numbering so the list and the core stay in step
             }
             ImGui::SameLine();
             ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 8.0f, 16.0f));
             ImGui::InputTextWithHint("##filter", "Filter flags (srcen, gourd...)", g.filter, sizeof g.filter);
-            ImGui::TextDisabled("%zu shown  |  %u launches seen  |  %u missed", g.tracker.rows().size(), g.tracker.total(),
-                                g.tracker.lost());
+            ImGui::TextDisabled("%zu shown  |  %u launches seen  |  %u missed", g.feed.tracker.rows().size(),
+                                g.feed.tracker.total(), g.feed.tracker.lost());
             drawTable();
             const vj_debug_blit* sel = nullptr;
-            for (const vj_debug_blit& b : g.tracker.rows())
+            for (const vj_debug_blit& b : g.feed.tracker.rows())
                 if ((int64_t)b.seq == g.selected) sel = &b;
             ImGui::Spacing();
             if (sel) drawDetail(*sel);
@@ -244,8 +215,15 @@ void blitterToolDraw() {
             ImGui::Spacing();
             drawLiveRegs();
         }
+    } else {
+        g.feed.release(session);   // collapsed: no draw, no requests
     }
     ImGui::End();
 }
+
+namespace blitter_test {
+unsigned launchesSeen() { return g.feed.tracker.total(); }
+bool logOn() { return g.feed.logOn(); }
+}  // namespace blitter_test
 
 }  // namespace vj

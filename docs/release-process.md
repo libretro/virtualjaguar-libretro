@@ -124,7 +124,10 @@ After all platform builds finish, the `release` job:
 
 ### 3b. Nightly builds (develop pushes)
 
-`release.yml` also fires on every push to `develop`. The build matrix is
+`release.yml` also fires on every push to `develop`, after a 10-minute debounce: the `guard`
+job sleeps first and a newer push cancels the sleeping run (concurrency), so a burst of merges
+produces one nightly, built from the last of them. Tags, `release/**` and manual dispatches skip
+the wait. The build matrix is
 identical — the same 16 jobs (14 matrix entries + Vita + Switch) plus the jagcd-tools zips, the same split-debug packaging — but the
 publishing step is the `nightly` job instead of `release`:
 
@@ -159,14 +162,14 @@ outside the `v*` tag filter so a CI-pushed tag can never re-enter the release
 path.
 
 **What a nightly is gated on:** the 16 builds compiling. It is *not* gated on
-`c-cpp.yml`, the acid suite, or the screenshot regression run — those report
-separately on the same commit. A nightly can build cleanly and still be broken,
+`c-cpp.yml`, the acid suite, or the screenshot regression run — those do not run
+on develop pushes at all (the PR that introduced the commit already ran them). A nightly can build cleanly and still be broken,
 and the release body says so. Upgrading that claim means switching the job to a
 `workflow_run` trigger (see `artifacts.yml` for the idiom in this repo).
 
-Concurrency differs from `c-cpp.yml`/`acid-test.yml` on purpose: develop pushes
-here **do** cancel superseded runs, because only the newest commit's binaries
-matter for a rolling prerelease. Tag pushes always run to completion. If build
+Concurrency: develop pushes here cancel superseded runs, because only the newest
+commit's binaries matter for a rolling prerelease; the debounce makes that cancel
+land before any build minutes are spent. Tag pushes always run to completion. If build
 queue contention ever becomes a problem, the lever is a `paths-ignore` for
 docs-only pushes — not a smaller matrix. (Test it carefully: path filters
 interact badly with tag pushes, and this workflow serves both.)

@@ -1,0 +1,54 @@
+# Community cheats for Attack of the Mutant Penguins (1996); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_attack_mutant_penguins.c
+# Source SHA256: a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909
+# Omitted: "Minimum Number Orbs: 1" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 2" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 3" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 4" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 5" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 6" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 7" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 8" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 9" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Minimum Number Orbs: 10" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 0" (scripts/cheat_attack_mutant_penguins.c): no writes activated (check ROM revision/hash)
+# Omitted: "Unlock Levels: 1" (scripts/cheat_attack_mutant_penguins.c): no writes activated (check ROM revision/hash)
+# Omitted: "Unlock Levels: 2" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 3" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 4" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 5" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 6" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 7" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 8" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 9" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 10" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 11" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 12" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 13" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 14" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 15" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 16" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 17" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 18" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 19" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Unlock Levels: 20" (scripts/cheat_attack_mutant_penguins.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "CD5BF827"
+cheats = 4
+
+cheat0_desc = "Infinite Bombs"
+cheat0_code = "00038521:06"
+cheat0_enable = false
+
+cheat1_desc = "Start With Club"
+cheat1_code = "00038522:FFFF+00038524:FFFF+00038529:FF+0003852A:FF+0003852B:FF"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Use Of Club"
+cheat2_code = "00038408:BF+00038530:05+00038531:05"
+cheat2_enable = false
+
+cheat3_desc = "Infinite Ships For Penguin Attack"
+cheat3_code = "00038489:06"
+cheat3_enable = false

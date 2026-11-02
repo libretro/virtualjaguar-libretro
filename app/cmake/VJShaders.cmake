@@ -159,11 +159,25 @@ elseif(VJ_APP_FETCH_LIBRASHADER)
         endif()
         if(EXISTS "${librashader_bin_SOURCE_DIR}/${_libname}")
             set(VJ_LIBRASHADER_LIB_FILE "${librashader_bin_SOURCE_DIR}/${_libname}")
+            message(STATUS "librashader runtime: ${VJ_LIBRASHADER_LIB_FILE} (prebuilt ${_zip})")
         else()
             message(WARNING "librashader: ${_libname} not found in ${_zip}")
         endif()
     else()
         message(STATUS "librashader: no prebuilt runtime is published for this platform; install it separately")
+    endif()
+elseif(VJ_SHADERS_AVAILABLE)
+    # The cache keeps an OFF from an earlier offline or packaging configure, and the default never
+    # comes back: say so where a download exists (Windows, Apple silicon), or a local build quietly
+    # ships no runtime and the Shader section reports the library missing.
+    set(_arch "${CMAKE_OSX_ARCHITECTURES}")
+    if(NOT _arch)
+        set(_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    if(WIN32 OR (APPLE AND _arch MATCHES "arm64|aarch64"))
+        message(WARNING "librashader: VJ_APP_FETCH_LIBRASHADER is OFF and VJ_LIBRASHADER_LIB is unset, so no runtime "
+                        "is copied beside the executable; shaders then need a system copy or VJ_LIBRASHADER. "
+                        "Configure again with -DVJ_APP_FETCH_LIBRASHADER=ON to download the pinned prebuilt.")
     endif()
 endif()
 
@@ -297,8 +311,17 @@ endfunction()
 #                    fallback.  SKIPPED (exit 77) without the library or a display.
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
+    add_executable(vj_gl_context_test tests/gl_context_test.cpp)
+    target_include_directories(vj_gl_context_test PRIVATE src)
+    add_test(NAME gl_context_unit COMMAND vj_gl_context_test)
+    add_executable(vj_gl_context_integration tests/gl_context_integration.cpp src/gl_context.cpp)
+    target_include_directories(vj_gl_context_integration PRIVATE src)
+    target_link_libraries(vj_gl_context_integration PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+    add_test(NAME gl_context_integration COMMAND vj_gl_context_integration)
+    set_tests_properties(gl_context_integration PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
     add_executable(vj_shader_tests
         test/shader_tests.cpp
+        src/gl_context.cpp
         src/shaders.cpp
         src/present_util.cpp
         src/paths.cpp

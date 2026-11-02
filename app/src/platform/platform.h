@@ -26,6 +26,10 @@ void postCommand(Cmd cmd, int arg = 0);
 bool decodeCommandEvent(const SDL_Event& e, Cmd& cmd, int& arg);
 
 // ---- lifecycle ----------------------------------------------------------------------------------
+// Winsock is per process and the core never starts it (RetroArch does, as the host): without it every socket() the core
+// makes fails on Windows, the GDB stub ("failed to open port") included.  Call once, before the first core load, headless
+// runs too.  A no-op elsewhere.  Reference counted by Windows, so another WSAStartup (neuro, netplay) is harmless.
+void initNetworking();
 void beforeWindow();                    // after SDL_Init, before the window: process identity (Windows AppUserModelID)
 void windowCreated(SDL_Window* w);      // dark title bar (Windows), native menu bar + Dock menu (macOS)
 // The window frame follows the app theme (Windows dark title bar).  Call after windowCreated() and whenever the
@@ -56,6 +60,11 @@ void clearRecents();
 void revealFile(const std::string& path);   // "Show in Finder / Explorer"; falls back to opening the folder
 void openFolder(const std::string& dir);
 const char* fileManagerName();              // "Finder" | "Explorer" | "File Manager"
+
+// ---- display power ---------------------------------------------------------------------------------------------
+// True while the display the window is on is asleep (macOS only; false everywhere else).  A vsync swap on macOS waits
+// for a display-link tick that a sleeping display never sends (swap_guard.h, #1081).  Main thread.
+bool displayAsleep(SDL_Window* w);
 
 // Dev / test: "virtualjaguar --dump-native-menu".  Prints the real NSMenu tree and checks it.
 // Returns 0 ok, 1 broken, 77 skip (no native menu on this OS, or no window server).

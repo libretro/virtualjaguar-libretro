@@ -334,6 +334,32 @@ static void testReplaceFlow() {
     fs::remove_all(root);
 }
 
+static void testReplaceWithCallable() {
+    std::string root = tmpRoot(), src = root + "/art.png";
+    writeText(src, pngHeader(16, 8) + "payload");
+    FakeOptions fo;  tex::OptionIO io = fo.io();
+    int calls = 0, ret = 1;
+    tex::ReloadFn reload = [&] { calls++; return ret; };
+    tex::ReplaceOutcome o = tex::replaceTile(io, reload, root, 0x0e4ae2eb, kH1, 16, 8, 16, src);
+    CHECK(o.ok && o.reloadCalled && o.reloadActive && calls == 1);
+    ret = -1;                                                         // an older core: installs, says so, option still set
+    o = tex::replaceTile(io, reload, root, 0x0e4ae2eb, kH3, 16, 8, 16, src);
+    CHECK(o.ok && !o.reloadCalled && o.message.find("restart") != std::string::npos && calls == 2);
+    CHECK(fo.sets.size() == 2 && fo.sets[1].first == tex::kOptReplace && fo.sets[1].second == "enabled");
+    ret = 0;                                                          // reloaded but replacement is off
+    o = tex::replaceTile(io, reload, root, 0x0e4ae2eb, kH3, 16, 8, 16, src);
+    CHECK(o.ok && o.reloadCalled && !o.reloadActive && calls == 3);
+    writeText(src, pngHeader(20, 8));
+    calls = 0;
+    CHECK(!tex::replaceTile(io, reload, root, 0x0e4ae2eb, kH2, 16, 8, 16, src).ok && calls == 0);
+    writeText(src, pngHeader(16, 8));                                 // valid again: an empty callable still installs, calls nothing
+    o = tex::replaceTile(io, tex::ReloadFn(), root, 0x0e4ae2eb, kH3, 16, 8, 16, src);
+    CHECK(o.ok && !o.reloadCalled && calls == 0);
+    CHECK(tex::reloadText(1).text == "Packs reloaded." && !tex::reloadText(1).error);
+    CHECK(tex::reloadText(0).text.find("folder is empty") != std::string::npos && !tex::reloadText(0).error);
+    CHECK(tex::reloadText(-1).error);
+}
+
 static void testLru() {
     tex::LruKeys l(3);
     CHECK(l.touch("a").empty() && l.touch("b").empty() && l.touch("c").empty());
@@ -361,6 +387,7 @@ int main() {
     testPngRules();
     testInstallAndExport();
     testReplaceFlow();
+    testReplaceWithCallable();
     testLru();
     std::printf("debug_texture_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.10.0
+CORE_BASE_VERSION := v3.11.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -1336,7 +1336,7 @@ $(CORE_DIR)/libretro.o: $(VERSION_H)
 clean:
 	rm -f $(TARGET) $(OBJECTS) $(BUILD_CONFIG_STAMP) $(LEGACY_LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
-		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_tom_readback test/test_mmult \
+		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_mmult test/test_tom_readback \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_fountain_crash test/test_audio_pipeline \
@@ -1356,7 +1356,7 @@ clean:
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 test/tools/test_doom_pace_gate test/tools/test_cf_canary test/tools/bus_census_probe \
-		test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
+		test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe test/tools/kart_line_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab test/tools/idle_skip_scale_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
@@ -1414,7 +1414,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
 test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb test/tools/test_gdbstub_proto \
-		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_tom_readback test/test_mmult test/test_dsp_ops \
+		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_mmult test/test_tom_readback test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_fountain_crash \
@@ -1431,7 +1431,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_option_explain test/tools/test_disk_control \
 		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 test/tools/test_doom_pace_gate test/tools/test_cf_canary \
-		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
+		test/tools/i2s_lag_probe test/tools/kart_line_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
@@ -1585,8 +1585,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_m68k_irq_ssp
 	./test/test_m68k_prefetch
 	./test/test_gpu_ops
-	./test/test_tom_readback
 	./test/test_mmult
+	./test/test_tom_readback
 	./test/test_dsp_ops
 	./test/test_dsp_unit
 	./test/test_hle_bios
@@ -1685,6 +1685,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/i2s_lag_probe ./$(TARGET) "$$rom" --frames 2400 --window 2400 --max-lag 64 --max-resyncs 0 --quiet --option virtualjaguar_pal=enabled; \
 	else \
 		bash scripts/test-skip.sh record "Atari Karts (i2s lag drift)" "no ROM matching 'Atari Karts*' in the private corpus"; \
+	fi
+	@# AI karts follow the racing line (#1085).  The GPU kart code seeds
+	@# each kart's steering from TOM HC's low bits; an HC that does not
+	@# advance with time gave every kart a fixed bias and drove them off
+	@# the track (mean kart-to-line distance 1550+ vs ~40 when correct).
+	@rom=$$(bash scripts/find-rom.sh 'Atari Karts (1995).jag' 'Atari Karts*.jag' 'Atari Karts*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/kart_line_probe ./$(TARGET) "$$rom" --frames 4200 --max-mean 400 --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Atari Karts (AI racing line)" "no ROM matching 'Atari Karts*' in the private corpus"; \
 	fi
 	@# Formerly known-broken titles (DSP-synth saturation class): fixed by
 	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
@@ -2715,6 +2725,15 @@ test/test_m68k_prefetch: test/test_m68k_prefetch.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_m68k_prefetch.c -ldl
 
+
+# MMULT matrix-address counter regression (#1043).
+test/test_mmult: test/test_mmult.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) -o $@ $< -ldl
+
+# TOM hardware readback regression (#1044, #1045).
+test/test_tom_readback: test/test_tom_readback.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) -o $@ $< -ldl
+
 test/test_gpu_ops: test/test_gpu_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_gpu_ops.c -ldl
@@ -2770,6 +2789,10 @@ test/test_audio_rate: test/test_audio_rate.c
 test/tools/i2s_lag_probe: test/tools/i2s_lag_probe.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/i2s_lag_probe.c test/harness/harness.c -ldl -lm
+
+test/tools/kart_line_probe: test/tools/kart_line_probe.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/kart_line_probe.c test/harness/harness.c -ldl -lm
 
 test/test_memtrack: test/test_memtrack.c src/core/memtrack.c src/core/memtrack.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -3710,11 +3733,3 @@ jaguar-demos-baseline:
 
 print-%:
 	@echo '$*=$($*)'
-
-# TOM hardware readback regression (#1044, #1045).
-test/test_tom_readback: test/test_tom_readback.c test/test_framework.h
-	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) -o $@ $< -ldl
-
-# MMULT matrix-address counter regression (#1043).
-test/test_mmult: test/test_mmult.c test/test_framework.h
-	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) -o $@ $< -ldl

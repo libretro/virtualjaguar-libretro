@@ -142,6 +142,11 @@ std::vector<size_t> viewAchievements(const std::vector<AchRow>& rows, AchFilter 
 const char* achFilterLabel(AchFilter f);
 const char* achSortLabel(AchSort s);
 const char* achTypeLabel(int type);   // "" for a standard achievement
+// "2026-10-16 21:04": `t` (seconds since the epoch) in the local time zone; "" when it cannot be converted.
+std::string clockText(long long t);
+// The achievement's status line, as the desktop list shows it under the title: earned how and when, or how far along, then
+// rarity and the tags ("Unlocked in hardcore  2026-10-16 21:04  12.5% of players [Missable]", "Locked  Progress: 5/10").
+std::string achStatusLine(const AchRow& r);
 
 // Case-insensitive substring test (ASCII).
 bool containsNoCase(const std::string& hay, const std::string& needle);

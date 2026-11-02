@@ -43,6 +43,7 @@
       SubtractEventTimes;
       GetTimeToNextEvent;
       HandleNextEvent;
+      SetCallbackTime;
       EventStateSave;
       EventStateLoad;
       TOM*;

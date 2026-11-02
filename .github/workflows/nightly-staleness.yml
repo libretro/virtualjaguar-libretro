@@ -33,7 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Hours develop may sit ahead of the nightly before this is a fault.
-      # A normal run takes well under an hour; 24 absorbs a transient runner
+      # release.yml waits 10 minutes (debounce) before building a develop push,
+      # then a normal run takes well under an hour; 24 absorbs a transient runner
       # outage and a re-run without crying wolf.
       GRACE_HOURS: 24
     steps:

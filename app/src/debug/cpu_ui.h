@@ -11,6 +11,9 @@
 // Wiring (App owns the call site):  debug.addProvider({registerCpuTools, drawCpuTools});
 #pragma once
 
+#include <cstddef>
+#include <string>
+
 namespace vj {
 
 class DebugSession;
@@ -21,6 +24,15 @@ void registerCpuTools(DebugSession& s);
 
 // Draws the window if it is open.  Also runs while the machine is halted (inside App::haltedFrame()).
 void drawCpuTools(DebugSession& s);
+
+// Test hooks: whether the tab being looked at has registers, and how many listing rows it holds.
+namespace cpu_test {
+bool haveRegs();
+size_t rowCount();
+void toggleBreakpoint(DebugSession& s, int target, unsigned addr);   // the action behind every breakpoint-adding control
+const std::string& status();                                         // the window's status line, and whether it is an error
+bool statusIsError();
+}  // namespace cpu_test
 
 // Open state, for menu code that wants it directly.
 bool& cpuWindowOpen();

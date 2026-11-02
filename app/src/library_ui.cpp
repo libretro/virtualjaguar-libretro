@@ -294,11 +294,12 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
         ImGui::SetTooltip("Downloads the latest game lists from libretro-database.\n"
                           "Cartridges: %s\nCD images: %s",
                           svc.cartDatInfo().c_str(), svc.discDatInfo().c_str());
-    flow.next(ui::Flow::checkW("Download box art"));
+    flow.next(ui::Flow::checkW("Download art and cheat packs"));
     bool art = svc.downloadArt;
-    if (ImGui::Checkbox("Download box art", &art)) svc.setDownloadArt(art);
+    if (ImGui::Checkbox("Download art and cheat packs", &art)) svc.setDownloadArt(art);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Fetches missing covers from thumbnails.libretro.com, once per title.\n"
+        ImGui::SetTooltip("Fetches missing covers from thumbnails.libretro.com, once per title, and lets the Cheats window\n"
+                          "look for community cheat packs on this project's website.\n"
                           "Everything already downloaded keeps working offline.");
     flow.next(ui::Flow::buttonW("Favorites & recents..."));
     if (ImGui::Button("Favorites & recents...")) ImGui::OpenPopup("##listopts");
@@ -1098,10 +1099,7 @@ void drawEmptyHome(App& app, LibraryService& svc) {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(f * 1.6f, f * 0.55f));
     if (ImGui::Button("Add folder...")) svc.addFolderDialog(app.window());
     ImGui::SameLine();
-    if (ImGui::Button("BIOS & boot...")) {
-        app.showSettings = true;
-        app.devSelectTab = "BIOS";
-    }
+    if (ImGui::Button("BIOS & boot...")) app.openBiosSettings();
     ImGui::PopStyleVar();
     ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap + h1 + gap + btnH + gap * 1.5f));
     ImGui::PushTextWrapPos(x0 + bw);

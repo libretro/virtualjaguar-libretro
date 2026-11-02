@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <thread>
 #include <vector>
@@ -44,6 +45,43 @@ int main() {
         CHECK(a.ratio() != 1.0, "update(true): the single-thread loop's controller still nudges it (%.6f)", a.ratio());
         a.clear();
         CHECK(a.ratio() == 1.0, "clear() resets the ratio");
+
+        // Mode B (#1038): the stream plays at the base ratio, update(true) trims within +/-0.5% of it, update(false)
+        // leaves it alone, and leaving mode B puts the stream itself (not only the cached value) back at 1.
+        const double base = 60.0 / 60.05445;
+        a.setBaseRatio(base);
+        CHECK(a.ratio() == base && a.baseRatio() == base, "setBaseRatio applies the base (%.6f)", a.ratio());
+        CHECK(SDL_GetAudioStreamFrequencyRatio(a.sdlStream()) == (float)base, "...to the SDL stream itself (%.6f)",
+              (double)SDL_GetAudioStreamFrequencyRatio(a.sdlStream()));
+        for (int i = 0; i < 400; i++) {
+            if (a.queuedMs() < 5.0f) a.push(batch.data(), 800);
+            a.update(true);
+            const double r = a.ratio();
+            CHECK(r >= base * 0.995 - 1e-12 && r <= base * 1.005 + 1e-12, "update(true) stays within 0.5%% of the base (%.6f)", r);
+            if (r < base * 0.995 - 1e-12 || r > base * 1.005 + 1e-12) break;
+        }
+        CHECK(SDL_GetAudioStreamFrequencyRatio(a.sdlStream()) == (float)a.ratio(), "the stream follows the trimmed ratio");
+        a.update(false);
+        const double held = a.ratio();
+        a.update(false);
+        CHECK(a.ratio() == held, "update(false) leaves the ratio alone in mode B too");
+        a.clear();
+        CHECK(a.ratio() == base && SDL_GetAudioStreamFrequencyRatio(a.sdlStream()) == (float)base,
+              "clear() goes back to the base, not to 1 (%.6f)", a.ratio());
+        a.setBaseRatio(1.0);
+        CHECK(a.ratio() == 1.0 && SDL_GetAudioStreamFrequencyRatio(a.sdlStream()) == 1.0f,
+              "leaving mode B restores 1.0 on the stream (%.6f)", (double)SDL_GetAudioStreamFrequencyRatio(a.sdlStream()));
+        a.update(false);
+        CHECK(SDL_GetAudioStreamFrequencyRatio(a.sdlStream()) == 1.0f, "and mode A's update(false) keeps it there");
+
+        // The controller's step is pure: base 1 is the old single-thread rule, any base scales it.
+        CHECK(vj::AudioOut::nextRatio(1.0, 1.0, 64.0f, 64.0f) == 1.0, "on target: no nudge");
+        double r = 1.0;
+        for (int i = 0; i < 1000; i++) r = vj::AudioOut::nextRatio(r, base, 1000.0f, 64.0f);
+        CHECK(std::fabs(r - base * 1.005) < 1e-9, "overfull: settles at base * 1.005 (%.6f)", r);
+        for (int i = 0; i < 1000; i++) r = vj::AudioOut::nextRatio(r, base, 0.0f, 64.0f);
+        CHECK(std::fabs(r - base * 0.995) < 1e-9, "empty: settles at base * 0.995 (%.6f)", r);
+
         a.setPaused(true);
         CHECK(a.paused(), "paused() reports the pause");
         bool active = true, underrun = false;

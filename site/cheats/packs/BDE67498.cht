@@ -1,0 +1,43 @@
+# Community cheats for Cybermorph (1993); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_cybermorph.c
+# Source SHA256: 9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58
+# Message: This version fo cybermorph IS supported.
+# Omitted: "Always Use Superweapon: 0" (scripts/cheat_cybermorph.c): no writes activated (check ROM revision/hash)
+# Omitted: "Select Cluster: 0" (scripts/cheat_cybermorph.c): no writes activated (check ROM revision/hash)
+# Omitted: "Select Cluster: 1" (scripts/cheat_cybermorph.c): no writes activated (check ROM revision/hash)
+# Omitted: "Select Cluster: 2" (scripts/cheat_cybermorph.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Select Cluster: 3" (scripts/cheat_cybermorph.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Select Cluster: 4" (scripts/cheat_cybermorph.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Select Cluster: 5" (scripts/cheat_cybermorph.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Select Cluster: 6" (scripts/cheat_cybermorph.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Overlap: cheat3 and cheat4 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat5 write the same bytes; later wins (app order).
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "BDE67498"
+cheats = 6
+
+cheat0_desc = "Infinite Lives"
+cheat0_code = "0009AFAA:05"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Health"
+cheat1_code = "0009AF78:0C80"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Ammo"
+cheat2_code = "0009AF99:05+0009AF9D:05+0009AF9F:05+0009AFA1:05+0009AFA3:05+0009AFA5:05"
+cheat2_enable = false
+
+cheat3_desc = "Always Use Superweapon: 1"
+cheat3_code = "0009AF98:08"
+cheat3_enable = false
+
+cheat4_desc = "Always Use Superweapon: 2"
+cheat4_code = "0009AF98:09"
+cheat4_enable = false
+
+cheat5_desc = "Always Use Superweapon: 3"
+cheat5_code = "0009AF98:0A"
+cheat5_enable = false
