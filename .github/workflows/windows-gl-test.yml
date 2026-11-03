@@ -14,6 +14,8 @@ on:
       - 'app/tests/gl_context*'
       - 'app/cmake/VJShaders.cmake'
       - 'app/cmake/VJPlatformTests.cmake'
+      - 'app/packaging/librashader/**'
+      - '.github/workflows/librashader.yml'
       - '.github/workflows/windows-gl-test.yml'
   workflow_dispatch:
 concurrency:
@@ -22,7 +24,18 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  # The shader runtime the test build ships, built from the pinned source (#1153); the upstream
+  # DLL it replaced did not load on a stock Windows.  Cached by pin, so this is seconds once built.
+  librashader:
+    name: librashader runtime
+    permissions:
+      contents: read
+    uses: ./.github/workflows/librashader.yml
+    with:
+      targets: '["aarch64-pc-windows-msvc"]'
+
   software-gl:
+    needs: [librashader]
     runs-on: windows-11-arm
     timeout-minutes: 45
     defaults:
@@ -30,6 +43,11 @@ jobs:
         shell: 'msys2 {0}'
     steps:
       - uses: actions/checkout@v7
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-aarch64-pc-windows-msvc
+          path: librashader
       - uses: msys2/setup-msys2@v2
         with:
           msystem: CLANGARM64
@@ -44,9 +62,11 @@ jobs:
       - name: Configure and build the ARM64 test candidate
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_WERROR=ON -DVJ_BUILD_CHANNEL=nightly
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_WERROR=ON -DVJ_BUILD_CHANNEL=nightly \
+            -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$(cygpath -m "$PWD")/librashader/librashader.dll"
           cmake --build build --target virtualjaguar vj_gl_context_test vj_gl_context_integration vj_software_gl_test -j4
           build/vj_gl_context_test.exe
           build/vj_software_gl_test.exe

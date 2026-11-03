@@ -302,13 +302,17 @@ a failure.
   or folder; a path that does not exist means "missing"), next to the executable
   (and `../Frameworks` in a macOS bundle), in `<data folder>/librashader/`, and
   then the system library path (Homebrew's `/opt/homebrew/lib` included).
-  The release packages (macOS universal, Windows, AppImage, `.deb`) ship it:
-  Windows and Apple-silicon dev builds download upstream's pinned prebuilt
-  (`-DVJ_APP_FETCH_LIBRASHADER=OFF` for offline builds), while the **macOS (both
-  architectures) and Linux libraries are built from source in CI**
-  ([`librashader.yml`](../.github/workflows/librashader.yml), pinned commit and
-  archive SHA-256 in `app/packaging/librashader/pin.env`), because upstream's
-  Intel-macOS zip holds an arm64 dylib and it publishes no Linux binary. Any
+  The release packages (macOS universal, Windows zip / installer / Store MSIX,
+  AppImage, `.deb`) ship it, **every one built from source in CI** from the one pin
+  in `app/packaging/librashader/pin.env` ([`librashader.yml`](../.github/workflows/librashader.yml);
+  commit and archive SHA-256 verified): upstream's Intel-macOS zip holds an arm64
+  dylib, it publishes no Linux binary, and its Windows DLLs import `D3DX9_43.dll`
+  (the June 2010 DirectX redistributable) and the VC++ redistributable, so they do
+  not load on a stock Windows (#1153). Apple-silicon dev builds still download
+  upstream's pinned prebuilt by default (`-DVJ_APP_FETCH_LIBRASHADER=OFF` for
+  offline builds); on Windows that download is an explicit opt-in and a plain dev
+  build bundles no runtime (see
+  [packaging/README.md](packaging/README.md#shader-runtime-librashader)). Any
   build can be given a library it built itself with `-DVJ_LIBRASHADER_LIB=<file>`;
   it is copied beside the executable and installed by `cmake --install`.
   When no library can be used, **Settings > Video > Shader** says why: *not
@@ -392,7 +396,12 @@ the system library path, or point `VJ_LIBRASHADER` at the file.
   ```
 
   This is exactly what CI runs (`cargo xtask build --profile optimized --target <triple> -- --locked`
-  inside upstream's tree). Upstream's `README.md` documents the same command.
+  inside upstream's tree; on Windows with `--no-default-features --features runtime-opengl` and a
+  static CRT, so the DLL needs no redistributable). Upstream's `README.md` documents the same command.
+- **Windows.** Use the `*-pc-windows-msvc` triples (rustup + Visual Studio's C++ tools, from Git Bash
+  or an MSYS2 shell), or take the `librashader-x86_64-pc-windows-msvc` / `-aarch64-pc-windows-msvc`
+  artifact of any recent CI run; `app/packaging/windows/check-librashader-dll.py <dll> --arch x64|arm64`
+  tells whether a DLL will load on a stock Windows (imports, exports, ABI).
 - **macOS.** The release `.app` already includes a universal library. For a source
   build on Apple silicon the default configure downloads upstream's arm64 library;
   on an Intel Mac, or to avoid the download, build it as above with
@@ -404,7 +413,10 @@ the system library path, or point `VJ_LIBRASHADER` at the file.
 `vj_shader_tests` (CTest `shaders_unit`, `shaders_bundled`, `shaders_library`, `shaders_gl`) covers
 the pure logic and the missing-library fallback anywhere; the other two need the
 library (and a display, for the GL one) and report **skipped**, not passed,
-without them. Point `VJ_LIBRASHADER` at the library, and optionally
+without them, printing the reason (what was probed, whether it was missing or
+failed to load) on stdout and stderr. `VJ_REQUIRE_LIBRASHADER=1` turns a skip of
+`shaders_library` into a failure; every packaging leg, Windows included, runs it
+that way. Point `VJ_LIBRASHADER` at the library, and optionally
 `VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
 
 ## Game library
