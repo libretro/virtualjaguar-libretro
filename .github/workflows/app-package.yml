@@ -546,6 +546,7 @@ jobs:
           # The shader runtime in the zip: right CPU, Windows-only imports, loads with ABI 2, and the
           # app's own lookup (beside the executable, VJ_LIBRASHADER unset) finds it (#1153).
           bash app/packaging/windows/check-librashader.sh "$t/VirtualJaguar" "$ARCH" build/vj_shader_tests.exe
+          ls -l out/ | sed 's/^/package: /'
 
       - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
         run: |
@@ -557,6 +558,8 @@ jobs:
           test -f /c/vjtest/virtualjaguar.exe
           test ! -f /c/vjtest/portable.txt || { echo "::error::installer must not ship portable.txt"; exit 1; }
           /c/vjtest/virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          bash app/packaging/check-payload.sh build /c/vjtest virtualjaguar.exe
+          du -sk /c/vjtest | sed 's/^/installed tree KiB: /'
           bash app/packaging/windows/check-librashader.sh /c/vjtest "$ARCH" build/vj_shader_tests.exe
           /c/vjtest/unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           sleep 5

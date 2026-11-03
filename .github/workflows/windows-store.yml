@@ -108,11 +108,11 @@ jobs:
           cmake --build build-store -j4
           cmake --install build-store --prefix "$PWD/stage-store"
           stage-store/bin/virtualjaguar.exe --headless --frames 300 --expect-hash f4c30ea3 test/roms/yarc.j64
+          python app/packaging/windows/stage-software-gl.py stage-store
           bash app/packaging/check-payload.sh build-store stage-store/bin virtualjaguar.exe
           # The runtime in the install tree: right CPU, Windows-only imports, exports, and it LOADS
           # here (this leg's own architecture) with ABI 2 (#1153).
           python app/packaging/windows/check-librashader-dll.py stage-store/bin/librashader.dll --arch "$ARCH" --require-load
-          python app/packaging/windows/stage-software-gl.py stage-store
       - name: Pack and validate Store MSIX with the Windows SDK
         shell: pwsh
         run: |
