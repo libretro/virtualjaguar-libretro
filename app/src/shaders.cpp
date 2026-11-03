@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -523,6 +524,10 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
                        " does not provide (macOS stops at 4.1). librashader: " + why;
         }
         setNotice("Shader " + pathStem(preset) + " failed (" + brief + "); showing the plain picture");
+        // One line on stderr, the only record a CI run keeps (gl-qualification.yml greps it): "refused"
+        // is the known GL-version limit (allowlisted per OS), "failed" is a broken preset or runtime.
+        std::fprintf(stderr, "[shader] %s %s: %s\n", preset.c_str(),
+                     why.find("GL_ARB_arrays_of_arrays") != std::string::npos ? "refused" : "failed", lastErr_.c_str());
         return 0u;
     };
 
@@ -552,6 +557,8 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
             return fail(why.empty() ? "could not build the filter chain" : why);
         }
         dirty_ = false;
+        std::fprintf(stderr, "[shader] %s built: GLSL %u on OpenGL %s\n", preset.c_str(), glsl_,
+                     glVer_.empty() ? "?" : glVer_.c_str());
     }
 
     if (!I.outTex || I.outW != f.outW || I.outH != f.outH) {

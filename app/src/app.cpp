@@ -317,7 +317,7 @@ void App::saveConfig() {
     cfg.setBool("video.vsync", vsync);
     if (pacingFromCli_ < 0 || pacingDisplay != (pacingFromCli_ == 1))   // (--pacing is for this run only)
         cfg.set("video.pacing", pacingDisplay ? "display" : "jaguar");
-    video.shader.saveSettings(cfg);
+    if (!shaderFromCli_) video.shader.saveSettings(cfg);   // (--shader is for this run only)
     cfg.setFloat("audio.volume", volume);
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
@@ -2533,6 +2533,22 @@ int App::run(const CliArgs& a) {
         applyThemeChoice(a.theme);
     }
     loadConfig();
+    // --shader PRESET|off: this run's preset, checked now (a missing or malformed file is a usage error, not a
+    // plain picture with a toast), never written back to config.ini.  CI's GL qualification drives every bundled
+    // preset through this (.github/workflows/gl-qualification.yml).
+    if (!a.shader.empty()) {
+        shaderFromCli_ = true;
+        if (a.shader == "off") {
+            video.shader.enabled = false;
+        } else {
+            std::string why;
+            if (!video.shader.usePreset(a.shader, why)) {
+                std::fprintf(stderr, "--shader %s: %s\n", a.shader.c_str(), why.c_str());
+                return 2;
+            }
+            video.shader.enabled = true;
+        }
+    }
     // The emulation thread (#967) is decided once per run: switching it live would move the core between threads.
     // Headless runs stay inline unless asked (the smoke tests' hashes are inline hashes), whatever the setting says.
     emuThreadThisRun_ = a.emuThread >= 0 ? a.emuThread == 1 : (!a.headless && emuThreadWanted());

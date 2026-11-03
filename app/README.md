@@ -341,6 +341,14 @@ a failure.
   CRT-Hyllian and 13 others in the bundle); the list greys them out and says why. Details:
   [packaging/README.md](packaging/README.md#macos-notes).
 - **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
+- **Command line.** `--shader PRESET.slangp` runs this one run through that preset and
+  `--shader off` through none; neither is saved (the saved choice is untouched, like `--theme`).
+  A missing or malformed preset is a usage error (exit 2). Every run logs one line per chain
+  on stderr, `[shader] <preset> built: GLSL 410 on OpenGL 4.1`, or `... refused: ...` (the
+  OpenGL-version limit above) or `... failed: ...` (librashader's message); the app still
+  shows the plain picture. CI's [GL qualification](../.github/workflows/gl-qualification.yml)
+  drives every bundled preset through `--shader` and `--screenshot` on Linux, Windows and macOS
+  and reads those lines ([docs/agent/testing.md](../docs/agent/testing.md), "GL qualification").
 
 ### Getting the shader runtime
 
@@ -385,6 +393,8 @@ the pure logic and the missing-library fallback anywhere; the other two need the
 library (and a display, for the GL one) and report **skipped**, not passed,
 without them. Point `VJ_LIBRASHADER` at the library, and optionally
 `VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
+The per-PR builds exclude `shaders_gl` (`-E shaders_gl`: no display); the GL qualification
+workflow runs it on a real context on every desktop OS, where a skip is a failure.
 
 ## Game library
 

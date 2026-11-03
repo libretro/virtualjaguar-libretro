@@ -19,6 +19,7 @@ static void usage(const char* argv0) {
         "  --fullscreen          start in fullscreen\n"
         "  --tv                  start with TV mode on (when the TV mode setting is not Off; not remembered)\n"
         "  --theme system|dark|light|custom:NAME   colour theme for this run (not saved; Settings > Interface > Appearance sets it)\n"
+        "  --shader PRESET|off   run the picture through this .slangp for this run, or through none (not saved; Settings > Video > Shader)\n"
         "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
         "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
         "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
@@ -123,6 +124,7 @@ int main(int argc, char** argv) {
                 return 2;
             }
         }
+        else if (!std::strcmp(s, "--shader")) a.shader = need(s);
         else if (!std::strcmp(s, "--no-content")) a.noContent = true;
         else if (!std::strcmp(s, "--boot-bios")) {
             a.bootBios = need(s);
