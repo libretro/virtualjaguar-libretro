@@ -8,6 +8,10 @@ bindir = pathlib.Path(sys.argv[1]) / 'bin'
 target = bindir / 'software-opengl'
 if target.exists():
     raise SystemExit('Choose a fresh install prefix: software OpenGL is already staged')
+# Snapshot the app tree BEFORE the fallback directory exists, so the copy below can never see
+# (and recurse into) software-opengl itself.  The v3.11.0 packages carried a
+# software-opengl/software-opengl/ duplicate: the old skip-by-path-equality did not match.
+app_entries = sorted(bindir.iterdir())
 target.mkdir()
 objdump = shutil.which('llvm-objdump') or shutil.which('objdump')
 if not objdump:
@@ -43,11 +47,12 @@ for owner in sorted(owners):
 (target / 'PACKAGES.txt').write_text(subprocess.check_output(['pacman', '-Q', *sorted(owners)], text=True))
 # WGL/GDI must find the Mesa frontend by its standard name next to the
 # executable. Keep a separate full app copy so normal graphics stays clean.
-for path in list(bindir.iterdir()):
-    if path == target:
-        continue
+for path in app_entries:
     if path.is_dir():
         shutil.copytree(path, target / path.name, dirs_exist_ok=True)
     else:
         shutil.copy2(path, target / path.name)
-
+# Fail loudly rather than ship a recursive copy.
+nested = [p for p in target.rglob('*') if p.name.lower() == 'software-opengl']
+if nested:
+    raise SystemExit('software-opengl staging recursed into itself: ' + ', '.join(map(str, nested)))
