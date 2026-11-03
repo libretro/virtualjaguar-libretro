@@ -161,7 +161,7 @@ jobs:
             python3 -I "$QUALIFY" --os linux --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
               --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 2 --timeout 240 \
               --expect-renderer 'llvmpipe' \
-              --refused-allowlist "$LISTS/refused-linux.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
+              --refused-allowlist "$LISTS/refused-linux.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
               --goldens app/test/golden/gl/linux --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: shaders_gl verdict
@@ -374,7 +374,7 @@ jobs:
           python -I "$QUALIFY" --os windows --exe stage/bin/virtualjaguar.exe --shaders stage/bin/shaders \
             --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 1 --timeout 150 \
             --expect-renderer 'llvmpipe|D3D12' ${expect_log[@]+"${expect_log[@]}"} \
-            --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
+            --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: Automatic Mesa fallback verdict
@@ -448,7 +448,7 @@ jobs:
           python3 -I "$QUALIFY" --os macos --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
             --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 2 --timeout 240 --low-dpi \
             --expect-renderer 'Apple' \
-            --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
+            --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: shaders_gl verdict

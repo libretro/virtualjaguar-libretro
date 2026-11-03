@@ -409,7 +409,9 @@ candidates into the artifact.
 - `renderer ... does not match` → the leg landed on the wrong driver (e.g. Windows picked WARP
   instead of llvmpipe/d3d12; Linux lost `LIBGL_ALWAYS_SOFTWARE`).
 - `shader failed: ...` → librashader's compile/link message; the preset or the runtime pin broke.
-  One preset = that preset; all presets = the chain/loader (look at `shaders_gl.txt` too).
+  One preset = that preset; all presets = the chain/loader (look at `shaders_gl.txt` too). Presets
+  the bundled librashader rejects on every GL live in `known-broken.txt` with the reason (they must
+  keep failing: one that starts building is reported so the list shrinks).
 - `refused and not in the allowlist` → a preset newly needs a GL feature the leg lacks: fix it or,
   if genuinely platform-limited, add it to `refused-<os>.txt` with the reason.
 - `no \`[shader] ... built\` line` → the chain never ran: the game had not drawn by frame 20 or the

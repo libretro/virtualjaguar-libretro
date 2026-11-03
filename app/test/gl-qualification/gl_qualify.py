@@ -11,7 +11,9 @@ the window:
     and every extra --expect-log pattern is in the log;
   * the PNG exists, decodes and is not black;
   * the `[shader] <preset> built|refused|failed` line (shaders.cpp) says the chain was built,
-    or the preset is in the leg's refused allowlist (macOS OpenGL 4.1 and arrays of arrays);
+    or the preset is in the leg's refused allowlist (macOS OpenGL 4.1 and arrays of arrays),
+    or in known-broken.txt (presets the bundled librashader rejects on every GL; a listed
+    preset that starts building fails too, so that list can only shrink);
   * the picture differs from the plain --shader off capture, unless the preset is listed in
     identical-to-plain.txt (nearest-neighbour presets at integer scale draw the same pixels).
 
@@ -270,7 +272,7 @@ def analyse_png(res, off_png, identical_ok, args):
     return img
 
 
-def judge_shader(res, refused_ok):
+def judge_shader(res, refused_ok, known_broken=frozenset()):
     """The `[shader]` line decides whether the chain really ran."""
     if res["preset"] == "off":
         if res["shader"]:
@@ -280,8 +282,12 @@ def judge_shader(res, refused_ok):
     whats = [s["what"] for s in res["shader"]]
     if "failed" in whats:
         d = next(s for s in res["shader"] if s["what"] == "failed")
-        res["errors"].append("shader failed: %s" % d["detail"])
-        res["verdict"] = "failed"
+        if res["preset"] in known_broken:
+            res["verdict"] = "known-broken"
+            res["notes"].append("fails to build (known-broken.txt): %s" % d["detail"])
+        else:
+            res["errors"].append("shader failed: %s" % d["detail"])
+            res["verdict"] = "failed"
     elif "refused" in whats:
         d = next(s for s in res["shader"] if s["what"] == "refused")
         if res["preset"] in refused_ok:
@@ -292,6 +298,8 @@ def judge_shader(res, refused_ok):
             res["verdict"] = "refused"
     elif "built" in whats:
         res["verdict"] = "built"
+        if res["preset"] in known_broken:
+            res["errors"].append("listed in known-broken.txt but it built: drop it from that list")
     else:
         res["errors"].append("no `[shader] ... built` line: the chain never ran (picture not rendered by --screenshot-frame?)")
         res["verdict"] = "no-chain"
@@ -316,6 +324,7 @@ def main():
     ap.add_argument("--expect-renderer", default="", help="regex the GL renderer string must match")
     ap.add_argument("--expect-log", action="append", default=[], help="regex that must appear in each launch's log (repeatable)")
     ap.add_argument("--refused-allowlist", default="", help="presets this leg may refuse (one relative path per line)")
+    ap.add_argument("--known-broken", default="", help="presets that must FAIL to build on every leg (librashader rejects them); one that builds is an error")
     ap.add_argument("--identical-ok", default="", help="presets allowed to draw the same pixels as the plain picture")
     ap.add_argument("--preset-set", choices=["all", "smoke"], default="all")
     ap.add_argument("--only", action="append", default=[], help="run only these presets (relative paths; repeatable)")
@@ -347,12 +356,13 @@ def main():
         presets = [p for p in SMOKE_PRESETS if p in set(presets)]
     refused_ok = read_list(args.refused_allowlist)
     identical_ok = read_list(args.identical_ok)
+    known_broken = read_list(args.known_broken)
 
     print("gl_qualify: %s, %d presets, frame %d, %d job(s), timeout %d s" % (args.os, len(presets), args.frame, args.jobs, args.timeout), flush=True)
 
     # The plain picture first: everything else is compared with it.
     off = launch(args, "off", "off", args.out)
-    judge_shader(off, refused_ok)
+    judge_shader(off, refused_ok, known_broken)
     off_img = analyse_png(off, None, identical_ok, args)
     print("  off: exit %s, renderer `%s`, %s s%s" % (off["exit"], off["renderer"], off["seconds"],
           ("  ERRORS: " + "; ".join(off["errors"])) if off["errors"] else ""), flush=True)
@@ -361,8 +371,9 @@ def main():
     if not off["errors"]:
         def one(rel):
             r = launch(args, rel, str(args.shaders / rel), args.out)
-            judge_shader(r, refused_ok)
-            analyse_png(r, off_img, identical_ok, args)
+            judge_shader(r, refused_ok, known_broken)
+            if r["verdict"] != "known-broken":
+                analyse_png(r, off_img, identical_ok, args)
             return r
         streak, aborted = 0, False
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
@@ -395,9 +406,11 @@ def main():
     failed = [r for r in results if r["errors"]]
     built = [r for r in results if r["verdict"] == "built" and not r["errors"]]
     refused = [r for r in results if r["verdict"] == "refused" and not r["errors"]]
+    broken = [r for r in results if r["verdict"] == "known-broken" and not r["errors"]]
     (args.out / "results.json").write_text(json.dumps({
         "os": args.os, "exe": str(args.exe), "frame": args.frame, "presets": len(presets),
-        "built": len(built), "refused": sorted(r["preset"] for r in refused), "failed": len(failed),
+        "built": len(built), "refused": sorted(r["preset"] for r in refused),
+        "known_broken": sorted(r["preset"] for r in broken), "failed": len(failed),
         "results": results}, indent=1), encoding="utf-8")
 
     md = ["## GL qualification: %s" % args.os, "",
@@ -407,10 +420,15 @@ def main():
           "| Presets | %d (%s) |" % (len(presets), args.preset_set if not args.only else "selected"),
           "| Built | %d |" % len(built),
           "| Refused (allowlisted) | %d |" % len(refused),
+          "| Known broken (allowlisted) | %d |" % len(broken),
           "| **Failed** | **%d** |" % len(failed), ""]
     if refused:
         md += ["<details><summary>Refused presets (allowlisted)</summary>", ""]
         md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in refused]
+        md += ["", "</details>", ""]
+    if broken:
+        md += ["<details><summary>Known-broken presets (allowlisted, fail to build everywhere)</summary>", ""]
+        md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in broken]
         md += ["", "</details>", ""]
     if failed:
         md += ["### Failures", ""]
@@ -425,10 +443,10 @@ def main():
                 md += ["", "```", *gl[-12:], "```", ""]
             except OSError:
                 md += [""]
-    notes = [r for r in results if r["notes"] and not r["errors"] and r["verdict"] == "built"]
+    notes = [r for r in results if [n for n in r["notes"] if n != "no golden"] and not r["errors"] and r["verdict"] == "built"]
     if notes:
         md += ["<details><summary>Notes (%d)</summary>" % len(notes), ""]
-        md += ["- `%s`: %s" % (r["preset"], "; ".join(r["notes"])) for r in notes]
+        md += ["- `%s`: %s" % (r["preset"], "; ".join(n for n in r["notes"] if n != "no golden")) for r in notes]
         md += ["", "</details>", ""]
     summary = "\n".join(md) + "\n"
     (args.out / "summary.md").write_text(summary, encoding="utf-8")
