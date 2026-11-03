@@ -22,11 +22,15 @@ case "$arch" in x64|arm64) ;; *) echo "arch must be x64 or arm64 (got '$arch')" 
 lib="$dir/librashader.dll"
 [ -f "$lib" ] && [ ! -L "$lib" ] || { echo "::error::$lib is missing (or a symlink)"; exit 1; }
 ls -la "$lib"
-# MSYS2's python is a native Windows build of this machine's CPU: the load check applies.
-python "$here/check-librashader-dll.py" "$(cygpath -m "$lib")" --arch "$arch" --require-load
+# MSYS2's python is a native Windows build of this machine's CPU: the load check applies.  Every
+# path it gets goes through cygpath: a caller may run with MSYS2_ARG_CONV_EXCL='*' (the installer
+# smoke test does, for Inno's /DIR= switch), and then a /d/a/... script path reaches python
+# unconverted and Windows reads it against the current drive (D:/d/a/...).
+checker="$(cygpath -m "$here/check-librashader-dll.py")"
+python "$checker" "$(cygpath -m "$lib")" --arch "$arch" --require-load
 if [ -f "$dir/software-opengl/librashader.dll" ]; then
   echo "--- software-opengl/ copy"
-  python "$here/check-librashader-dll.py" "$(cygpath -m "$dir/software-opengl/librashader.dll")" --arch "$arch" --require-load
+  python "$checker" "$(cygpath -m "$dir/software-opengl/librashader.dll")" --arch "$arch" --require-load
 fi
 # Run the test binary from the package's own folder, the way the app runs: its base path is
 # then the package's folder, which is where the probe looks first.
