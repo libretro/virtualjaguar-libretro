@@ -354,8 +354,12 @@ a failure.
 - **`--shader NAME|FILE|off`** sets the preset for one run without saving it: a name in the bundled
   folder (`vj-scanlines`, `vj-sharp-bilinear`), a preset of the slang-shaders subset by its own path
   (`crt/crt-easymode`, with or without `slang-shaders/` and `.slangp`), a `.slangp` file, or `off`.
-  An unknown name is an argument error (exit 2). The stderr line `[shader] this run: ...` names what
-  was used; the CI screenshots pass it so a build's default never moves their reference pictures.
+  An unknown name, or a file that is not a usable preset, is an argument error (exit 2). The stderr
+  line `[shader] this run: ...` names what was used, and once the chain is built or fails the app
+  prints one line `[shader] <preset path> built: GLSL 410 on OpenGL 4.1`, `... refused: ...` (the
+  GL-version limit: arrays of arrays on macOS) or `... failed: ...`, which the GL qualification
+  workflow (#1155) reads; it passes `--shader` on every launch so a build's default never moves
+  its reference pictures.
 - **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`, `shader.chosen` (the user
   moved away from the build default), `shader.hint_shown`.
 

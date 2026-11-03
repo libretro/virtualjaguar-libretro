@@ -248,7 +248,7 @@ void App::applySettingsFromConfig() {
         } else {
             std::string err;
             if (video.shader.usePreset(shaderCli_, err)) video.shader.enabled = true;
-            else std::fprintf(stderr, "[shader] --shader %s: %s\n", shaderCli_.c_str(), err.c_str());
+            else shaderCliErr_ = err;   // a usage error (run() exits 2), not a plain picture with a toast
         }
     }
     volume = cfg.getFloat("audio.volume", 1.0f);
@@ -2557,6 +2557,10 @@ int App::run(const CliArgs& a) {
         std::fprintf(stderr, "[shader] this run: %s (--shader)\n", shaderCli_.c_str());
     }
     loadConfig();
+    if (!shaderCliErr_.empty()) {   // the file resolved but is not a usable preset (checked by loadConfig)
+        std::fprintf(stderr, "--shader %s: %s\n", shaderCli_.c_str(), shaderCliErr_.c_str());
+        return 2;
+    }
     // The emulation thread (#967) is decided once per run: switching it live would move the core between threads.
     // Headless runs stay inline unless asked (the smoke tests' hashes are inline hashes), whatever the setting says.
     emuThreadThisRun_ = a.emuThread >= 0 ? a.emuThread == 1 : (!a.headless && emuThreadWanted());

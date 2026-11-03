@@ -313,6 +313,7 @@ public:
     unsigned toastCount_ = 0;         // toast() calls since start (the TV script counts them: osd_ is capped)
     bool tvFromCli_ = false;          // --tv was given: this run's TV state is not remembered (ui.tv_manual_on)
     std::string shaderCli_;           // --shader, resolved: "off" or a .slangp path; this run's choice, never written to config.ini
+    std::string shaderCliErr_;        // --shader named a file that is not a usable preset: run() exits 2 with this
     bool shaderHintShownThisRun_ = false;   // the one-time build-default filter hint (shader.hint_shown) was shown in this run
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
