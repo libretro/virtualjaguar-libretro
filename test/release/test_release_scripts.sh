@@ -60,10 +60,17 @@ else (cd "$T/rel" && shasum -a 256 --check --quiet SHA256SUMS.txt) && pass "SHA2
 check_lacks "SHA256SUMS.txt does not list itself" "$(cat "$T/rel/SHA256SUMS.txt")" " SHA256SUMS.txt"
 OUT=$(LANE=release bash "$S/stage.sh" "$A" "$T/rel-tag" "$T/status-tag" 2>&1)
 check_has "release .info kept verbatim" "$(cat "$T/rel-tag/virtualjaguar_libretro.info")" "$(sed -n 's/^display_version = //p' dist/info/virtualjaguar_libretro.info)"
+# Every build artifact carries the repository's dist/info/*.info: identical copies are fine.
+mkdir -p "$A/virtualjaguar_libretro-linux-x86_64/info" "$A/virtualjaguar_libretro-ios-arm64/info"
+cp dist/info/virtualjaguar_libretro.info "$A/virtualjaguar_libretro-linux-x86_64/info/"
+cp dist/info/virtualjaguar_libretro.info "$A/virtualjaguar_libretro-ios-arm64/info/"
+OUT=$(LANE=nightly GITHUB_SHA=0123456789abcdef bash "$S/stage.sh" "$A" "$T/rel-same" "$T/status-same" 2>&1); RC=$?
+check_rc "identical duplicates (the .info in every dist/) are accepted" "$RC" 0 "$OUT"
+check_has "... and the lane's .info still wins" "$(cat "$T/rel-same/virtualjaguar_libretro.info")" "-nightly-0123456"
 mk dup virtualjaguar_libretro-linux-x86_64.so
 OUT=$(LANE=nightly bash "$S/stage.sh" "$A" "$T/rel-dup" "$T/status-dup" 2>&1); RC=$?
-check_rc "duplicate asset name is an error" "$RC" 1 "$OUT"
-check_has "duplicate named" "$OUT" "two artifacts ship a file named virtualjaguar_libretro-linux-x86_64.so"
+check_rc "differing files under one asset name are an error" "$RC" 1 "$OUT"
+check_has "duplicate named" "$OUT" "two artifacts ship different files named virtualjaguar_libretro-linux-x86_64.so"
 command rm -rf "$A/dup"
 
 printf '\n== sign-sums.sh ==\n'
