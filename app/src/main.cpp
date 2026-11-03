@@ -19,6 +19,8 @@ static void usage(const char* argv0) {
         "  --fullscreen          start in fullscreen\n"
         "  --tv                  start with TV mode on (when the TV mode setting is not Off; not remembered)\n"
         "  --theme system|dark|light|custom:NAME   colour theme for this run (not saved; Settings > Interface > Appearance sets it)\n"
+        "  --shader NAME|FILE|off  shader preset for this run (not saved): a name in the bundled shaders folder\n"
+        "                        (vj-scanlines, slang-shaders/crt/crt-easymode), a .slangp file, or off\n"
         "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
         "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
         "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
@@ -116,6 +118,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--headless")) a.headless = true;
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
         else if (!std::strcmp(s, "--tv")) a.tv = true;
+        else if (!std::strcmp(s, "--shader")) a.shader = need(s);
         else if (!std::strcmp(s, "--theme")) {
             a.theme = need(s);
             if (a.theme != "system" && a.theme != "dark" && a.theme != "light" && a.theme.compare(0, 7, "custom:") != 0) {

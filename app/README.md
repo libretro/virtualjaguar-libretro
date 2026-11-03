@@ -340,7 +340,24 @@ a failure.
   4.60 elsewhere). macOS's OpenGL 4.1 cannot build presets with arrays of arrays (CRT-Geom,
   CRT-Hyllian and 13 others in the bundle); the list greys them out and says why. Details:
   [packaging/README.md](packaging/README.md#macos-notes).
-- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
+- **On by default.** A config that never chose a preset starts on the build default, the
+  first-party `vj-scanlines` (a mild CRT: one soft scanline per source line, brightness
+  compensated, RGB mask off; its sliders are under Preset parameters). `-DVJ_SHADER_DEFAULT=<file
+  in app/shaders/ | off>` picks it per build. Like the TV mode default, nothing is written to
+  `config.ini` until you change it (turn it off, pick another preset, or None), so a later build can
+  move the default for people who never chose; a stored choice always wins, and Settings > Reset of
+  the Video group returns to the build default. A config from 3.11 or earlier that never picked a
+  preset counts as never chose. When the runtime is missing or the default cannot compile on this GL,
+  the picture is drawn plain, one line goes to stderr, and Settings > Video > Shader says why; no
+  message is shown and the switch is not turned off, so a repaired install filters again. The first
+  time the default actually draws a frame a one-line hint says how to change it (`shader.hint_shown`).
+- **`--shader NAME|FILE|off`** sets the preset for one run without saving it: a name in the bundled
+  folder (`vj-scanlines`, `vj-sharp-bilinear`), a preset of the slang-shaders subset by its own path
+  (`crt/crt-easymode`, with or without `slang-shaders/` and `.slangp`), a `.slangp` file, or `off`.
+  An unknown name is an argument error (exit 2). The stderr line `[shader] this run: ...` names what
+  was used; the CI screenshots pass it so a build's default never moves their reference pictures.
+- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`, `shader.chosen` (the user
+  moved away from the build default), `shader.hint_shown`.
 
 ### Getting the shader runtime
 

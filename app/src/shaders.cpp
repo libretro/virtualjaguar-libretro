@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -157,10 +158,72 @@ const char* ShaderChain::libraryFileName() {
 #endif
 }
 
+namespace {
+std::string g_builtinDirOverride;   // tests
+
+bool isFile(const std::string& p) {
+    SDL_PathInfo pi;
+    return !p.empty() && SDL_GetPathInfo(p.c_str(), &pi) && pi.type == SDL_PATHTYPE_FILE;
+}
+}  // namespace
+
+std::string ShaderChain::builtinPresetDir() {
+    if (!g_builtinDirOverride.empty()) return g_builtinDirOverride;
+    const char* b = SDL_GetBasePath();
+    return b ? std::string(b) + "shaders/" : std::string();
+}
+
+void ShaderChain::setBuiltinPresetDir(const std::string& dir) {
+    g_builtinDirOverride = dir;
+    if (!g_builtinDirOverride.empty() && g_builtinDirOverride.back() != '/' && g_builtinDirOverride.back() != '\\')
+        g_builtinDirOverride += '/';
+}
+
+std::string ShaderChain::resolvePresetArg(const std::string& arg) {
+    if (arg.empty()) return "";
+    if (hasPresetExtension(arg) && isFile(arg)) return arg;
+    const std::string dir = builtinPresetDir();
+    if (dir.empty()) return "";
+    const char* const roots[] = {"", "slang-shaders/"};
+    for (const char* r : roots) {
+        std::string base = dir + r + arg;
+        if (hasPresetExtension(base) && isFile(base)) return base;
+        if (isFile(base + ".slangp")) return base + ".slangp";
+    }
+    return "";
+}
+
 void ShaderChain::loadSettings(const Config& cfg, const std::string& dataRoot) {
-    enabled = cfg.getBool("shader.enabled", false);
-    preset = cfg.get("shader.preset", "");
     folder = cfg.get("shader.folder", "");
+    // A stored choice: shader.chosen (written with the first change the user makes, 3.12+), or a
+    // preset path (3.11 and earlier wrote shader.enabled / shader.preset on every save, so an
+    // empty preset there is "never opened the picker", not a choice).  Anything else starts on
+    // the build default and stores nothing until the user moves away from it.
+    const std::string stored = cfg.get("shader.preset", "");
+    defaultApplied_ = !(cfg.getBool("shader.chosen", false) || !stored.empty());
+    if (!defaultApplied_) {
+        enabled = cfg.getBool("shader.enabled", false);
+        preset = stored;
+    } else if (buildDefault_.empty() || buildDefault_ == "off") {
+        enabled = false;
+        preset.clear();
+    } else {
+        preset = builtinPresetDir() + buildDefault_;
+        enabled = true;
+        if (!isFile(preset)) {
+            // The package is incomplete: say so once and draw plain; nothing is stored, so a
+            // repaired install picks the default up again.
+            std::fprintf(stderr, "[shader] the build default %s is not beside the executable (%s); shaders off\n",
+                         buildDefault_.c_str(), builtinPresetDir().c_str());
+            enabled = false;
+            preset.clear();
+        }
+    }
+    loadedEnabled_ = enabled;
+    loadedPreset_ = preset;
+    params_.clear();
+    failed_ = false;
+    dirty_ = true;
 
     // Where the library may live, most specific first.  (VJ_LIBRASHADER, handled
     // in probeLibrary, overrides all of this.)
@@ -183,12 +246,40 @@ void ShaderChain::loadSettings(const Config& cfg, const std::string& dataRoot) {
 }
 
 void ShaderChain::saveSettings(Config& cfg) const {
-    cfg.setBool("shader.enabled", enabled);
-    cfg.set("shader.preset", preset);
+    if (usingBuildDefault()) {
+        // Untouched build default: keep the file free of it (see usingBuildDefault()).  A 3.11
+        // config's shader.enabled=false / shader.preset= pair goes the same way.
+        cfg.erase("shader.enabled");
+        cfg.erase("shader.preset");
+        cfg.erase("shader.chosen");
+    } else {
+        cfg.setBool("shader.enabled", enabled);
+        cfg.set("shader.preset", preset);
+        if (defaultApplied_) cfg.setBool("shader.chosen", true);   // moved off the default: now a choice, even "none"
+    }
     cfg.set("shader.folder", folder);
 }
 
+void ShaderChain::reloadPreset() {
+    const std::string p = preset;
+    params_.clear();
+    if (p.empty()) {
+        clearPreset();
+        return;
+    }
+    std::string err;
+    if (!usePreset(p, err)) {   // leaves `preset` as it was; the first frame reports why
+        failed_ = false;
+        dirty_ = true;
+    }
+}
+
 void ShaderChain::setNotice(const std::string& s) { notice_ = s; }
+
+void ShaderChain::notify(const std::string& s) {
+    if (usingBuildDefault()) std::fprintf(stderr, "[shader] %s\n", s.c_str());
+    else setNotice(s);
+}
 
 bool ShaderChain::takeNotice(std::string& out) {
     if (notice_.empty()) return false;
@@ -488,7 +579,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
     (void)f;
     if (enabled && !preset.empty() && !noticedMissing_) {
         noticedMissing_ = true;
-        setNotice("Shaders are on but this build has no librashader support; showing the plain picture");
+        notify("Shaders are on but this build has no librashader support; showing the plain picture");
     }
     return 0;
 #else
@@ -496,7 +587,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
     if (!probeLibrary()) {
         if (!noticedMissing_) {
             noticedMissing_ = true;
-            setNotice(libStatus_ == LibraryStatus::LoadFailed
+            notify(libStatus_ == LibraryStatus::LoadFailed
                           ? "Shaders are on but the shader runtime failed to load (see Settings > Video > Shader); showing the plain picture"
                           : "Shaders are on but the shader runtime was not found; showing the plain picture");
         }
@@ -522,7 +613,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
                        (glVer_.empty() ? std::string("this system") : "OpenGL " + glVer_) +
                        " does not provide (macOS stops at 4.1). librashader: " + why;
         }
-        setNotice("Shader " + pathStem(preset) + " failed (" + brief + "); showing the plain picture");
+        notify("Shader " + pathStem(preset) + " failed (" + brief + "); showing the plain picture");
         return 0u;
     };
 
