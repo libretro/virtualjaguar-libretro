@@ -185,6 +185,8 @@ def launch(args, label, shader_arg, out_dir):
     shots.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
     data.mkdir(parents=True, exist_ok=True)
+    if args.seed_config:
+        shutil.copyfile(args.seed_config, data / "config.ini")
     png = shots / (safe_name(label) + ".png")
     log = logs / (safe_name(label) + ".log")
     cmd = [str(args.exe), "--data-dir", str(data), "--shader", shader_arg,
@@ -285,6 +287,12 @@ def judge_shader(res, refused_ok, known_broken=frozenset()):
         if res["preset"] in known_broken:
             res["verdict"] = "known-broken"
             res["notes"].append("fails to build (known-broken.txt): %s" % d["detail"])
+        elif res["preset"] in refused_ok:
+            # The leg's GL lacks something the preset needs (macOS 4.1: packHalf2x16 is GLSL 4.20);
+            # the app says "failed" with the compiler's text because only the arrays-of-arrays case
+            # has its own explanation.  Allowlisted per leg like a refusal.
+            res["verdict"] = "refused"
+            res["notes"].append("cannot build on this GL (allowlisted): %s" % d["detail"][:200])
         else:
             res["errors"].append("shader failed: %s" % d["detail"])
             res["verdict"] = "failed"
@@ -300,6 +308,8 @@ def judge_shader(res, refused_ok, known_broken=frozenset()):
         res["verdict"] = "built"
         if res["preset"] in known_broken:
             res["errors"].append("listed in known-broken.txt but it built: drop it from that list")
+        if res["preset"] in refused_ok:
+            res["errors"].append("listed in this leg's refused allowlist but it built: drop it from that list")
     else:
         res["errors"].append("no `[shader] ... built` line: the chain never ran (picture not rendered by --screenshot-frame?)")
         res["verdict"] = "no-chain"
@@ -323,7 +333,8 @@ def main():
     ap.add_argument("--extra-arg", action="append", default=[], help="another app argument (repeatable)")
     ap.add_argument("--expect-renderer", default="", help="regex the GL renderer string must match")
     ap.add_argument("--expect-log", action="append", default=[], help="regex that must appear in each launch's log (repeatable)")
-    ap.add_argument("--refused-allowlist", default="", help="presets this leg may refuse (one relative path per line)")
+    ap.add_argument("--refused-allowlist", default="", help="presets this leg's GL cannot build (refused, or failed to compile); one relative path per line")
+    ap.add_argument("--seed-config", default="", help="a config.ini copied into every launch's data folder first (window size, ...)")
     ap.add_argument("--known-broken", default="", help="presets that must FAIL to build on every leg (librashader rejects them); one that builds is an error")
     ap.add_argument("--identical-ok", default="", help="presets allowed to draw the same pixels as the plain picture")
     ap.add_argument("--preset-set", choices=["all", "smoke"], default="all")
@@ -340,6 +351,8 @@ def main():
     args.out = args.out.resolve()
     if args.content:
         args.content = args.content.resolve()
+    if args.seed_config and not pathlib.Path(args.seed_config).is_file():
+        sys.exit("gl_qualify: --seed-config %s is not a file" % args.seed_config)
     args.out.mkdir(parents=True, exist_ok=True)
     if not args.exe.is_file():
         sys.exit("gl_qualify: %s is not a file" % args.exe)

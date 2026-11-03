@@ -91,11 +91,14 @@ env:
   LISTS: app/test/gl-qualification
 
 jobs:
-  # Upstream publishes no Linux librashader: the Linux leg takes the from-source build
-  # (cached by commit + target, seconds on a hit).  macOS and Windows use the pinned prebuilts.
+  # The shader runtime, built from the pinned source (what the packages ship; cached by commit +
+  # target, seconds on a hit).  Its own artifact names: release.yml runs this workflow beside
+  # app-package.yml, which calls librashader.yml too, and two uploads of one name fail the run.
   librashader:
     name: librashader runtime
     uses: ./.github/workflows/librashader.yml
+    with:
+      artifact_suffix: '-glq'
 
   # ------------------------------------------------------------------------------------------
   linux:
@@ -109,7 +112,7 @@ jobs:
       - name: Get the librashader runtime (built from source)
         uses: actions/download-artifact@v8
         with:
-          name: librashader-x86_64-unknown-linux-gnu
+          name: librashader-x86_64-unknown-linux-gnu-glq
           path: librashader
 
       - name: Install build dependencies, Xvfb and Mesa
@@ -428,15 +431,27 @@ jobs:
   # ------------------------------------------------------------------------------------------
   macos:
     name: macOS arm64 (Apple OpenGL 4.1)
+    needs: [librashader]
     runs-on: macos-latest
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
 
+      # The from-source runtime the macOS package ships (app-package.yml), not upstream's prebuilt
+      # 0.12.0: the two parse presets differently (crt-black_crush-koko.slangp fails to parse on
+      # the prebuilt and parses on the pinned source), so the leg qualifies what users get.
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-aarch64-apple-darwin-glq
+          path: librashader
+
       - name: Configure, build and install
         run: |
           set -eu
-          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly
+          cat librashader/BUILD-INFO.txt
+          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly \
+            -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader.dylib"
           cmake --build build --config Release -j4 --target virtualjaguar vj_shader_tests vj_gl_context_integration
           cmake --install build --prefix "$PWD/stage"
           test -f stage/bin/librashader.dylib
@@ -464,9 +479,11 @@ jobs:
           set -eu
           # (${arr[@]+"${arr[@]}"}: an empty array under set -u is an error on macOS's bash 3.2)
           refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
+          # Apple's software renderer: ~75 s a launch at 960x760 (run 41571727219 managed 205 of 500 in
+          # 150 min at 2 jobs), so this leg runs 3 launches at once in a 480x360 window.
           python3 -I "$QUALIFY" --os macos --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 2 --timeout 240 --low-dpi \
-            --expect-renderer 'Apple' \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 3 --timeout 240 --low-dpi \
+            --seed-config "$LISTS/small-window.ini" --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 

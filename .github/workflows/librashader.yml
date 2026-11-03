@@ -25,6 +25,11 @@ name: librashader runtime
 
 on:
   workflow_call:
+    inputs:
+      artifact_suffix:
+        description: "Appended to every artifact name (librashader-<triple><suffix>): a second caller in the same run (gl-qualification.yml beside app-package.yml in release.yml) must not collide with the first"
+        type: string
+        default: ''
   workflow_dispatch:
 
 permissions:
@@ -155,7 +160,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: librashader-${{ matrix.target }}
+          name: librashader-${{ matrix.target }}${{ inputs.artifact_suffix }}
           path: dist/${{ matrix.target }}/*
           if-no-files-found: error
           retention-days: 14

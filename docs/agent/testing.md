@@ -394,8 +394,10 @@ OpenGL` / `Apple`); the PNG decodes and is not black; a `[shader] <preset> built
 `identical-to-plain.txt`. After 8 consecutive failed presets the loop stops (`--fail-fast`; the
 summary says how many were not run), so a leg with no working runtime fails in minutes. A
 `[shader] ... refused` line (macOS OpenGL 4.1 has no
-`GL_ARB_arrays_of_arrays`) passes only for presets in `refused-<os>.txt`, so the refused set can
-shrink but never grow. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
+`GL_ARB_arrays_of_arrays`), or a `... failed` line for a preset the leg's GL cannot compile
+(packHalf2x16 on macOS), passes only for presets in `refused-<os>.txt`, so that set can shrink but
+never grow. The macOS leg runs in a 480x360 window (`small-window.ini`, `--seed-config`): Apple's
+software renderer takes ~75 s a launch at 960x760. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
 compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
 candidates into the artifact.
 
