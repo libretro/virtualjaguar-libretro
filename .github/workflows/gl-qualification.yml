@@ -165,7 +165,7 @@ jobs:
               --goldens app/test/golden/gl/linux --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: shaders_gl verdict
-        if: steps.shaders_gl.outcome != 'success'
+        if: always() && steps.shaders_gl.outcome != 'success'
         run: |
           echo "::error::shaders_gl failed or skipped on a real llvmpipe context (glq/shaders_gl.txt in the artifact)"
           exit 1
@@ -378,13 +378,13 @@ jobs:
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: Automatic Mesa fallback verdict
-        if: steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes'
+        if: always() && steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes'
         run: |
           echo "::error::the automatic bundled-Mesa fallback did not boot, screenshot and exit cleanly (glq/automatic-*.txt, glq/timing.txt in the artifact)"
           exit 1
 
       - name: shaders_gl verdict
-        if: steps.shaders_gl.outcome != 'success'
+        if: always() && steps.shaders_gl.outcome != 'success'
         run: |
           echo "::error::shaders_gl failed or skipped on the bundled Mesa (glq/shaders_gl.txt in the artifact)"
           exit 1
@@ -452,7 +452,7 @@ jobs:
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: shaders_gl verdict
-        if: steps.shaders_gl.outcome != 'success'
+        if: always() && steps.shaders_gl.outcome != 'success'
         run: |
           echo "::error::shaders_gl failed or skipped on the Apple OpenGL context (glq/shaders_gl.txt in the artifact)"
           exit 1
