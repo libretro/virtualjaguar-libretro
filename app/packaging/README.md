@@ -47,7 +47,7 @@ rerun the PR's shared-package verifier; no duplicate package dispatch is needed.
 | `VirtualJaguar-X.Y.Z-windows-arm64.zip`, `...-windows-arm64-setup.exe` | the same two packages, native ARM64 (clang); the arm64 installer refuses to run on x64 Windows |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | built on Ubuntu 22.04 (glibc 2.35) |
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | installs to `/usr/lib/virtualjaguar`, symlink in `/usr/bin` |
-| `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` | single-file Flatpak bundle, app id `io.github.libretro.VirtualJaguar`; see Flatpak notes |
+| `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`, `...-linux-aarch64.flatpak` | single-file Flatpak bundles, app id `io.github.libretro.VirtualJaguar`; see Flatpak notes |
 
 The `.deb`'s internal `Version:` is Debian-legal (`3.9.1`, `3.9.1~rc1`, `3.9.1~nightly.<sha>`; the version is the core's); the
 file name keeps the contract name.
@@ -467,12 +467,17 @@ log prints `[emu] channel=...`.
   sibling `.bin` tracks, neither of which the file-chooser portal grants; it is read-only and limited to the home
   directory. Settings, saves and states live in `~/.var/app/io.github.libretro.VirtualJaguar/data/VirtualJaguar`
   (SDL's pref path follows `XDG_DATA_HOME`, which Flatpak sets).
-* **CI:** `app-package.yml` job `flatpak` uses `flatpak/flatpak-github-actions/flatpak-builder` v6.8 (pinned by commit) in
-  the Flathub image `freedesktop-25.08`, with the action's own artifact upload disabled (it would not be named
-  `app-package-*`); the bundle is smoke-tested (install, headless frame hash) and uploaded as `app-package-flatpak`.
-  x86_64 only for now; a native aarch64 leg on `ubuntu-24.04-arm` would be a matrix entry.
+* **CI:** `app-package.yml` job `flatpak` is a matrix over `x86_64` (`ubuntu-24.04`) and `aarch64` (`ubuntu-24.04-arm`,
+  #1156), each leg NATIVE inside the multi-arch Flathub image `freedesktop-25.08` with
+  `flatpak/flatpak-github-actions/flatpak-builder` v6.8 (pinned by commit) and the action's own artifact upload disabled
+  (it would not be named `app-package-*`). The job refuses a non-native host (`uname -m` must equal the leg's arch), so
+  the Rust librashader module is never built under QEMU user-mode emulation. Each bundle is smoke-tested (install,
+  `flatpak info` arch, headless frame hash, bundled data, `librashader.so` resolves and loads through ctypes with ABI 2)
+  and uploaded as `app-package-flatpak` (x86_64, the historical name) / `app-package-flatpak-aarch64`. Each leg writes its
+  wall time and whether the flatpak-builder cache was warm to the job summary. The release signing gate
+  (`scripts/release/verify.sh`) classifies both bundles as `flatpak` by extension (attestation only, no platform signature).
 * **Install:** `flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`
-  (the runtime comes from Flathub), then `flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`.
+  (the runtime comes from Flathub), then `flatpak install --user VirtualJaguar-X.Y.Z-linux-<x86_64|aarch64>.flatpak`.
 
 ## Package managers (templates; nothing is submitted by CI)
 

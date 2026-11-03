@@ -346,6 +346,7 @@ jobs:
               'app-package-windows-x64': 'Windows x64: portable .zip + -setup.exe',
               'app-package-windows-arm64': 'Windows ARM64: portable .zip + -setup.exe',
               'app-package-flatpak': 'Linux x86_64: Flatpak bundle (.flatpak)',
+              'app-package-flatpak-aarch64': 'Linux aarch64: Flatpak bundle (.flatpak)',
               'app-package-linux-x86_64': 'Linux x86_64: .AppImage + .deb',
               'app-package-linux-aarch64': 'Linux aarch64: .AppImage + .deb',
             };
