@@ -85,21 +85,97 @@ macOS (Developer ID + notarization, existing Apple Developer account):
 | `APPLE_NOTARY_ISSUER_ID` | the issuer UUID shown on that page |
 | `APPLE_NOTARY_KEY_P8_BASE64` | `base64 -i AuthKey_XXXX.p8` |
 
-Windows (SignPath Foundation, **dormant until the OSS application is approved**):
+Windows: Authenticode is [issue #1150](https://github.com/libretro/virtualjaguar-libretro/issues/1150)
+(Azure Artifact Signing). Until it lands the Windows app, installer, core DLLs and tools ship unsigned,
+the release gate expects exactly that (`EXPECT_WINDOWS=unsigned` in
+[`scripts/release/verify.sh`](../../scripts/release/verify.sh); flip it to `signed` in the same change
+that adds the signing step) and SmartScreen may warn. The `SIGNPATH_*` steps still in `app-package.yml`
+are an earlier stub that is not used.
+
+Release key material (issue #1151; one-time setup, commands below):
 
 | Name | Kind | What |
 |---|---|---|
-| `SIGNPATH_API_TOKEN` | secret | submitter API token |
-| `SIGNPATH_ORGANIZATION_ID` | variable | organization id |
-| `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG` | variables, optional | default `virtualjaguar` / `release-signing` |
-
-The SignPath steps are written to the action's documented interface but have **never run**; expect to
-adjust them against the artifact configuration SignPath gives you (they sign `virtualjaguar.exe` before
-packaging and the installer after).
+| `MINISIGN_SECRET_KEY` | secret | the minisign secret key that signs `SHA256SUMS.txt` (the key file's contents) |
+| `MINISIGN_PASSWORD` | secret | its password (empty for a key generated with `-W`) |
+| `APPIMAGE_GPG_PRIVATE_KEY` | secret | armored GPG private key that signs the AppImages |
+| `APPIMAGE_GPG_PASSPHRASE` | secret | its passphrase (empty for a key without one) |
 
 Signing runs when the caller asks (`release.yml` and `app.yml` do; a manual dispatch needs the `sign`
 input) and the secrets exist. GitHub passes no secrets to a fork pull request, so those builds stay
-ad-hoc signed and the log warns.
+ad-hoc signed and the log warns. The checksum signature and the attestations are made by `release.yml`
+only (its `stage` job), never by PR runs.
+
+### Signed checksums (minisign, #1151)
+
+`release.yml`'s `stage` job writes `SHA256SUMS.txt` once for the whole release and signs it with the
+project release key: `SHA256SUMS.txt.minisig` is attached next to it on every tag, nightly and
+prerelease ([`scripts/release/sign-sums.sh`](../../scripts/release/sign-sums.sh)). The public half is
+committed as `docs/release-signing.pub` and shown on the site's Download page; the installers pin the
+same key. Without the secret the step prints a loud warning and ships no signature; once the public key
+is committed the gate below fails a tag or `release/**` build that lacks the signature.
+
+The maintainer generates the key on their own machine. `minisign` is in Homebrew and in Ubuntu 23.04+:
+
+```sh
+minisign -G -p docs/release-signing.pub -s ~/.minisign/virtualjaguar-release.key   # asks for a password
+cat docs/release-signing.pub                     # two lines; the second is the key itself
+gh secret set MINISIGN_SECRET_KEY --repo libretro/virtualjaguar-libretro < ~/.minisign/virtualjaguar-release.key
+gh secret set MINISIGN_PASSWORD   --repo libretro/virtualjaguar-libretro   # paste the password
+```
+
+Then, in one commit: `docs/release-signing.pub`, and the key's second line pasted into
+`MINISIGN_PUBKEY=` in `tools/install.sh` and `$script:MinisignPubKey` in `tools/install.ps1`
+(the Installer workflow fails if the three disagree). Keep the secret key out of the repository and
+back it up: a lost key means a new key, a new `.pub`, and every pinned copy updated.
+
+Verify a download: `minisign -Vm SHA256SUMS.txt -p docs/release-signing.pub`, then
+`sha256sum --check SHA256SUMS.txt`.
+
+### Signed AppImages (GPG, #1151)
+
+`appimagetool --sign` embeds an armored GPG signature of the image (and the public key) in the
+AppImage's `.sha256_sig` / `.sig_key` ELF sections; `app-package.yml`'s Linux jobs do that when the
+`APPIMAGE_GPG_PRIVATE_KEY` secret exists. appimagetool signs through gpgme and takes the passphrase from
+`APPIMAGETOOL_SIGN_PASSPHRASE`, so a passphrase-protected key works in CI. appimagetool ships no
+verifier: [`linux/verify-appimage.py`](linux/verify-appimage.py) re-hashes the file with the two
+sections zeroed and runs `gpg --verify`, on Linux or macOS. The public key is committed as
+`docs/release-signing-appimage.asc`; once it is, the gate requires every AppImage to be signed by it.
+
+```sh
+gpg --quick-generate-key "Virtual Jaguar release signing <releases@jaguar.provenance-emu.com>" ed25519 sign never
+gpg --armor --export  "Virtual Jaguar release signing" > docs/release-signing-appimage.asc
+gpg --armor --export-secret-keys "Virtual Jaguar release signing" \
+  | gh secret set APPIMAGE_GPG_PRIVATE_KEY --repo libretro/virtualjaguar-libretro
+gh secret set APPIMAGE_GPG_PASSPHRASE --repo libretro/virtualjaguar-libretro   # the key's passphrase
+```
+
+Verify a download: `python3 app/packaging/linux/verify-appimage.py VirtualJaguar-X.Y.Z-linux-x86_64.AppImage --pubkey docs/release-signing-appimage.asc`.
+
+### Build provenance attestations (#1151)
+
+The `stage` job also runs `actions/attest-build-provenance` over every file it stages, `SHA256SUMS.txt`
+and its signature included, so GitHub holds a signed SLSA provenance statement naming the commit and
+workflow run that produced each asset. No secret is involved (the job's OIDC token signs it). Verify
+any asset with the GitHub CLI:
+
+```sh
+gh attestation verify virtualjaguar_libretro-linux-x86_64.so --repo libretro/virtualjaguar-libretro
+```
+
+### The release gate (#1152)
+
+After staging and before anything is published, `release.yml`'s `verify-signatures` job
+([`scripts/release/verify.sh`](../../scripts/release/verify.sh), on a macOS runner) checks every asset
+against the state its class is expected to have: macOS files Developer ID signed and notarized
+(`codesign`, `spctl`, `stapler`, plus the sidecar the signing job wrote for bare Mach-O files, which
+cannot be stapled); Windows files as the one-line `EXPECT_WINDOWS` says; AppImages GPG-signed by the
+committed key once that key exists; `SHA256SUMS.txt` signed once its key exists; everything attested.
+The result is one table per artifact (signed, notarized, attested) in the job summary and in the
+release body. On tags and `release/**` a failed expectation fails the run and nothing is published;
+on `develop` it only warns, so a signing-service outage cannot withhold the core nightly. A
+`workflow_dispatch` of `release.yml` with **Dry run** ticked runs the whole pipeline up to the gate on
+any branch and publishes nothing.
 
 ### Every macOS build is signed (#989)
 
@@ -116,6 +192,11 @@ always deleted again, signs, submits one zip per call to `notarytool` (API key a
 | `virtualjaguar_libretro-macos-{arm64,x86_64}.dylib` | `release.yml` (tags, nightly, prerelease) | no |
 | `cue2cdi-macos-universal` | `release.yml` | no |
 | `chdman`, `jagcd-chd-check` in `jagcd-tools-macos.zip` | `chdman-tools.yml` | no |
+
+Each of these signing steps also records what it did in a `signing-status-*` artifact
+([`scripts/release/signing-status.sh`](../../scripts/release/signing-status.sh)): the release gate
+re-checks the signature on the file itself, and reads the sidecar only for whether Apple issued the
+notarization ticket, which a bare Mach-O file cannot carry.
 
 A bare Mach-O file cannot hold a stapled ticket: it is notarized inside a zip and Gatekeeper looks the
 ticket up online the first time. iOS and tvOS dylibs are not signed here (a Developer ID does not apply
@@ -237,17 +318,27 @@ package ships it beside the executable (`Contents/Frameworks/librashader.dylib`,
 AppImage, `/usr/lib/virtualjaguar/librashader.so` in the `.deb`, `librashader.dll` next to the exe), and
 `THIRD-PARTY-NOTICES.txt` carries its licence (MPL-2.0 OR GPL-3.0-only).
 
+**`librashader/pin.env` is the single source of the runtime's version on every platform** (tag, commit, archive
+SHA-256, Rust version, Windows feature set): every package below is built from it, none takes an upstream binary.
+
 | Package | Where the library comes from |
 |---|---|
 | macOS universal (arm64 + x86_64) | **built from source in CI**, both slices, then `lipo`-merged |
 | AppImage / `.deb`, x86_64 and aarch64 | **built from source in CI** on the packaging runner (Ubuntu 22.04) |
-| Windows x64 / ARM64 | upstream's prebuilt `librashader-v0.12.0` zip (SHA-256-pinned in `app/cmake/VJShaders.cmake`) |
+| Windows x64 / ARM64 (zip, installer, Store MSIX) | **built from source in CI** (#1153): MSVC targets, OpenGL runtime only, static CRT |
 | Flatpak | see Flatpak notes |
 
 Why source: upstream's `x86_64-macos` v0.12.0 zip holds an **arm64** dylib (`lipo`-verified), so Intel Macs had no
 shader runtime, and upstream publishes no Linux binary. Building both macOS slices ourselves (instead of mixing
 upstream's arm64 with a self-built x86_64) keeps one version, one deployment target and one install name in the
-universal file.
+universal file. Upstream's Windows DLLs (v0.12.0) import `D3DX9_43.dll`, the June 2010 DirectX SDK
+redistributable that a stock Windows 10/11 does not have (`librashader-runtime-d3d9` links it with
+`kind = "raw-dylib"`), plus `VCRUNTIME140.dll` / `MSVCP140.dll` from the VC++ redistributable, so `LoadLibrary`
+fails wherever those are not installed: on GitHub's runners the v3.11.0 `shaders_library` test **skipped** on both
+Windows legs (the DLL "failed to load", reported as a skip because nothing required it) and the packages shipped a
+runtime that never worked on a clean machine. The from-source DLL is built with `--no-default-features --features
+runtime-opengl` (the app only uses the OpenGL chain; the Flatpak module does the same) and
+`RUSTFLAGS=-C target-feature=+crt-static`, so it imports nothing but Windows' own DLLs.
 
 * **The recipe** is [`.github/workflows/librashader.yml`](../../.github/workflows/librashader.yml), called by
   `app-package.yml` (job `librashader`, which the macOS and Linux jobs `need`). The pin is
@@ -258,21 +349,37 @@ universal file.
   the C headers, whose digests are pinned there (the 0.12.1 headers are byte-identical to 0.12.0's, ABI 2).
 * **Targets:** `x86_64-apple-darwin` (cross-built on the Apple-silicon runner), `aarch64-apple-darwin`,
   `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (native, `ubuntu-22.04` / `ubuntu-22.04-arm`,
-  glibc 2.35 like the packages). macOS uses `MACOSX_DEPLOYMENT_TARGET=11.0` and the install name
-  `@rpath/librashader.dylib` (cargo's default would bake the runner's absolute path in).
-* **Cache and artifacts.** Each target is cached under `librashader-<commit>-<triple>-rust<ver>-mac<min>-v1`
-  (a cold build is ~10 minutes with LTO, a hit is seconds; bump `-v1` in the workflow to force a rebuild after a
-  recipe change) and uploaded as the artifact `librashader-<triple>` (library + `BUILD-INFO.txt`). These are
-  intermediates: `release.yml` leaves `librashader-*` out of the release assets.
-* **Checks.** In `librashader.yml`: the architecture (`lipo -archs` / ELF machine), `minos`, install name, the
-  highest `GLIBC` symbol version (must be <= 2.35), only C/C++-runtime `NEEDED` entries, and (same-architecture
-  runners) a load that reads the ABI version. In `app-package.yml`: `vj_shader_tests library` with
-  `VJ_REQUIRE_LIBRASHADER=1` (a missing runtime fails instead of skipping); the macOS bundle's universal dylib
-  is loaded by an arm64 process and, under Rosetta, an x86_64 one; for the AppImage and the `.deb`,
-  `linux/check-librashader.sh` checks the file, its CPU and dependencies, and runs `vj_shader_tests probe` from the
-  package's own folder, i.e. the app's real lookup (beside the executable, `VJ_LIBRASHADER` unset).
+  glibc 2.35 like the packages), `x86_64-pc-windows-msvc` (native) and `aarch64-pc-windows-msvc` (cross-compiled
+  with Visual Studio's ARM64 tools), both on `windows-latest` with rustup's pinned toolchain, as upstream's own CI
+  builds them. macOS uses `MACOSX_DEPLOYMENT_TARGET=11.0` and the install name `@rpath/librashader.dylib` (cargo's
+  default would bake the runner's absolute path in). Windows uses the MSVC targets rather than MSYS2's Rust because
+  MSYS2's rustc follows its repository, not `pin.env`, and a DLL's C ABI is toolchain-neutral: the MinGW-built
+  `virtualjaguar.exe` loads it like any system DLL (proven by `shaders_library` on both legs).
+* **Cache and artifacts.** Each target is cached under
+  `librashader-<commit>-<triple>-rust<ver>-mac<min>-feat<features>-v2` (a cold build is ~10 minutes with LTO, a hit
+  is seconds; bump `-v2` in the workflow to force a rebuild after a recipe change) and uploaded as the artifact
+  `librashader-<triple>` (library + `BUILD-INFO.txt`). These are intermediates: `release.yml` leaves `librashader-*`
+  out of the release assets. The workflow takes a `targets` input (a JSON array of triples): `windows-store.yml` and
+  `windows-gl-test.yml` build only the Windows ones.
+* **Checks.** In `librashader.yml`: the architecture (`lipo -archs` / ELF machine / PE machine), `minos`, install
+  name, the highest `GLIBC` symbol version (must be <= 2.35), only C/C++-runtime `NEEDED` entries, on Windows an
+  import table of Windows' own DLLs only plus the exported C API
+  ([`windows/check-librashader-dll.py`](windows/check-librashader-dll.py), stdlib Python, runnable on any host),
+  and (same-architecture runners) a load that reads the ABI version. In `app-package.yml`: `vj_shader_tests library`
+  with `VJ_REQUIRE_LIBRASHADER=1` on **every** leg, Windows included (a runtime that does not load fails instead of
+  skipping, and the test prints why on both streams); the macOS bundle's universal dylib is loaded by an arm64
+  process and, under Rosetta, an x86_64 one; for the AppImage and the `.deb`, `linux/check-librashader.sh`, and for
+  the unpacked Windows zip and the silently installed Inno Setup tree, `windows/check-librashader.sh`, check the
+  file, its CPU and dependencies, load it, and run `vj_shader_tests probe` from the package's own folder, i.e. the
+  app's real lookup (beside the executable, `VJ_LIBRASHADER` unset). `windows-store.yml` runs the DLL check on the
+  install tree, the MSIX layout and the MakeAppx round-trip copy.
 * **Bumping:** change `LIBRASHADER_TAG`, `LIBRASHADER_COMMIT` and `LIBRASHADER_SHA256` together (and re-pin the header
   digests in `VJShaders.cmake` if `include/` changed; its comment says how), update `THIRD-PARTY-NOTICES.txt`.
+* **Local Windows builds** get no runtime by default (`VJ_APP_FETCH_LIBRASHADER` is OFF there since #1153; the
+  configure log says so): build one with `build-from-source.sh x86_64-pc-windows-msvc <dir>` (rustup + Visual
+  Studio, from Git Bash or MSYS2) or download the `librashader-<triple>` artifact of any recent run, then pass
+  `-DVJ_LIBRASHADER_LIB=<dir>/librashader.dll`. `-DVJ_APP_FETCH_LIBRASHADER=ON` still downloads upstream's v0.12.0
+  DLL as an explicit opt-in; it loads only with the June 2010 DirectX and VC++ redistributables installed.
 * **Without the bundled file** the Shader section of the app says why (not bundled / failed to load: reason) and
   links to the "Getting the shader runtime" section of [`app/README.md`](../README.md#getting-the-shader-runtime).
 
@@ -286,7 +393,8 @@ universal file.
   NEON implementation; CI checks that exactly one `blitter_simd_ops` is linked, and that the exe is an
   ARM64 image. The same `package.sh` and `virtualjaguar.iss` serve both architectures (`--arch arm64`,
   `/DArm64`): the arm64 installer is `ArchitecturesAllowed=arm64`, the x64 one `x64compatible` (so the
-  x64 package also installs, emulated, on ARM64 Windows). librashader's `aarch64-windows` runtime is bundled.
+  x64 package also installs, emulated, on ARM64 Windows). The `aarch64-pc-windows-msvc` librashader runtime,
+  built from source (Shader runtime above), is bundled.
   `tools/install.ps1` picks the ARM64 package on ARM64 Windows and falls back to x64 for older releases. GUI subsystem (no console window); `console_attach.cpp` re-attaches to
   the parent console so `--help`/`--version` still print.
 * Installer: **Inno Setup 6.7.3** (pinned by SHA-256). Chosen over NSIS for a maintained modern wizard,

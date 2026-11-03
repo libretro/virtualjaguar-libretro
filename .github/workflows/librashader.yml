@@ -1,36 +1,54 @@
 name: librashader runtime
 
-# Builds the librashader C API (the shader runtime the app loads with dlopen) FROM SOURCE for the
-# targets upstream publishes no usable binary for (#950):
+# Builds the librashader C API (the shader runtime the app loads with dlopen / LoadLibrary) FROM
+# SOURCE for every platform the packages ship it on (#950, #1153):
 #
 #   x86_64-apple-darwin      upstream's "x86_64-macos" zip holds an arm64 dylib
 #   aarch64-apple-darwin     built here too, from the SAME source, so the universal dylib is one version
 #   x86_64-unknown-linux-gnu / aarch64-unknown-linux-gnu    upstream publishes no Linux binary at all
-#
-# Windows keeps using upstream's prebuilt DLLs (app/cmake/VJShaders.cmake).
+#   x86_64-pc-windows-msvc / aarch64-pc-windows-msvc        upstream's DLLs import D3DX9_43.dll (the June
+#                            2010 DirectX SDK redistributable) and the VC++ redistributable, neither of which
+#                            a stock Windows 10/11 (or a GitHub runner) has, so LoadLibrary failed and the
+#                            v3.11.0 Windows legs shipped a runtime that never loaded (#1153).
 #
 # The source is pinned in app/packaging/librashader/pin.env (tag + commit + the SHA-256 of the
-# GitHub archive); the build is `cargo xtask build --profile optimized --target <triple> -- --locked`.
-# Linux is built on the packaging images (ubuntu-22.04, glibc 2.35) so the library runs wherever the
-# AppImage and .deb do.  The macOS libraries target MACOSX_DEPLOYMENT_TARGET=11.0, the app's minimum.
+# GitHub archive); the build is `cargo xtask build --profile optimized --target <triple> -- --locked`
+# (app/packaging/librashader/build-from-source.sh).  Linux is built on the packaging images
+# (ubuntu-22.04, glibc 2.35) so the library runs wherever the AppImage and .deb do.  The macOS
+# libraries target MACOSX_DEPLOYMENT_TARGET=11.0, the app's minimum.  Windows is built with the
+# MSVC targets and rustup's pinned toolchain on windows-latest (arm64 cross-compiled from x64, as
+# upstream's own CI does), the OpenGL runtime only (LIBRASHADER_WINDOWS_FEATURES) and a static CRT,
+# so the DLL imports nothing but Windows' own DLLs; the MSYS2-built app loads it through the plain
+# C ABI like any other DLL.  Why not MSYS2's Rust: its rustc version follows the MSYS2 repository,
+# not the pin, and the recipe would differ per toolchain for no gain.
 #
 # Each target's result is cached by commit + target + Rust version (the build is ~10 minutes with LTO,
 # the cache hit is seconds) and uploaded as the artifact `librashader-<triple>`:
-#   librashader.so | librashader.dylib   (renamed from liblibrashader_capi.* by librashader's own build script)
-#   BUILD-INFO.txt                       tag, commit, archive digest, rustc, library digest
+#   librashader.so | librashader.dylib | librashader.dll   (renamed from liblibrashader_capi.* by librashader's own build script)
+#   BUILD-INFO.txt                       tag, commit, archive digest, rustc, features, library digest
 # The artifacts are intermediates: release.yml leaves anything named librashader-* out of the release.
 #
-# Callers: app-package.yml (needs: librashader) for the macOS, AppImage and .deb packages.  Manual
-# dispatch builds and uploads the same four artifacts.
+# Callers: app-package.yml (needs: librashader) for the macOS, Windows, AppImage and .deb packages;
+# windows-store.yml and windows-gl-test.yml with `targets` limited to the Windows triples.  Manual
+# dispatch builds and uploads the same artifacts.
 
 on:
   workflow_call:
     inputs:
+      targets:
+        description: "JSON array of Rust target triples to build (default: every target)"
+        type: string
+        default: '["x86_64-apple-darwin","aarch64-apple-darwin","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-pc-windows-msvc","aarch64-pc-windows-msvc"]'
       artifact_suffix:
         description: "Appended to every artifact name (librashader-<triple><suffix>): a second caller in the same run (gl-qualification.yml beside app-package.yml in release.yml) must not collide with the first"
         type: string
         default: ''
   workflow_dispatch:
+    inputs:
+      targets:
+        description: "JSON array of Rust target triples to build"
+        type: string
+        default: '["x86_64-apple-darwin","aarch64-apple-darwin","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-pc-windows-msvc","aarch64-pc-windows-msvc"]'
 
 permissions:
   contents: read
@@ -38,43 +56,49 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    # macOS: the Apple silicon runner builds both slices (x86_64 cross-compiled; no Intel runner needed).
+    # Linux: native, on the packaging image (glibc 2.35).  Windows: windows-latest builds x64 natively
+    # and cross-compiles arm64 (the Visual Studio ARM64 cross tools are on the image).
+    runs-on: >-
+      ${{ endsWith(matrix.target, '-apple-darwin') && 'macos-latest'
+      || endsWith(matrix.target, '-pc-windows-msvc') && 'windows-latest'
+      || matrix.target == 'aarch64-unknown-linux-gnu' && 'ubuntu-22.04-arm'
+      || 'ubuntu-22.04' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-apple-darwin
-            os: macos-latest        # Apple silicon runner, cross-compiled; no Intel runner needed
-            lib: librashader.dylib
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            lib: librashader.dylib
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
-            lib: librashader.so
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04-arm
-            lib: librashader.so
+        target: ${{ fromJSON(inputs.targets) }}
+    defaults:
+      run:
+        shell: bash     # Git Bash on Windows: same steps on every OS
     env:
       TARGET: ${{ matrix.target }}
-      LIB: ${{ matrix.lib }}
     steps:
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: app/packaging/librashader
+          sparse-checkout: |
+            app/packaging/librashader
+            app/packaging/windows/check-librashader-dll.py
 
       - name: Read the pin
         run: |
           set -eu
           grep -E '^[A-Z0-9_]+=' app/packaging/librashader/pin.env | tee -a "$GITHUB_ENV"
+          case "$TARGET" in
+            *-apple-darwin) lib=librashader.dylib; feat=default ;;
+            *-linux-gnu)    lib=librashader.so;    feat=default ;;
+            *-windows-msvc) lib=librashader.dll;   feat="$(sed -n 's/^LIBRASHADER_WINDOWS_FEATURES=//p' app/packaging/librashader/pin.env)" ;;
+            *) echo "::error::unknown target $TARGET"; exit 1 ;;
+          esac
+          { echo "LIB=$lib"; echo "FEATURES=$feat"; } | tee -a "$GITHUB_ENV"
 
       - name: Cache the built library
         id: cache
         uses: actions/cache@v6
         with:
           path: dist/${{ matrix.target }}
-          # -v1: bump to force a rebuild when this recipe (not the pin) changes.
-          key: librashader-${{ env.LIBRASHADER_COMMIT }}-${{ matrix.target }}-rust${{ env.LIBRASHADER_RUST }}-mac${{ env.LIBRASHADER_MACOS_MIN }}-v1
+          # -v2: bump to force a rebuild when this recipe (not the pin) changes.
+          key: librashader-${{ env.LIBRASHADER_COMMIT }}-${{ matrix.target }}-rust${{ env.LIBRASHADER_RUST }}-mac${{ env.LIBRASHADER_MACOS_MIN }}-feat${{ env.FEATURES }}-v2
 
       - name: Install Rust ${{ env.LIBRASHADER_RUST }} (${{ matrix.target }})
         if: steps.cache.outputs.cache-hit != 'true'
@@ -86,7 +110,8 @@ jobs:
 
       - name: Build from the pinned source (digest-verified; cargo xtask build --profile optimized)
         if: steps.cache.outputs.cache-hit != 'true'
-        run: bash app/packaging/librashader/build-from-source.sh "$TARGET" "dist/$TARGET" "$RUNNER_TEMP/lr"
+        # A short work directory: Windows paths count every character, and cargo nests deep.
+        run: bash app/packaging/librashader/build-from-source.sh "$TARGET" "dist/$TARGET" "${RUNNER_TEMP//\\//}/lr"
 
       - name: Check the library
         run: |
@@ -123,9 +148,17 @@ jobs:
               g="$(objdump -T "$f" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1 | sed 's/GLIBC_//')"
               [ "$(printf '%s\n2.35\n' "$g" | sort -V | tail -1)" = "2.35" ] || { echo "::error::needs glibc $g > 2.35 (Ubuntu 22.04)"; exit 1; }
               objdump -T "$f" | grep -q ' libra_instance_abi_version$' ;;
+            *-windows-msvc)
+              # PE machine, an import table of Windows' own DLLs only (no D3DX9, no VC++ redistributable:
+              # LoadLibrary must succeed on a stock install), the exports the app resolves, and -- on this
+              # x64 runner -- a load of the x64 DLL that reads the ABI version.  The arm64 DLL is loaded by
+              # the native arm64 legs of app-package.yml / windows-store.yml (shaders_library, check-librashader.sh).
+              case "$TARGET" in x86_64*) arch=x64; req=--require-load ;; *) arch=arm64; req= ;; esac
+              python app/packaging/windows/check-librashader-dll.py "$f" --arch "$arch" $req ;;
           esac
 
       - name: Load it and read the ABI version (same-architecture runners)
+        if: ${{ !endsWith(matrix.target, '-pc-windows-msvc') }}
         run: |
           set -eu
           f="$PWD/dist/$TARGET/$LIB"
@@ -147,13 +180,18 @@ jobs:
           set -eu
           f="dist/$TARGET/$LIB"
           if command -v sha256sum >/dev/null; then d="$(sha256sum "$f" | cut -d' ' -f1)"; else d="$(shasum -a 256 "$f" | cut -d' ' -f1)"; fi
+          case "$TARGET" in
+            *-windows-msvc) build="cargo xtask build --profile optimized --target $TARGET -- --locked --no-default-features --features $FEATURES  (RUSTFLAGS=-C target-feature=+crt-static)" ;;
+            *)              build="cargo xtask build --profile optimized --target $TARGET -- --locked" ;;
+          esac
           {
             echo "librashader $LIBRASHADER_TAG"
             echo "commit     $LIBRASHADER_COMMIT"
             echo "archive    sha256 $LIBRASHADER_SHA256"
             echo "target     $TARGET"
             echo "rust       $LIBRASHADER_RUST"
-            echo "build      cargo xtask build --profile optimized --target $TARGET -- --locked"
+            echo "features   $FEATURES"
+            echo "build      $build"
             echo "macos min  $LIBRASHADER_MACOS_MIN (macOS targets only)"
             echo "$LIB       sha256 $d"
           } | tee "dist/$TARGET/BUILD-INFO.txt"

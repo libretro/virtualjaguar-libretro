@@ -469,9 +469,38 @@ static int runBundled() {
 // library
 // ---------------------------------------------------------------------------------------
 
+// Why a library-dependent mode is skipping (or, under VJ_REQUIRE_LIBRASHADER, failing), on BOTH
+// streams: CTest shows a skipped test's output to nobody, and the v3.11.0 Windows legs skipped
+// shaders_library twice with the reason lost (#1153).  Names what was probed, how the loader
+// put it, and -- on Windows, where "module could not be found" means one of the DLL's OWN
+// imports is missing, not the DLL itself -- how to find out which.
+static void explainNoLibrary(const char* mode, const ShaderChain& sc, bool required) {
+    const char* env = std::getenv("VJ_LIBRASHADER");
+    std::string msg = std::string("shader_tests ") + mode + ": " + (required ? "FAIL" : "SKIP") + " (" +
+                      (required ? "VJ_REQUIRE_LIBRASHADER is set but the runtime did not load: " : "") +
+                      sc.libraryError() + ")";
+    msg += std::string("\n  VJ_LIBRASHADER=") + (env && *env ? env : "(unset)") +
+           "; status: " + (sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed ? "found but failed to load"
+                           : sc.libraryStatus() == ShaderChain::LibraryStatus::NotFound ? "not found" : "no support");
+#ifdef _WIN32
+    if (sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed)
+        msg += "\n  hint: on Windows a 'module could not be found' error usually names a DLL the runtime itself imports "
+               "(upstream's prebuilt needs D3DX9_43.dll and the VC++ redistributable); "
+               "python app/packaging/windows/check-librashader-dll.py <dll> --arch x64|arm64 lists them";
+#endif
+    std::printf("%s\n", msg.c_str());
+    std::fprintf(stderr, "%s\n", msg.c_str());
+}
+
+static bool libraryRequired() {
+    const char* req = std::getenv("VJ_REQUIRE_LIBRASHADER");
+    return req && *req && *req != '0';
+}
+
 static int runLibrary() {
     if (!ShaderChain::builtWithHeaders()) {
         std::printf("shader_tests library: SKIP (built without librashader headers)\n");
+        std::fprintf(stderr, "shader_tests library: SKIP (built without librashader headers)\n");
         return 77;
     }
     ShaderChain sc;
@@ -479,14 +508,9 @@ static int runLibrary() {
     if (!sc.probeLibrary()) {
         // VJ_REQUIRE_LIBRASHADER=1 (CI, on the legs that ship a runtime): a runtime that does not load
         // is a failure, never a skip.
-        const char* req = std::getenv("VJ_REQUIRE_LIBRASHADER");
-        if (req && *req && *req != '0') {
-            std::printf("shader_tests library: FAIL (VJ_REQUIRE_LIBRASHADER is set but the runtime did not load: %s)\n",
-                        sc.libraryError().c_str());
-            return 1;
-        }
-        std::printf("shader_tests library: SKIP (%s)\n", sc.libraryError().c_str());
-        return 77;
+        const bool required = libraryRequired();
+        explainNoLibrary("library", sc, required);
+        return required ? 1 : 77;
     }
     std::printf("librashader %s, API version %u\n", sc.libraryPath().c_str(), sc.libraryApiVersion());
     CHECK(sc.libraryApiVersion() >= 1, "API version");
@@ -564,7 +588,9 @@ static int runGl() {
     ShaderChain sc;
     sc.setLibrarySearchDirs({});
     if (!sc.probeLibrary()) {
-        std::printf("shader_tests gl: SKIP (%s)\n", sc.libraryError().c_str());
+        // The GL mode needs a display too, so a missing runtime stays a skip even under
+        // VJ_REQUIRE_LIBRASHADER; the library mode is where that fails.
+        explainNoLibrary("gl", sc, false);
         return 77;
     }
     if (!SDL_Init(SDL_INIT_VIDEO)) {

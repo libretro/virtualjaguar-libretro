@@ -20,6 +20,7 @@ on:
       - 'tools/install.ps1'
       - 'test/installer/**'
       - 'site/pages/index.html'
+      - 'docs/release-signing.pub'
       - '.github/workflows/installer.yml'
   pull_request:
     branches: [ develop, master ]
@@ -28,6 +29,7 @@ on:
       - 'tools/install.ps1'
       - 'test/installer/**'
       - 'site/pages/index.html'
+      - 'docs/release-signing.pub'
       - '.github/workflows/installer.yml'
   workflow_dispatch:
     inputs:
@@ -85,6 +87,24 @@ jobs:
 
     - name: shellcheck
       run: shellcheck -s sh -S warning tools/install.sh
+
+    # Both installers pin the project release key (#1151).  Once the maintainer commits
+    # docs/release-signing.pub the three copies must agree, or a correctly signed
+    # SHA256SUMS.txt would be refused by the installer that holds the stale key.
+    - name: Pinned release key matches docs/release-signing.pub
+      if: runner.os == 'Linux'
+      run: |
+        set -eu
+        if [ ! -f docs/release-signing.pub ]; then
+          echo "docs/release-signing.pub is not committed yet: the installers' pinned key must be empty"
+          grep -q '^MINISIGN_PUBKEY=""$' tools/install.sh
+          grep -q "^\$script:MinisignPubKey = ''$" tools/install.ps1
+          exit 0
+        fi
+        key=$(grep -v '^untrusted comment' docs/release-signing.pub | head -1)
+        grep -qF "MINISIGN_PUBKEY=\"$key\"" tools/install.sh || { echo "::error::tools/install.sh pins a different key than docs/release-signing.pub"; exit 1; }
+        grep -qF "\$script:MinisignPubKey = '$key'" tools/install.ps1 || { echo "::error::tools/install.ps1 pins a different key than docs/release-signing.pub"; exit 1; }
+        echo "pinned key: $key"
 
     - name: Syntax under every shell
       run: |

@@ -7,17 +7,22 @@
 #
 #   VJ_APP_SHADERS              ON   build the shader path at all
 #   VJ_LIBRASHADER_INCLUDE_DIR  ""   use librashader.h + librashader_ld.h from here (offline)
-#   VJ_APP_FETCH_LIBRASHADER    ON*  also download the prebuilt library (Apple silicon macOS and
-#                                    Windows; pinned by SHA256) and copy it beside the executable.
-#                                    *ON on macOS and Windows, OFF elsewhere; set OFF for
-#                                    offline builds.
-#                                    Upstream publishes no Linux binary and its Intel-macOS zip
-#                                    holds an arm64 dylib, so those come from source:
+#   VJ_APP_FETCH_LIBRASHADER    ON*  also download upstream's prebuilt library (pinned by SHA256)
+#                                    and copy it beside the executable.  *ON on Apple silicon macOS
+#                                    only, where that binary works; set OFF for offline builds.
+#                                    On Windows it is an EXPLICIT OPT-IN (#1153): upstream's DLL
+#                                    imports D3DX9_43.dll (the June 2010 DirectX SDK redistributable)
+#                                    and the VC++ redistributable, so it fails to load on a stock
+#                                    Windows 10/11.  Upstream publishes no Linux binary and its
+#                                    Intel-macOS zip holds an arm64 dylib.  All of those come from
+#                                    source, built by CI (librashader.yml) from the ONE pin in
+#                                    app/packaging/librashader/pin.env and handed to the build as:
 #   VJ_LIBRASHADER_LIB          ""   a librashader.{so,dylib,dll} you built (CI builds it from the
-#                                    pinned source, app/packaging/librashader/build-from-source.sh):
-#                                    copied beside the executable and shipped by `cmake --install`.
-#                                    Wins over VJ_APP_FETCH_LIBRASHADER.  Without either, the
-#                                    app finds a system copy (distro/OBS package) at run time.
+#                                    pinned source, app/packaging/librashader/build-from-source.sh;
+#                                    or take the CI artifact librashader-<triple>): copied beside the
+#                                    executable and shipped by `cmake --install`.  Wins over
+#                                    VJ_APP_FETCH_LIBRASHADER.  Without either, the app finds a
+#                                    system copy (distro/OBS package) at run time.
 #   VJ_APP_BUNDLE_SLANG_SHADERS ON   fetch a pinned subset of libretro/slang-shaders (tarball,
 #                                    SHA256-verified) and ship it as shaders/slang-shaders/
 #                                    beside the executable.  Fail-soft: no network, or a hash
@@ -26,12 +31,13 @@
 #   VJ_SLANG_SHADERS_ARCHIVE    ""   a local copy of the pinned tarball (offline builds)
 #
 # Pins.  Headers and from-source builds: the tag in app/packaging/librashader/pin.env (v0.12.1;
-# its headers are byte-identical to v0.12.0's, so the SHA-256s below hold for both).  Prebuilt
-# Windows/Apple-silicon binaries: librashader-v0.12.0, the newest tag that has them attached.
+# its headers are byte-identical to v0.12.0's, so the SHA-256s below hold for both).  Upstream's
+# prebuilt binaries (the opt-in download): librashader-v0.12.0, the newest tag that has them attached.
 
 option(VJ_APP_SHADERS "Build librashader (RetroArch shader preset) support" ON)
-# On by default where upstream publishes a binary, so a plain local build has working shaders.
-if(APPLE OR WIN32)
+# On by default only where upstream's binary works (Apple silicon), so a plain local build there has
+# working shaders.  Windows is opt-in: see the header comment (#1153).
+if(APPLE)
     set(_vj_fetch_rashader_default ON)
 else()
     set(_vj_fetch_rashader_default OFF)
@@ -47,7 +53,7 @@ if(NOT VJ_LIBRASHADER_TAG)
     message(FATAL_ERROR "librashader: no LIBRASHADER_TAG in ${VJ_LIBRASHADER_PIN_FILE}")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VJ_LIBRASHADER_PIN_FILE}")
-# The tag whose release assets hold prebuilt binaries (Windows, Apple silicon).
+# The tag whose release assets hold prebuilt binaries (Apple silicon by default; Windows on request).
 set(VJ_LIBRASHADER_PREBUILT_TAG "librashader-v0.12.0")
 set(VJ_LIBRASHADER_LIB "" CACHE FILEPATH "A librashader runtime you built (copied beside the executable and packaged); overrides the download")
 set(VJ_LIBRASHADER_RAW "https://raw.githubusercontent.com/SnowflakePowered/librashader/${VJ_LIBRASHADER_TAG}/include")
@@ -139,6 +145,13 @@ elseif(VJ_APP_FETCH_LIBRASHADER)
         endif()
         set(_libname "librashader.dylib")
     elseif(WIN32)
+        # Only on request: this DLL loads only where the June 2010 DirectX redistributable (D3DX9_43.dll)
+        # and the VC++ 2015-2022 redistributable are installed (#1153).  The packages ship a DLL built
+        # from the pinned source instead (librashader.yml -> VJ_LIBRASHADER_LIB).
+        message(WARNING "librashader: downloading upstream's prebuilt Windows DLL (VJ_APP_FETCH_LIBRASHADER=ON). "
+                        "It imports D3DX9_43.dll and VCRUNTIME140/MSVCP140.dll, which a stock Windows 10/11 does not have; "
+                        "the shipped packages use a DLL built from app/packaging/librashader/pin.env instead "
+                        "(-DVJ_LIBRASHADER_LIB=<librashader.dll>).")
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
             set(_zip "librashader-aarch64-windows-v0.12.0-optimized.zip")
             set(_sha "acea3871d7c1cf345ae9da47378b399d89a1e05496160a652103ba5b7b5eb775")
@@ -168,16 +181,23 @@ elseif(VJ_APP_FETCH_LIBRASHADER)
     endif()
 elseif(VJ_SHADERS_AVAILABLE)
     # The cache keeps an OFF from an earlier offline or packaging configure, and the default never
-    # comes back: say so where a download exists (Windows, Apple silicon), or a local build quietly
+    # comes back: say so where a working download exists (Apple silicon), or a local build quietly
     # ships no runtime and the Shader section reports the library missing.
     set(_arch "${CMAKE_OSX_ARCHITECTURES}")
     if(NOT _arch)
         set(_arch "${CMAKE_SYSTEM_PROCESSOR}")
     endif()
-    if(WIN32 OR (APPLE AND _arch MATCHES "arm64|aarch64"))
+    if(APPLE AND _arch MATCHES "arm64|aarch64")
         message(WARNING "librashader: VJ_APP_FETCH_LIBRASHADER is OFF and VJ_LIBRASHADER_LIB is unset, so no runtime "
                         "is copied beside the executable; shaders then need a system copy or VJ_LIBRASHADER. "
                         "Configure again with -DVJ_APP_FETCH_LIBRASHADER=ON to download the pinned prebuilt.")
+    elseif(WIN32)
+        # The normal state of a local Windows build (#1153): no runtime is bundled unless one is passed in.
+        message(STATUS "librashader runtime: none bundled. Shaders need a librashader.dll built from the pinned source: "
+                       "app/packaging/librashader/build-from-source.sh x86_64-pc-windows-msvc <dir> (or the CI artifact "
+                       "librashader-<triple>), then -DVJ_LIBRASHADER_LIB=<dir>/librashader.dll. "
+                       "-DVJ_APP_FETCH_LIBRASHADER=ON downloads upstream's v0.12.0 DLL instead, which needs the "
+                       "June 2010 DirectX and the VC++ redistributables installed.")
     endif()
 endif()
 

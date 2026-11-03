@@ -22,8 +22,12 @@ name: App packages
 #   macOS    APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD,
 #            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64
 #            (same-repo PRs, nightlies and tags all pass them; fork PRs get none, see macos-sign)
-#   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub until
-#            the SignPath Foundation application is approved
+#   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub; Windows
+#            Authenticode is issue #1150 (Azure Artifact Signing)
+#   Linux    APPIMAGE_GPG_PRIVATE_KEY (+ APPIMAGE_GPG_PASSPHRASE): embedded GPG signature in both
+#            AppImages (#1151), verifiable with app/packaging/linux/verify-appimage.py
+# Every macOS and Linux signing step also writes a sidecar (scripts/release/signing-status.sh,
+# artifact signing-status-app-*) that release.yml's verify-signatures gate reads (#1152).
 # Details: app/packaging/README.md.
 
 on:
@@ -49,6 +53,10 @@ on:
       APPLE_NOTARY_KEY_P8_BASE64:
         required: false
       SIGNPATH_API_TOKEN:
+        required: false
+      APPIMAGE_GPG_PRIVATE_KEY:
+        required: false
+      APPIMAGE_GPG_PASSPHRASE:
         required: false
   workflow_dispatch:
     inputs:
@@ -129,10 +137,11 @@ jobs:
           echo "label=$label short=$short deb=$deb app_version=$proj run=$run"
 
   # ------------------------------------------------------------------------------------------
-  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for Intel macOS, Apple
-  # silicon macOS, and Linux x86_64 + aarch64: upstream's x86_64-macos zip holds an arm64 dylib
-  # and it publishes no Linux binary (#950).  Windows keeps upstream's DLLs.  Artifacts
-  # `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
+  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for every package: Intel and
+  # Apple silicon macOS, Linux x86_64 + aarch64, Windows x64 + arm64.  Upstream's x86_64-macos zip
+  # holds an arm64 dylib, it publishes no Linux binary (#950), and its Windows DLLs import
+  # D3DX9_43.dll + the VC++ redistributable, so they never loaded on a stock Windows (#1153).
+  # Artifacts `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
   # ------------------------------------------------------------------------------------------
   librashader:
     name: librashader runtime
@@ -316,6 +325,15 @@ jobs:
           rm -rf "$t"
           ls -la out
 
+      # What the gate cannot re-derive from the zip on its own: whether Apple issued the ticket.
+      - name: Record the signing outcome for the release gate
+        run: bash scripts/release/signing-status.sh "VirtualJaguar-${LABEL}-macos-universal.zip" "${{ steps.devid.outputs.signed || 'false' }}" "${{ steps.devid.outputs.notarized || 'false' }}" developer-id signing-status
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-macos
+          path: signing-status/
+          retention-days: 14
+
       - uses: actions/upload-artifact@v7
         with:
           name: app-package-macos-universal
@@ -330,13 +348,11 @@ jobs:
   # ------------------------------------------------------------------------------------------
   windows:
     name: Windows ${{ matrix.arch }}
-    needs: [meta]
+    needs: [meta, librashader]
     if: needs.meta.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
-    # arm64 is new in v3.8.1: a failure there skips its package instead of
-    # holding back every app asset (release.yml attaches app packages only
-    # when this whole workflow succeeds).
-    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    # Both legs are required (the arm64 continue-on-error of v3.8.1 went with #1153: a red arm64
+    # package now holds the release like every other asset).
     strategy:
       fail-fast: false
       matrix:
@@ -344,6 +360,7 @@ jobs:
           - arch: x64
             os: windows-latest
             msystem: MINGW64
+            triple: x86_64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-x86_64-gcc
@@ -355,6 +372,7 @@ jobs:
           - arch: arm64
             os: windows-11-arm
             msystem: CLANGARM64
+            triple: aarch64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-clang-aarch64-clang
@@ -374,6 +392,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The shader runtime, built from the pinned source for this CPU (librashader.yml; the MSVC-target
+      # DLL loads into the MinGW-built exe through the plain C ABI).  Lands beside the executable, in
+      # the portable zip and in the installer.
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-${{ matrix.triple }}
+          path: librashader
+
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -384,8 +411,10 @@ jobs:
       - name: Configure and build (GUI subsystem, static runtime)
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
+            -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$(cygpath -m "$PWD")/librashader/librashader.dll" \
             ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"} \
             ${{ matrix.cmake_extra }}
           grep -E 'librashader|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER:' build/CMakeCache.txt | head
@@ -402,8 +431,19 @@ jobs:
           echo "blitter_simd_ops definitions: $n"
           [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
 
+      # The runtime must load here (shaders_library FAILS instead of skipping: VJ_REQUIRE_LIBRASHADER,
+      # #1153; on the v3.11.0 tag it skipped on both legs because upstream's DLL could not be loaded).
+      # shaders_gl needs an OpenGL 3.3 context, which the hosted runners' GDI driver does not give;
+      # Windows GL rendering is qualified by windows-gl-test.yml (#1155).
       - name: Smoke tests (GUI-subsystem exe, output through pipes)
-        run: ctest --test-dir build --output-on-failure ${{ matrix.arch == 'arm64' && '-E shaders_gl' || '' }}
+        run: VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
+
+      - name: The shader runtime beside the executable loads (ABI 2) and parses the bundled presets
+        run: |
+          set -eu
+          test -f build/librashader.dll
+          python app/packaging/windows/check-librashader-dll.py build/librashader.dll --arch "$ARCH" --require-load
+          VJ_REQUIRE_LIBRASHADER=1 VJ_LIBRASHADER="$(cygpath -m "$PWD/build/librashader.dll")" build/vj_shader_tests.exe library
 
       - name: The exe must import only Windows system DLLs
         run: |
@@ -520,6 +560,9 @@ jobs:
           test -f portable.txt   # --headless uses a temp data dir, so portable mode itself cannot be observed here
           cd "$GITHUB_WORKSPACE"
           bash app/packaging/check-payload.sh build "$t/VirtualJaguar" virtualjaguar.exe
+          # The shader runtime in the zip: right CPU, Windows-only imports, loads with ABI 2, and the
+          # app's own lookup (beside the executable, VJ_LIBRASHADER unset) finds it (#1153).
+          bash app/packaging/windows/check-librashader.sh "$t/VirtualJaguar" "$ARCH" build/vj_shader_tests.exe
           ls -l out/ | sed 's/^/package: /'
 
       - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
@@ -534,6 +577,7 @@ jobs:
           /c/vjtest/virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
           bash app/packaging/check-payload.sh build /c/vjtest virtualjaguar.exe
           du -sk /c/vjtest | sed 's/^/installed tree KiB: /'
+          bash app/packaging/windows/check-librashader.sh /c/vjtest "$ARCH" build/vj_shader_tests.exe
           /c/vjtest/unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           sleep 5
           test ! -f /c/vjtest/virtualjaguar.exe || { echo "::error::uninstall left the program behind"; exit 1; }
@@ -556,7 +600,7 @@ jobs:
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    # New in v3.8.1: non-blocking, like the arm64 Windows leg above.
+    # New in v3.8.1: non-blocking (the arm64 Windows leg used to be too, until #1153).
     continue-on-error: true
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
@@ -684,12 +728,65 @@ jobs:
           appstreamcli validate --no-net "$RUNNER_TEMP"/inst/share/metainfo/*.metainfo.xml | tee "$RUNNER_TEMP/appstream.txt" || true
           if grep -q '^E:' "$RUNNER_TEMP/appstream.txt"; then echo "::error::appstream metadata has errors"; exit 1; fi
 
+      # The AppImage signing key (#1151).  With the `sign` input and the APPIMAGE_GPG_PRIVATE_KEY
+      # secret, the armored private key goes into a throwaway GNUPGHOME and make-appimage.sh passes
+      # `--sign --sign-key <fingerprint>` to appimagetool, which signs through gpgme and takes the
+      # passphrase from APPIMAGETOOL_SIGN_PASSPHRASE (loopback pinentry).  Without the secret the
+      # AppImage is built unsigned, as before, and the log says so.
+      - name: Import the AppImage signing key
+        id: gpgkey
+        if: inputs.sign
+        env:
+          APPIMAGE_GPG_PRIVATE_KEY: ${{ secrets.APPIMAGE_GPG_PRIVATE_KEY }}
+        run: |
+          set -eu
+          if [ -z "$APPIMAGE_GPG_PRIVATE_KEY" ]; then
+            echo "::warning::AppImage is NOT signed: the APPIMAGE_GPG_PRIVATE_KEY secret is not configured (app/packaging/README.md, Signed AppImages)."
+            echo "fingerprint=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+          printf 'allow-loopback-pinentry\n' > "$GNUPGHOME/gpg-agent.conf"
+          printf '%s\n' "$APPIMAGE_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1=="fpr"{print $10; exit}')
+          [ -n "$fpr" ] || { echo "::error::APPIMAGE_GPG_PRIVATE_KEY did not import a secret key"; exit 1; }
+          # The committed public key must be this key, or every AppImage would fail the gate.
+          if [ -f docs/release-signing-appimage.asc ]; then
+            pub=$(gpg --batch --with-colons --import-options show-only --import docs/release-signing-appimage.asc | awk -F: '$1=="fpr"{print $10}')
+            case " $pub " in *" $fpr "*) ;; *) echo "::error::the APPIMAGE_GPG_PRIVATE_KEY secret ($fpr) is not the key committed as docs/release-signing-appimage.asc ($pub)"; exit 1 ;; esac
+          else
+            echo "::warning::docs/release-signing-appimage.asc is not committed; the gate cannot require AppImage signatures until it is."
+          fi
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "fingerprint=$fpr" >> "$GITHUB_OUTPUT"
+          echo "AppImage signing key: $fpr"
+
       - name: Package
+        env:
+          VJ_APPIMAGE_SIGN_KEY: ${{ steps.gpgkey.outputs.fingerprint }}
+          APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGE_GPG_PASSPHRASE }}
         run: |
           set -eu
           mkdir -p out
           bash app/packaging/linux/make-appimage.sh build "out/VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage" "${{ matrix.arch }}"
           bash app/packaging/linux/make-deb.sh build "out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb" "${{ matrix.debarch }}" "$DEB_VERSION"
+
+      - name: Record the signing outcome for the release gate
+        env:
+          FPR: ${{ steps.gpgkey.outputs.fingerprint }}
+        run: |
+          set -eu
+          f="VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage"
+          if [ -n "$FPR" ]; then
+            python3 app/packaging/linux/verify-appimage.py "out/$f" ${{ hashFiles('docs/release-signing-appimage.asc') != '' && '--pubkey docs/release-signing-appimage.asc' || '' }}
+            bash scripts/release/signing-status.sh "$f" true false gpg signing-status "$FPR"
+          else
+            bash scripts/release/signing-status.sh "$f" false false none signing-status "APPIMAGE_GPG_PRIVATE_KEY not configured or sign not requested"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-linux-${{ matrix.arch }}
+          path: signing-status/
+          retention-days: 14
 
       - name: Smoke-test the AppImage
         run: |

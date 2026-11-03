@@ -1,0 +1,64 @@
+name: Release scripts
+
+# The release signing tooling behind release.yml's stage / verify-signatures
+# jobs (issues #1151 / #1152): scripts/release/*.sh and
+# app/packaging/linux/verify-appimage.py, tested hermetically by
+# test/release/test_release_scripts.sh (fake artifact tree, throwaway minisign
+# and GPG keys, no GitHub calls).  Linux additionally downloads the pinned
+# appimagetool and signs a real AppImage, which proves the gpgme passphrase
+# path app-package.yml relies on; macOS covers the codesign rows.
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'scripts/release/**'
+      - 'app/packaging/linux/verify-appimage.py'
+      - 'app/packaging/linux/make-appimage.sh'
+      - 'test/release/**'
+      - '.github/workflows/release-scripts.yml'
+  pull_request:
+    branches: [ develop, master, 'release/**' ]
+    paths:
+      - 'scripts/release/**'
+      - 'app/packaging/linux/verify-appimage.py'
+      - 'app/packaging/linux/make-appimage.sh'
+      - 'test/release/**'
+      - '.github/workflows/release-scripts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign gnupg shellcheck
+
+      - name: Tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install minisign shellcheck
+
+      - name: shellcheck
+        run: shellcheck -S warning scripts/release/*.sh app/packaging/linux/make-appimage.sh test/release/test_release_scripts.sh
+
+      - name: Release script suite
+        env:
+          # Linux: also sign a real AppImage with the pinned appimagetool (network).
+          VJ_TEST_REAL_APPIMAGE: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: bash test/release/test_release_scripts.sh

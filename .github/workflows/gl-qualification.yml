@@ -98,6 +98,7 @@ jobs:
     name: librashader runtime
     uses: ./.github/workflows/librashader.yml
     with:
+      targets: '["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]'
       artifact_suffix: '-glq'
 
   # ------------------------------------------------------------------------------------------
@@ -183,6 +184,7 @@ jobs:
   # ------------------------------------------------------------------------------------------
   windows:
     name: Windows ${{ matrix.arch }} (bundled Mesa fallback)
+    needs: [librashader]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     strategy:
@@ -192,6 +194,7 @@ jobs:
           - arch: x64
             os: windows-latest
             msystem: MINGW64
+            triple: x86_64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-x86_64-gcc
@@ -203,6 +206,7 @@ jobs:
           - arch: arm64
             os: windows-11-arm
             msystem: CLANGARM64
+            triple: aarch64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-clang-aarch64-clang
@@ -218,6 +222,16 @@ jobs:
       ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
+
+      # The shader runtime built from the pinned source (#1153/#1161): upstream's prebuilt DLL
+      # imports D3DX9_43.dll, which a stock Windows (and these runners) does not have, so it never
+      # loaded.  The MSVC-target DLL loads into the MinGW-built exe through the plain C ABI.
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-${{ matrix.triple }}-glq
+          path: librashader
+
       - uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
@@ -227,8 +241,10 @@ jobs:
       - name: Configure, build, unit tests, install
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly \
-            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON ${{ matrix.cmake_extra }}
+            -DVJ_APP_WIN32_GUI=ON ${{ matrix.cmake_extra }} \
+            -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$(cygpath -m "$PWD")/librashader/librashader.dll"
           cmake --build build -j4 --target virtualjaguar vj_gl_context_test vj_gl_context_integration vj_software_gl_test vj_shader_tests
           build/vj_gl_context_test.exe
           build/vj_software_gl_test.exe

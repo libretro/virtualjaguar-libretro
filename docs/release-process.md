@@ -202,13 +202,33 @@ in place with `--clobber`, as before.
 - **Gating.** A tagged release needs the app job to succeed (or be skipped); re-run the failed jobs
   and the release follows. The nightly waits for it but does not require it, like the jagcd tools,
   so an Apple notarization outage cannot withhold the core nightly.
-- **Signing** is optional and secret-driven (macOS Developer ID + notarization, Windows SignPath).
-  Every macOS file we ship is Developer ID signed and notarized: the app, the macOS core dylibs,
-  `cue2cdi-macos-universal` and the macOS chdman/jagcd tools (composite action
-  `.github/actions/macos-sign`); same-repo PR app packages are too. Without the secrets (fork PRs) the
-  macOS app is ad-hoc signed, everything else unsigned, and the log warns. A notarization failure fails
-  a tag build and only warns on other refs. The secrets, the
-  hardened-runtime reasoning and the manual steps are in [`app/packaging/README.md`](../app/packaging/README.md).
+- **Signing** is secret-driven. Every macOS file we ship is Developer ID signed and notarized: the
+  app, the macOS core dylibs, `cue2cdi-macos-universal` and the macOS chdman/jagcd tools (composite
+  action `.github/actions/macos-sign`); same-repo PR app packages are too. Without the secrets (fork
+  PRs) the macOS app is ad-hoc signed, everything else unsigned, and the log warns. A notarization
+  failure fails a tag build and only warns on other refs. Windows Authenticode is #1150 and not
+  shipped yet. The secrets, the hardened-runtime reasoning and the manual steps are in
+  [`app/packaging/README.md`](../app/packaging/README.md).
+- **Provenance and checksums (#1151).** After the builds, `release.yml`'s `stage` job flattens every
+  artifact, writes `SHA256SUMS.txt`, signs it with the project minisign key
+  (`SHA256SUMS.txt.minisig`; public key `docs/release-signing.pub`, also on the site's Download page)
+  and attests build provenance for every file. The Linux AppImages carry an embedded GPG signature
+  (public key `docs/release-signing-appimage.asc`). Verify any asset with
+  `gh attestation verify <file> --repo libretro/virtualjaguar-libretro`, the checksum list with
+  `minisign -Vm SHA256SUMS.txt -p docs/release-signing.pub`, an AppImage with
+  `python3 app/packaging/linux/verify-appimage.py <file>`. `tools/install.sh` and `install.ps1` do the
+  same before installing (`--no-verify` / `-NoVerify` skips it). Key generation and the secrets:
+  [`app/packaging/README.md`](../app/packaging/README.md), "Signed checksums" / "Signed AppImages".
+- **The signing gate (#1152).** `verify-signatures` runs between staging and publication and checks
+  every asset against the state its class is expected to have (`scripts/release/verify.sh`: macOS
+  Developer ID + notarized, Windows `unsigned` until #1150 flips that line, AppImage and checksum
+  signatures once their public keys are committed, attestation on everything). On a tag and on
+  `release/**` a miss fails the run and nothing is published; on `develop` it warns, so an outage
+  cannot withhold the core nightly. The per-artifact table (signed, notarized, attested) lands in the
+  job summary and in the release body, replacing hand-written signing prose: do not describe the
+  signing state in `docs/RELEASE_NOTES_vX.Y.Z.md`, the body carries the generated table. To prove a
+  change to this pipeline before merging, dispatch `release.yml` on the branch with **Dry run**
+  ticked: it builds, stages, signs, attests and runs the gate, and publishes nothing.
 - **After the release**, a maintainer fills the Homebrew, winget, Scoop and Flatpak templates from
   the published `SHA256SUMS.txt` (`app/packaging/manifests/render.sh`) and submits them. CI never
   submits to external repositories.

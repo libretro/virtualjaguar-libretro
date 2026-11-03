@@ -44,7 +44,22 @@ cmake --install "$build" --prefix "$appdir/usr"
     --desktop-file "$appdir/usr/share/applications/$id.desktop" \
     --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/$id.png"
 
+# Embedded GPG signature (#1151): with VJ_APPIMAGE_SIGN_KEY set to a key id /
+# fingerprint in the runner's keyring, appimagetool signs the image's SHA-256
+# (computed with the signature sections zeroed) and embeds the armored
+# signature and public key in the .sha256_sig / .sig_key ELF sections.  It
+# signs through gpgme: the key's passphrase, if any, is read from
+# APPIMAGETOOL_SIGN_PASSPHRASE (loopback pinentry).  Verify with
+# app/packaging/linux/verify-appimage.py.  Unset -> unsigned, as before.
+sign=()
+if [ -n "${VJ_APPIMAGE_SIGN_KEY:-}" ]; then
+  sign=(--sign --sign-key "$VJ_APPIMAGE_SIGN_KEY")
+  echo "signing the AppImage with GPG key $VJ_APPIMAGE_SIGN_KEY"
+fi
 # The AppImage's own app-data validation is advisory; the files are checked in CI.
-"$work/appimagetool" --no-appstream "$appdir" "$out"
+"$work/appimagetool" --no-appstream "${sign[@]}" "$appdir" "$out"
 chmod +x "$out"
 ls -la "$out"
+if [ -n "${VJ_APPIMAGE_SIGN_KEY:-}" ]; then
+  python3 "$(dirname "$0")/verify-appimage.py" "$out"
+fi
