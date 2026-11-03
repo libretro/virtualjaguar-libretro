@@ -69,6 +69,13 @@ set(VJ_TV_DEFAULT "auto" CACHE STRING "TV mode setting for a fresh config: auto 
 if(NOT VJ_TV_DEFAULT MATCHES "^(auto|manual|off)$")
     message(FATAL_ERROR "VJ_TV_DEFAULT must be auto, manual or off (got '${VJ_TV_DEFAULT}')")
 endif()
+# Shaders (#1154): the preset a config that never chose one starts on.  A file in app/shaders/ (the first-party presets,
+# shipped by every package whether or not the slang-shaders subset was bundled) or off.  Like VJ_TV_DEFAULT it is written
+# to config.ini only once the user changes it, so it can move between builds; the app target alone sees it.
+set(VJ_SHADER_DEFAULT "vj-scanlines.slangp" CACHE STRING "Shader preset for a fresh config: a file in app/shaders/ | off")
+if(NOT VJ_SHADER_DEFAULT STREQUAL "off" AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${VJ_SHADER_DEFAULT}")
+    message(FATAL_ERROR "VJ_SHADER_DEFAULT must be off or a preset file in app/shaders/ (got '${VJ_SHADER_DEFAULT}')")
+endif()
 # The build channel (#967 phase 3d, design section 8): release | nightly | dev.  Since the 4.0 flip (#1039 phase 5c) every
 # channel defaults Settings > Interface > Emulation thread to On for users who never chose; a stored choice always wins.
 # The channel still names the build in About and the log.  app-package.yml passes it per lane like VJ_TV_DEFAULT above;
@@ -507,6 +514,7 @@ if(VJ_APP_NEURO)
 endif()
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
 message(STATUS "TV mode default for a fresh config: ${VJ_TV_DEFAULT}")
+message(STATUS "Shader preset default for a fresh config: ${VJ_SHADER_DEFAULT}")
 message(STATUS "Build channel: ${VJ_BUILD_CHANNEL} (emulation thread default ${VJ_EMU_THREAD_DEFAULT_VALUE})")
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses; platform_windows.cpp: WSAStartup for the core
@@ -518,7 +526,8 @@ endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}"
     VJ_DISCORD_APP_ID="${VJ_DISCORD_APP_ID}"
-    VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}")
+    VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}"
+    VJ_SHADER_DEFAULT_PRESET="${VJ_SHADER_DEFAULT}")
 if(MSVC)
     target_compile_options(virtualjaguar PRIVATE /W3 /utf-8)
     target_compile_definitions(virtualjaguar PRIVATE _CRT_SECURE_NO_WARNINGS)

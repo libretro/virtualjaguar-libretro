@@ -11,6 +11,7 @@
 
 #include "app.h"
 #include "imgui.h"
+#include "paths.h"
 #include "present_util.h"
 #include "shaders.h"
 #include "shaders_ui.h"
@@ -54,10 +55,7 @@ std::string g_presetError;
 const char* const kShaderRuntimeDocsUrl =
     "https://github.com/libretro/virtualjaguar-libretro/blob/develop/app/README.md#getting-the-shader-runtime";
 
-std::string builtinDir() {
-    const char* b = SDL_GetBasePath();
-    return b ? std::string(b) + "shaders/" : std::string();
-}
+std::string builtinDir() { return ShaderChain::builtinPresetDir(); }
 
 void rescan(Listing& l, const std::string& root) {
     l.root = root;
@@ -139,6 +137,18 @@ void shaderFrameHook(App& app) {
     if (!p.empty()) applyShaderPreset(app, p);
     std::string note;
     if (app.video.shader.takeNotice(note)) app.toast(note, 6.0, 2);
+
+    // The one-time hint for the build default (#1154), once the default preset has actually drawn a frame.  Stored
+    // before it shows so it never repeats; a --shader run is an explicit choice and gets none.  Settings > Reset of the
+    // Video group erases shader.hint_shown with the shader keys, and it may show once more.
+    ShaderChain& sc = app.video.shader;
+    if (!app.shaderHintShownThisRun_ && app.shaderCli_.empty() && sc.usingBuildDefault() && sc.active() &&
+        sc.chainRuns() > 0 && !app.cfg.getBool("shader.hint_shown", false)) {
+        app.shaderHintShownThisRun_ = true;
+        app.cfg.setBool("shader.hint_shown", true);
+        app.saveConfig();
+        app.toast("Filter: " + pathStem(sc.preset) + " is on (Settings > Video > Shader to change it or turn it off)", 6.0);
+    }
 }
 
 void drawShaderSettings(App& app) {

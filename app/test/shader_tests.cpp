@@ -258,6 +258,111 @@ static void testFallback() {
         c.loadSettings(empty, "");
         CHECK(!c.enabled && c.preset.empty(), "defaults: off");
     }
+
+    STEP("build-default");
+    // #1154: the build default applies to a config that never chose, is never written back, a choice wins, and its
+    // failures are a log line rather than a notice.  (VJ_LIBRASHADER is still the bogus path from step 1.)
+    {
+        fs::path bd = d / "builtin";
+        write(bd / "dflt.slang", "x");
+        write(bd / "dflt.slangp", "shaders = 1\nshader0 = dflt.slang\n");
+        ShaderChain::setBuiltinPresetDir(str(bd));
+        const std::string dpath = str(bd) + "/dflt.slangp";
+        Config fresh;   // no shader keys at all
+        ShaderChain f1;
+        f1.setBuildDefault("dflt.slangp");
+        f1.loadSettings(fresh, "");
+        CHECK(f1.enabled && f1.preset == dpath && f1.usingBuildDefault(), "a fresh config starts on the build default: %s", f1.preset.c_str());
+        f1.saveSettings(fresh);
+        CHECK(!fresh.has("shader.enabled") && !fresh.has("shader.preset") && !fresh.has("shader.chosen"), "an untouched default stores nothing");
+        // 3.11 wrote shader.enabled=false / shader.preset= for everyone who never opened the picker: same as fresh.
+        Config v311;
+        v311.setBool("shader.enabled", false);
+        v311.set("shader.preset", "");
+        ShaderChain f2;
+        f2.setBuildDefault("dflt.slangp");
+        f2.loadSettings(v311, "");
+        CHECK(f2.enabled && f2.preset == dpath && f2.usingBuildDefault(), "a 3.11 config with no chosen preset gets the default");
+        f2.saveSettings(v311);
+        CHECK(!v311.has("shader.enabled") && !v311.has("shader.preset"), "and its stale keys are dropped");
+        // A stored preset is a choice, on or off: untouched.
+        Config chose;
+        chose.setBool("shader.enabled", false);
+        chose.set("shader.preset", "/their/own.slangp");
+        ShaderChain f3;
+        f3.setBuildDefault("dflt.slangp");
+        f3.loadSettings(chose, "");
+        CHECK(!f3.enabled && f3.preset == "/their/own.slangp" && !f3.usingBuildDefault(), "a stored choice wins over the default");
+        f3.saveSettings(chose);
+        CHECK(!chose.getBool("shader.enabled", true) && chose.get("shader.preset") == "/their/own.slangp", "and is written back as it was");
+        // Turning the default off is a choice: stored, and still off after a relaunch.
+        f1.enabled = false;
+        CHECK(!f1.usingBuildDefault(), "moving off the default");
+        f1.saveSettings(fresh);
+        CHECK(!fresh.getBool("shader.enabled", true) && fresh.get("shader.preset") == dpath && fresh.getBool("shader.chosen", false),
+              "the change is stored and flagged as chosen");
+        ShaderChain f4;
+        f4.setBuildDefault("dflt.slangp");
+        f4.loadSettings(fresh, "");
+        CHECK(!f4.enabled && f4.preset == dpath && !f4.usingBuildDefault(), "relaunch: stays off");
+        // "None" after the default is a choice too: the default does not come back.
+        f4.enabled = true;
+        f4.clearPreset();
+        f4.saveSettings(fresh);
+        ShaderChain f5;
+        f5.setBuildDefault("dflt.slangp");
+        f5.loadSettings(fresh, "");
+        CHECK(f5.preset.empty() && !f5.usingBuildDefault(), "none stays none");
+        // Settings > Reset erases the keys: back on the default.
+        fresh.erase("shader.enabled");
+        fresh.erase("shader.preset");
+        fresh.erase("shader.chosen");
+        f5.loadSettings(fresh, "");
+        CHECK(f5.enabled && f5.preset == dpath && f5.usingBuildDefault(), "a reset returns to the build default");
+        // A build default of off, and a default the package lost.
+        ShaderChain f6;
+        f6.setBuildDefault("off");
+        f6.loadSettings(fresh, "");
+        CHECK(!f6.enabled && f6.preset.empty() && f6.usingBuildDefault(), "default off: plain, nothing stored");
+        f6.saveSettings(fresh);
+        CHECK(!fresh.has("shader.enabled") && !fresh.has("shader.preset"), "an off default stores nothing either");
+        ShaderChain f7;
+        f7.setBuildDefault("gone.slangp");
+        f7.loadSettings(fresh, "");
+        CHECK(!f7.enabled && f7.preset.empty() && f7.usingBuildDefault(), "a missing default file: off, not an error");
+        // Fail-soft: with no runtime the default logs and draws plain; a chosen preset still gets its notice.
+        ShaderFrame fr;
+        fr.srcTex = 1;
+        fr.srcW = fr.srcH = 8;
+        fr.outW = fr.outH = 16;
+        std::string note;
+        ShaderChain f8;
+        f8.setBuildDefault("dflt.slangp");
+        f8.loadSettings(fresh, "");
+        CHECK(f8.render(fr) == 0 && !f8.takeNotice(note), "the default without a runtime: plain picture, no notice");
+        CHECK(f8.enabled, "and not switched off");
+        f8.enabled = false;
+        f8.enabled = true;   // the switch itself is not a change
+        CHECK(f8.usingBuildDefault(), "still the default");
+        f3.enabled = true;
+        CHECK(f3.render(fr) == 0 && f3.takeNotice(note) && note.find("plain picture") != std::string::npos, "a chosen preset without a runtime: a notice");
+        f8.destroyGL();
+        f3.destroyGL();
+
+        STEP("resolve-arg");
+        // --shader NAME|FILE: the bundled folder, the slang-shaders subset by its own path, or a file.
+        write(bd / "slang-shaders" / "crt" / "crt-x.slang", "x");
+        write(bd / "slang-shaders" / "crt" / "crt-x.slangp", "shaders = 1\nshader0 = crt-x.slang\n");
+        const std::string cpath = str(bd) + "/slang-shaders/crt/crt-x.slangp";
+        CHECK(ShaderChain::resolvePresetArg("dflt") == dpath, "a bare name: %s", ShaderChain::resolvePresetArg("dflt").c_str());
+        CHECK(ShaderChain::resolvePresetArg("dflt.slangp") == dpath, "a name with its extension");
+        CHECK(ShaderChain::resolvePresetArg(dpath) == dpath, "a file path");
+        CHECK(ShaderChain::resolvePresetArg("crt/crt-x") == cpath, "the subset by its own path: %s", ShaderChain::resolvePresetArg("crt/crt-x").c_str());
+        CHECK(ShaderChain::resolvePresetArg("slang-shaders/crt/crt-x.slangp") == cpath, "or with the folder");
+        CHECK(ShaderChain::resolvePresetArg("nope").empty() && ShaderChain::resolvePresetArg("").empty(), "unknown: empty");
+        CHECK(ShaderChain::resolvePresetArg(str(bd / "dflt.slang")).empty(), "a .slang is not a preset");
+        ShaderChain::setBuiltinPresetDir("");
+    }
     setEnv("VJ_LIBRASHADER", nullptr);
     std::error_code ec;
     fs::remove_all(d, ec);
@@ -684,6 +789,20 @@ static int runGl() {
     }
     std::printf("broken shader -> %s: %s\n", accepted ? "chain build failed" : "refused up front",
                 accepted ? bad.lastError().c_str() : err.c_str());
+    // The same broken preset as the build default (#1154): plain picture, a log line instead of a notice, still on.
+    if (accepted) {
+        ShaderChain::setBuiltinPresetDir(str(d));
+        ShaderChain dflt;
+        dflt.setBuildDefault("broken.slangp");
+        Config none;
+        dflt.loadSettings(none, "");
+        dflt.setLibrarySearchDirs({});
+        CHECK(dflt.enabled && dflt.usingBuildDefault(), "the default applied");
+        CHECK(dflt.render(f) == 0 && !dflt.takeNotice(note), "a broken build default draws plain without a notice");
+        CHECK(!dflt.lastError().empty() && dflt.enabled, "records why for Settings and is not switched off");
+        dflt.destroyGL();
+        ShaderChain::setBuiltinPresetDir("");
+    }
     std::error_code ec;
     fs::remove_all(d, ec);
 
