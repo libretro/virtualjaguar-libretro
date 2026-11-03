@@ -76,7 +76,7 @@ struct CliArgs {
     unsigned screenshotFrame = 120;
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage|-interface][:FILTER], states, about, cheats, library, login, achievements, keypad
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
-    std::string shader;             // --shader PRESET|off: the shader preset for this run (not saved); "" = the saved choice
+    std::string shader;             // --shader NAME|FILE|off: the shader preset for this run (not saved); "" = the setting (#1154)
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
     unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
@@ -312,8 +312,10 @@ public:
     bool tvHintShownThisRun_ = false; // the one-time TV mode hint (ui.tv_hint_shown) was shown, or tried, in this run
     unsigned toastCount_ = 0;         // toast() calls since start (the TV script counts them: osd_ is capped)
     bool tvFromCli_ = false;          // --tv was given: this run's TV state is not remembered (ui.tv_manual_on)
+    std::string shaderCli_;           // --shader, resolved: "off" or a .slangp path; this run's choice, never written to config.ini
+    std::string shaderCliErr_;        // --shader named a file that is not a usable preset: run() exits 2 with this
+    bool shaderHintShownThisRun_ = false;   // the one-time build-default filter hint (shader.hint_shown) was shown in this run
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
-    bool shaderFromCli_ = false;      // --shader was given: this run's preset is not written to config.ini (shader.*)
     bool autosaveSram = true;
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
     bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)

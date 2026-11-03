@@ -340,15 +340,28 @@ a failure.
   4.60 elsewhere). macOS's OpenGL 4.1 cannot build presets with arrays of arrays (CRT-Geom,
   CRT-Hyllian and 13 others in the bundle); the list greys them out and says why. Details:
   [packaging/README.md](packaging/README.md#macos-notes).
-- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
-- **Command line.** `--shader PRESET.slangp` runs this one run through that preset and
-  `--shader off` through none; neither is saved (the saved choice is untouched, like `--theme`).
-  A missing or malformed preset is a usage error (exit 2). Every run logs one line per chain
-  on stderr, `[shader] <preset> built: GLSL 410 on OpenGL 4.1`, or `... refused: ...` (the
-  OpenGL-version limit above) or `... failed: ...` (librashader's message); the app still
-  shows the plain picture. CI's [GL qualification](../.github/workflows/gl-qualification.yml)
-  drives every bundled preset through `--shader` and `--screenshot` on Linux, Windows and macOS
-  and reads those lines ([docs/agent/testing.md](../docs/agent/testing.md), "GL qualification").
+- **On by default.** A config that never chose a preset starts on the build default, the
+  first-party `vj-scanlines` (a mild CRT: one soft scanline per source line, brightness
+  compensated, RGB mask off; its sliders are under Preset parameters). `-DVJ_SHADER_DEFAULT=<file
+  in app/shaders/ | off>` picks it per build. Like the TV mode default, nothing is written to
+  `config.ini` until you change it (turn it off, pick another preset, or None), so a later build can
+  move the default for people who never chose; a stored choice always wins, and Settings > Reset of
+  the Video group returns to the build default. A config from 3.11 or earlier that never picked a
+  preset counts as never chose. When the runtime is missing or the default cannot compile on this GL,
+  the picture is drawn plain, one line goes to stderr, and Settings > Video > Shader says why; no
+  message is shown and the switch is not turned off, so a repaired install filters again. The first
+  time the default actually draws a frame a one-line hint says how to change it (`shader.hint_shown`).
+- **`--shader NAME|FILE|off`** sets the preset for one run without saving it: a name in the bundled
+  folder (`vj-scanlines`, `vj-sharp-bilinear`), a preset of the slang-shaders subset by its own path
+  (`crt/crt-easymode`, with or without `slang-shaders/` and `.slangp`), a `.slangp` file, or `off`.
+  An unknown name, or a file that is not a usable preset, is an argument error (exit 2). The stderr
+  line `[shader] this run: ...` names what was used, and once the chain is built or fails the app
+  prints one line `[shader] <preset path> built: GLSL 410 on OpenGL 4.1`, `... refused: ...` (the
+  GL-version limit: arrays of arrays on macOS) or `... failed: ...`, which the GL qualification
+  workflow (#1155) reads; it passes `--shader` on every launch so a build's default never moves
+  its reference pictures.
+- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`, `shader.chosen` (the user
+  moved away from the build default), `shader.hint_shown`.
 
 ### Getting the shader runtime
 
@@ -393,8 +406,10 @@ the pure logic and the missing-library fallback anywhere; the other two need the
 library (and a display, for the GL one) and report **skipped**, not passed,
 without them. Point `VJ_LIBRASHADER` at the library, and optionally
 `VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
-The per-PR builds exclude `shaders_gl` (`-E shaders_gl`: no display); the GL qualification
-workflow runs it on a real context on every desktop OS, where a skip is a failure.
+The per-PR builds exclude `shaders_gl` (`-E shaders_gl`: no display); the
+[GL qualification](../.github/workflows/gl-qualification.yml) workflow runs it on a real context on
+every desktop OS, where a skip is a failure, then renders every bundled preset through `--shader`
+([docs/agent/testing.md](../docs/agent/testing.md), "GL qualification").
 
 ## Game library
 

@@ -33,8 +33,9 @@ void applyAfterErase(App& app, const std::vector<KeyClass>& touched) {
         app.tvHintShownThisRun_ = false;   // ui.tv_hint_shown was erased with the group: the one-time TV mode hint may show again
     }
     if (has(touched, KeyClass::Shader)) {
-        app.video.shader.clearPreset();   // the shader switch and preset came back from the config; drop the loaded chain
+        app.video.shader.reloadPreset();   // the switch and preset came back from the config (the build default, #1154): rebuild
         app.video.shader.retry();
+        app.shaderHintShownThisRun_ = false;   // shader.hint_shown went with the group: the one-time hint may show again
     }
     if (has(touched, KeyClass::Video)) app.applyVsync();
     if (has(touched, KeyClass::Audio)) app.applyAudioSettings();

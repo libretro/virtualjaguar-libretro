@@ -23,6 +23,7 @@ const Exact kExact[] = {
     {"video.vsync", KeyClass::Video},         {"video.pacing", KeyClass::Video},
     // shader.folder is a path the user picked, like a library folder: kept.
     {"shader.enabled", KeyClass::Shader},     {"shader.preset", KeyClass::Shader},
+    {"shader.chosen", KeyClass::Shader},      {"shader.hint_shown", KeyClass::Shader},   // #1154: back to the build default
     {"audio.volume", KeyClass::Audio},        {"audio.mute", KeyClass::Audio},
     {"audio.target_ms", KeyClass::Audio},
     {"input.stick_dpad", KeyClass::Mapping},  {"input.kb.port", KeyClass::Mapping},

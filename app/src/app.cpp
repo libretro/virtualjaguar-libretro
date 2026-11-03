@@ -32,6 +32,11 @@
 #ifndef VJ_TV_DEFAULT_SETTING
 #define VJ_TV_DEFAULT_SETTING "auto"
 #endif
+// app/CMakeLists.txt's VJ_SHADER_DEFAULT (#1154): the preset a config that never chose one starts on, a file in the
+// bundled shaders/ folder or "off".  Stored only once the user moves away from it (ShaderChain::usingBuildDefault).
+#ifndef VJ_SHADER_DEFAULT_PRESET
+#define VJ_SHADER_DEFAULT_PRESET "vj-scanlines.slangp"
+#endif
 
 namespace vj {
 
@@ -235,7 +240,17 @@ void App::applySettingsFromConfig() {
     present.aspectOverride = cfg.getFloat("video.aspect", 0.0f);
     vsync = cfg.getBool("video.vsync", true);
     pacingDisplay = cfg.get("video.pacing", "jaguar") == "display";
+    video.shader.setBuildDefault(VJ_SHADER_DEFAULT_PRESET);
     video.shader.loadSettings(cfg, paths.root);
+    if (!shaderCli_.empty()) {   // --shader: this run only (saveConfig skips the shader keys)
+        if (shaderCli_ == "off") {
+            video.shader.enabled = false;
+        } else {
+            std::string err;
+            if (video.shader.usePreset(shaderCli_, err)) video.shader.enabled = true;
+            else shaderCliErr_ = err;   // a usage error (run() exits 2), not a plain picture with a toast
+        }
+    }
     volume = cfg.getFloat("audio.volume", 1.0f);
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
@@ -317,7 +332,7 @@ void App::saveConfig() {
     cfg.setBool("video.vsync", vsync);
     if (pacingFromCli_ < 0 || pacingDisplay != (pacingFromCli_ == 1))   // (--pacing is for this run only)
         cfg.set("video.pacing", pacingDisplay ? "display" : "jaguar");
-    if (!shaderFromCli_) video.shader.saveSettings(cfg);   // (--shader is for this run only)
+    if (shaderCli_.empty()) video.shader.saveSettings(cfg);   // (--shader is for this run only)
     cfg.setFloat("audio.volume", volume);
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
@@ -2532,22 +2547,19 @@ int App::run(const CliArgs& a) {
         themeFromCli_ = true;
         applyThemeChoice(a.theme);
     }
-    loadConfig();
-    // --shader PRESET|off: this run's preset, checked now (a missing or malformed file is a usage error, not a
-    // plain picture with a toast), never written back to config.ini.  CI's GL qualification drives every bundled
-    // preset through this (.github/workflows/gl-qualification.yml).
     if (!a.shader.empty()) {
-        shaderFromCli_ = true;
-        if (a.shader == "off") {
-            video.shader.enabled = false;
-        } else {
-            std::string why;
-            if (!video.shader.usePreset(a.shader, why)) {
-                std::fprintf(stderr, "--shader %s: %s\n", a.shader.c_str(), why.c_str());
-                return 2;
-            }
-            video.shader.enabled = true;
+        shaderCli_ = a.shader == "off" ? std::string("off") : ShaderChain::resolvePresetArg(a.shader);
+        if (shaderCli_.empty()) {
+            std::fprintf(stderr, "--shader: no preset '%s' (a name in the bundled shaders folder such as vj-scanlines or "
+                                 "slang-shaders/crt/crt-easymode, a .slangp file, or off)\n", a.shader.c_str());
+            return 2;
         }
+        std::fprintf(stderr, "[shader] this run: %s (--shader)\n", shaderCli_.c_str());
+    }
+    loadConfig();
+    if (!shaderCliErr_.empty()) {   // the file resolved but is not a usable preset (checked by loadConfig)
+        std::fprintf(stderr, "--shader %s: %s\n", shaderCli_.c_str(), shaderCliErr_.c_str());
+        return 2;
     }
     // The emulation thread (#967) is decided once per run: switching it live would move the core between threads.
     // Headless runs stay inline unless asked (the smoke tests' hashes are inline hashes), whatever the setting says.
