@@ -269,20 +269,38 @@ jobs:
       # created, drawn to, read back and destroyed through the same library the fallback child
       # uses: the smallest program that must come back promptly on this runner.
       - name: Loaders against the bundled Mesa
+        id: loaders
+        continue-on-error: true
         run: |
           set -eu
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
           export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
           export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          # Every launch bounded: on x64 the third run sat in the unbounded legacy replay for the
+          # job's whole budget (the x64 Mesa does not come back from something arm64's does).
+          SECONDS=0
           set +e
-          stage/bin/software-opengl/vj_gl_context_integration.exe legacy >glq/legacy-loader.txt 2>&1
-          echo "legacy loader exit: $?" | tee -a glq/legacy-loader.txt
+          timeout 90 stage/bin/software-opengl/vj_gl_context_integration.exe legacy >glq/legacy-loader.txt 2>&1
+          echo "legacy loader exit: $? after $SECONDS s" | tee -a glq/legacy-loader.txt
           set -e
           SECONDS=0
+          set +e
           timeout 120 stage/bin/software-opengl/vj_gl_context_integration.exe 2>&1 | tee glq/sdl-loader.txt
-          test "${PIPESTATUS[0]}" -eq 0
-          echo "context create/draw/destroy: $SECONDS s" | tee -a glq/sdl-loader.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "context create/draw/destroy: exit $code after $SECONDS s" | tee -a glq/sdl-loader.txt
+          # The same with llvmpipe's rasterizer threads off, then with softpipe (no LLVM at all):
+          # splits "llvmpipe's thread pool never winds down" from "WGL/the process itself".
+          for v in "LP_NUM_THREADS=0" "GALLIUM_DRIVER=softpipe"; do
+            SECONDS=0
+            set +e
+            env "$v" timeout 120 stage/bin/software-opengl/vj_gl_context_integration.exe >"glq/sdl-loader-${v%%=*}.txt" 2>&1
+            c=$?
+            set -e
+            echo "context create/draw/destroy with $v: exit $c after $SECONDS s" | tee -a glq/sdl-loader.txt
+          done
           command rm -f stage/bin/software-opengl/vj_gl_context_integration.exe
+          test "$code" -eq 0
 
       # The retry itself, with its side conditions: the child keeps the parent's data folder
       # (config.ini lands there, no instance-2 saves) and picks d3d12 only for a hardware adapter.
@@ -343,6 +361,7 @@ jobs:
           run_one child
           run_one no-thread --emu-thread off
           run_one no-vsync
+          LP_NUM_THREADS=0 run_one lp-single
           cat glq/timing.txt
 
       # shaders_gl: without a GL 3.3 context it would skip (77); here it runs on the bundled Mesa,
@@ -378,9 +397,9 @@ jobs:
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: Automatic Mesa fallback verdict
-        if: always() && steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes'
+        if: always() && steps.native.outputs.fallback == 'yes' && (steps.fallback.outputs.booted != 'yes' || steps.loaders.outcome != 'success')
         run: |
-          echo "::error::the automatic bundled-Mesa fallback did not boot, screenshot and exit cleanly (glq/automatic-*.txt, glq/timing.txt in the artifact)"
+          echo "::error::the bundled Mesa did not boot, draw and exit cleanly (glq/sdl-loader*.txt, glq/automatic-*.txt, glq/timing.txt in the artifact)"
           exit 1
 
       - name: shaders_gl verdict
