@@ -265,29 +265,9 @@ jobs:
             echo "fallback=yes" >>"$GITHUB_OUTPUT"
           fi
 
-      # The retry itself, with its side conditions: the child keeps the parent's data folder
-      # (config.ini lands there, no instance-2 saves) and picks d3d12 only for a hardware adapter.
-      - name: Automatic Mesa fallback boots to a window
-        if: steps.native.outputs.fallback == 'yes'
-        run: |
-          set -eu
-          # arm64 boots, screenshots and exits in ~3 s; the first x64 run took longer than 120 s, so
-          # the time is recorded and the limit is generous (the preset loop has its own per-launch one).
-          SECONDS=0
-          timeout 300 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
-            --screenshot "$PWD/glq/automatic-fallback.png" --screenshot-frame "$SHOT_FRAME" \
-            >glq/automatic-stdout.txt 2>glq/automatic-stderr.txt
-          echo "automatic fallback launch: $SECONDS s" | tee glq/automatic-seconds.txt
-          cat glq/automatic-stderr.txt
-          test -s glq/automatic-fallback.png
-          grep -q 'automatically retrying with bundled Mesa OpenGL' glq/automatic-stderr.txt
-          grep -E 'renderer=(llvmpipe|D3D12)' glq/automatic-stderr.txt
-          grep -E '\[gl\] (bundled Mesa will render through Direct3D 12|no hardware Direct3D 12 adapter)' glq/automatic-stderr.txt
-          test -f 'automatic fallback data/config.ini'
-          test ! -e 'automatic fallback data/saves/instance-2'
-
-      # The pre-#1138 loader against the bundled Mesa (before/after evidence), then the test
-      # binaries through the same library the fallback child uses.
+      # The pre-#1138 loader against the bundled Mesa (before/after evidence), then a context
+      # created, drawn to, read back and destroyed through the same library the fallback child
+      # uses: the smallest program that must come back promptly on this runner.
       - name: Loaders against the bundled Mesa
         run: |
           set -eu
@@ -298,12 +278,75 @@ jobs:
           stage/bin/software-opengl/vj_gl_context_integration.exe legacy >glq/legacy-loader.txt 2>&1
           echo "legacy loader exit: $?" | tee -a glq/legacy-loader.txt
           set -e
-          stage/bin/software-opengl/vj_gl_context_integration.exe 2>&1 | tee glq/sdl-loader.txt
+          SECONDS=0
+          timeout 120 stage/bin/software-opengl/vj_gl_context_integration.exe 2>&1 | tee glq/sdl-loader.txt
           test "${PIPESTATUS[0]}" -eq 0
+          echo "context create/draw/destroy: $SECONDS s" | tee -a glq/sdl-loader.txt
           command rm -f stage/bin/software-opengl/vj_gl_context_integration.exe
 
+      # The retry itself, with its side conditions: the child keeps the parent's data folder
+      # (config.ini lands there, no instance-2 saves) and picks d3d12 only for a hardware adapter.
+      # Recorded, not asserted here: the verdict step below fails the leg, after the diagnostics
+      # and whatever else can still run have produced their evidence.
+      - name: Automatic Mesa fallback boots to a window
+        id: fallback
+        if: steps.native.outputs.fallback == 'yes'
+        run: |
+          set -eu
+          # arm64 boots, screenshots and exits in 2 s; the first two x64 runs never came back
+          # within 120 s and 300 s although the PNG was written (frame 20 reached).
+          SECONDS=0
+          set +e
+          timeout 150 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
+            --screenshot "$PWD/glq/automatic-fallback.png" --screenshot-frame "$SHOT_FRAME" \
+            >glq/automatic-stdout.txt 2>glq/automatic-stderr.txt
+          code=$?
+          set -e
+          echo "automatic fallback launch: exit $code after $SECONDS s" | tee glq/automatic-seconds.txt
+          cat glq/automatic-stderr.txt
+          ok=yes
+          [ "$code" -eq 0 ] || ok=no
+          test -s glq/automatic-fallback.png || ok=no
+          grep -q 'automatically retrying with bundled Mesa OpenGL' glq/automatic-stderr.txt || ok=no
+          grep -E 'renderer=(llvmpipe|D3D12)' glq/automatic-stderr.txt || ok=no
+          grep -E '\[gl\] (bundled Mesa will render through Direct3D 12|no hardware Direct3D 12 adapter)' glq/automatic-stderr.txt || ok=no
+          test -f 'automatic fallback data/config.ini' || ok=no
+          test ! -e 'automatic fallback data/saves/instance-2' || ok=no
+          echo "booted=$ok" | tee -a glq/automatic-seconds.txt >>"$GITHUB_OUTPUT"
+
+      # Where the boot did not come back: three bounded experiments that split the question.
+      #   child      the Mesa-side copy launched directly (no parent waiting on it)
+      #   no-thread  the same with --emu-thread off (teardown of the real-time emulation thread?)
+      #   no-vsync   the same with video.vsync=0 seeded in config.ini (a swap interval that never
+      #              returns on a session without a compositor?)
+      - name: Fallback timing diagnostics
+        if: steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes'
+        run: |
+          set -eu
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          child=stage/bin/software-opengl/virtualjaguar.exe
+          run_one() {   # name, extra args...
+            local name="$1"; shift
+            local d="$PWD/glq/diag-$name"
+            mkdir -p "$d"
+            if [ "$name" = no-vsync ]; then printf 'video.vsync=0\n' >"$d/config.ini"; fi
+            SECONDS=0
+            set +e
+            timeout 100 "$child" --data-dir "$d" --screenshot "$PWD/glq/diag-$name.png" --screenshot-frame "$SHOT_FRAME" "$@" \
+              >"$PWD/glq/diag-$name.txt" 2>&1
+            local code=$?
+            set -e
+            echo "$name: exit $code after $SECONDS s, png $(stat -c %s "$PWD/glq/diag-$name.png" 2>/dev/null || echo none) bytes" | tee -a glq/timing.txt
+          }
+          run_one child
+          run_one no-thread --emu-thread off
+          run_one no-vsync
+          cat glq/timing.txt
+
       # shaders_gl: without a GL 3.3 context it would skip (77); here it runs on the bundled Mesa,
-      # and a skip is a failure.
+      # and a skip is a failure (judged after the preset loop).
       - name: shaders_gl on the bundled Mesa (skip = failure)
         id: shaders_gl
         continue-on-error: true
@@ -313,12 +356,14 @@ jobs:
           export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
           export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
           export VJ_LIBRASHADER="$(cygpath -w "$PWD/stage/bin/librashader.dll")"
-          build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
+          timeout 600 build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
           test "${PIPESTATUS[0]}" -eq 0
 
       # Every preset through the SHIPPED path: the stage/bin exe, which retries beside Mesa on its
-      # own (so each launch is the parent plus the child; the renderer line is the child's).
+      # own (so each launch is the parent plus the child; the renderer line is the child's).  Only
+      # once the plain boot came back: 500 launches of a boot that does not are hours of nothing.
       - name: Render every bundled preset
+        if: steps.native.outputs.fallback != 'yes' || steps.fallback.outputs.booted == 'yes'
         run: |
           set -eu
           refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
@@ -327,10 +372,16 @@ jobs:
             expect_log=(--expect-log 'automatically retrying with bundled Mesa OpenGL')
           fi
           python -I "$QUALIFY" --os windows --exe stage/bin/virtualjaguar.exe --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 1 --timeout 300 \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 1 --timeout 150 \
             --expect-renderer 'llvmpipe|D3D12' ${expect_log[@]+"${expect_log[@]}"} \
             --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
+
+      - name: Automatic Mesa fallback verdict
+        if: steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes'
+        run: |
+          echo "::error::the automatic bundled-Mesa fallback did not boot, screenshot and exit cleanly (glq/automatic-*.txt, glq/timing.txt in the artifact)"
+          exit 1
 
       - name: shaders_gl verdict
         if: steps.shaders_gl.outcome != 'success'

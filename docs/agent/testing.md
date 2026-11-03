@@ -417,10 +417,15 @@ candidates into the artifact.
 - `identical to the --shader off capture` → the preset changed nothing; either the chain fell back
   to the plain presenter (check for a `[shader]` line) or it is a true no-op at this scale (list it).
 - `screenshot is black` → the window drew nothing (lost context, hidden window, swap failure).
-- Windows "Automatic Mesa fallback" step red → the stock-Windows path (#1138) regressed: the retry
-  line, the `renderer=` line, `config.ini` in the parent's data dir and no `saves/instance-2`.
-  If `native-driver-gl33.txt` ends in exit 0 the runner image has grown a real GL and the fallback
-  is not exercised on that leg (the step is skipped with a warning); arm64 is then the proof.
+- Windows "Automatic Mesa fallback verdict" red → the stock-Windows path (#1138) regressed or the
+  boot did not come back: `automatic-seconds.txt` has the exit code, the seconds and which of the
+  checks failed (the retry line, the `renderer=` line, `config.ini` in the parent's data dir, no
+  `saves/instance-2`); `timing.txt` then has three bounded experiments (the Mesa-side child run
+  directly, the same with `--emu-thread off`, the same with `video.vsync=0`) that split "the
+  parent never returns" from "the window never finishes a swap". The preset loop is skipped on
+  that leg until the plain boot works. If `native-driver-gl33.txt` ends in exit 0 the runner image
+  has grown a real GL and the fallback is not exercised there (skipped with a warning); arm64 is
+  then the proof.
 
 ## Headless framebuffer caveat
 
