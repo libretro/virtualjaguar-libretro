@@ -372,6 +372,52 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
 - **Failed start:** `emu_thread_start_fallback` runs with `VJ_TEST_EMU_START_FAIL=1`, which takes the real failure
   branch of `App::startEmuThread`: the run falls back inline.
 
+## GL qualification (desktop app, windowed, every shader preset)
+
+`.github/workflows/gl-qualification.yml` (#1155) boots `app/` **windowed with a real OpenGL
+context** on hosted runners, once per bundled `.slangp`, and keeps the screenshots. Legs: Linux
+(`ubuntu-24.04`, Xvfb + Mesa llvmpipe), Windows x64 (hosted, no vendor GL: the app must relaunch
+beside the bundled MSYS2 Mesa, #1138/#1143), Windows arm64 (same, plus the portable test build
+Store testers used), macOS arm64 (Apple OpenGL 4.1). Runs on PRs touching the GL/shader path,
+nightly, on dispatch, and `release.yml` requires it on tags and `release/**`.
+
+Per leg: one build, `cmake --install` into `stage/`, then `vj_shader_tests gl` run **directly**
+(exit 77 = skipped = failure here; everywhere else it is `-E shaders_gl`), then
+`app/test/gl-qualification/gl_qualify.py` launches `stage/bin/virtualjaguar --shader <preset>
+--screenshot <png> --screenshot-frame 20 test/roms/yarc.j64` for `--shader off` and every preset.
+Per (leg, preset) it asserts: exit 0 before the timeout; the `[gl] version=...; renderer=` line
+matches the leg (`llvmpipe` / `llvmpipe|D3D12` after `automatically retrying with bundled Mesa
+OpenGL` / `Apple`); the PNG decodes and is not black; a `[shader] <preset> built` line
+(`shaders.cpp`); the picture differs from the plain capture unless the preset is in
+`identical-to-plain.txt`. A `[shader] ... refused` line (macOS OpenGL 4.1 has no
+`GL_ARB_arrays_of_arrays`) passes only for presets in `refused-<os>.txt`, so the refused set can
+shrink but never grow. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
+compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
+candidates into the artifact.
+
+**Reading a failure.** The job summary lists failed presets with the reason and the last `[gl]` /
+`[shader]` lines. Download `gl-qualification-<leg>` (always uploaded): `shots/<preset>.png`
+(`/` in the preset path becomes `__`), `logs/<preset>.log` (the full stderr of that launch),
+`results.json`, `summary.md`, plus the leg's probes (`glxinfo.txt`, `gl-context-integration.txt`,
+`shaders_gl.txt`; Windows adds `native-driver*.txt`, `automatic-stderr.txt`, `legacy-loader.txt`).
+- `no \`[gl] version=...\`` line → the app never got a context: read the log head (SDL error) and
+  the probe files; on Windows check `native-driver*.txt` and whether the retry line is there.
+- `renderer ... does not match` → the leg landed on the wrong driver (e.g. Windows picked WARP
+  instead of llvmpipe/d3d12; Linux lost `LIBGL_ALWAYS_SOFTWARE`).
+- `shader failed: ...` → librashader's compile/link message; the preset or the runtime pin broke.
+  One preset = that preset; all presets = the chain/loader (look at `shaders_gl.txt` too).
+- `refused and not in the allowlist` → a preset newly needs a GL feature the leg lacks: fix it or,
+  if genuinely platform-limited, add it to `refused-<os>.txt` with the reason.
+- `no \`[shader] ... built\` line` → the chain never ran: the game had not drawn by frame 20 or the
+  preset was not enabled; compare `shots/off.png` and the log's `[emu]` lines.
+- `identical to the --shader off capture` → the preset changed nothing; either the chain fell back
+  to the plain presenter (check for a `[shader]` line) or it is a true no-op at this scale (list it).
+- `screenshot is black` → the window drew nothing (lost context, hidden window, swap failure).
+- Windows "Automatic Mesa fallback" step red → the stock-Windows path (#1138) regressed: the retry
+  line, the `renderer=` line, `config.ini` in the parent's data dir and no `saves/instance-2`.
+  If `native-driver-gl33.txt` ends in exit 0 the runner image has grown a real GL and the fallback
+  is not exercised on that leg (the step is skipped with a warning); arm64 is then the proof.
+
 ## Headless framebuffer caveat
 
 The miniretro harness in `test/regression_test.sh` doesn't expose the same composited

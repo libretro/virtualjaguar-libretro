@@ -1,0 +1,384 @@
+name: GL qualification
+
+# Boots the desktop app WINDOWED, with a real OpenGL context, on hosted runners of every desktop
+# OS, renders every bundled shader preset through librashader and keeps the screenshots (#1155).
+# The job fails on a GL path that does not boot, a preset that does not compile, a black or
+# unchanged picture, or a `shaders_gl` test that would skip.  Legs:
+#
+#   linux          ubuntu-24.04, Xvfb + Mesa llvmpipe (GLX).  Deterministic: the leg to gate goldens on.
+#   windows x64    hosted windows-latest, NO vendor OpenGL (WGL offers the GDI Generic 1.1 driver,
+#                  the Store-certification failure of #1138): the app must relaunch itself beside
+#                  the bundled MSYS2 Mesa (app/src/platform/software_gl_windows.cpp, #1143) and
+#                  land on llvmpipe or the d3d12 Gallium driver.
+#   windows arm64  windows-11-arm, the same fallback (what windows-gl-test.yml proved until this
+#                  workflow replaced it), plus the portable test build Store testers used.
+#   macos          hosted Apple-silicon runner, Apple's OpenGL 4.1 context; the arrays-of-arrays
+#                  presets are refused there (allowlist app/test/gl-qualification/refused-macos.txt).
+#
+# Per leg: one build, `cmake --install` into stage/, `vj_shader_tests gl` run directly (exit 77 =
+# skipped = FAILURE here, unlike the -E shaders_gl exclusion in app.yml / app-package.yml), then
+# app/test/gl-qualification/gl_qualify.py drives `--shader <preset> --screenshot` for every
+# .slangp under stage/bin/shaders and writes the job summary.  The gl-qualification-<leg>
+# artifact (screenshots, per-preset logs, results.json, summary.md, the [gl] diagnostics) is
+# uploaded pass or fail.  How to read a failure: docs/agent/testing.md, "GL qualification".
+#
+# Callers: PRs touching the GL/shader path (paths below), release.yml on tags and release/**
+# (workflow_call), a nightly schedule, and workflow_dispatch (preset_set=smoke for a quick run,
+# refresh_goldens to collect app/test/golden/gl/<os>/ candidates in the artifacts).
+
+on:
+  pull_request:
+    paths:
+      - 'app/src/video*'
+      - 'app/src/shaders*'
+      - 'app/src/present_util.*'
+      - 'app/src/gl_context.*'
+      - 'app/src/software_gl.h'
+      - 'app/src/platform/**'
+      - 'app/src/main.cpp'
+      - 'app/src/app.cpp'
+      - 'app/shaders/**'
+      - 'app/packaging/librashader/**'
+      - 'app/packaging/windows/stage-software-gl.py'
+      - 'app/cmake/VJShaders.cmake'
+      - 'app/cmake/VJPlatformTests.cmake'
+      - 'app/test/shader_tests.cpp'
+      - 'app/test/gl-qualification/**'
+      - 'app/tests/gl_context*'
+      - 'app/tests/software_gl_test.cpp'
+      - '.github/workflows/gl-qualification.yml'
+      - '.github/workflows/app-package.yml'
+      - '.github/workflows/librashader.yml'
+  workflow_call:
+    inputs:
+      preset_set:
+        description: "all | smoke"
+        type: string
+        default: all
+      refresh_goldens:
+        type: boolean
+        default: false
+  schedule:
+    - cron: '45 5 * * *'   # nightly, after the develop nightly's own matrix has settled
+  workflow_dispatch:
+    inputs:
+      preset_set:
+        description: "Presets to render"
+        type: choice
+        options: [all, smoke]
+        default: all
+      refresh_goldens:
+        description: "Also collect golden candidates (golden/gl/<os>/ in the artifacts)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: gl-qualification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PRESET_SET: ${{ inputs.preset_set || 'all' }}
+  REFRESH_GOLDENS: ${{ inputs.refresh_goldens && 'true' || 'false' }}
+  # The picture the chains filter: the committed public ROM the smoke tests use.
+  CONTENT_ROM: test/roms/yarc.j64
+  # UI frames before the capture.  The emulation thread runs the core meanwhile, so the game
+  # has drawn long before frame 20 even on a slow software renderer.
+  SHOT_FRAME: '20'
+  QUALIFY: app/test/gl-qualification/gl_qualify.py
+  LISTS: app/test/gl-qualification
+
+jobs:
+  # Upstream publishes no Linux librashader: the Linux leg takes the from-source build
+  # (cached by commit + target, seconds on a hit).  macOS and Windows use the pinned prebuilts.
+  librashader:
+    name: librashader runtime
+    uses: ./.github/workflows/librashader.yml
+
+  # ------------------------------------------------------------------------------------------
+  linux:
+    name: Linux x86_64 (Xvfb, llvmpipe)
+    needs: [librashader]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-x86_64-unknown-linux-gnu
+          path: librashader
+
+      - name: Install build dependencies, Xvfb and Mesa
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake pkg-config xvfb mesa-utils libgl1-mesa-dri \
+            libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev \
+            libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libegl1-mesa-dev \
+            libdbus-1-dev libudev-dev libwayland-dev wayland-protocols libdecor-0-dev \
+            libcurl4-openssl-dev
+
+      - name: Configure, build and install
+        run: |
+          set -eu
+          cat librashader/BUILD-INFO.txt
+          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly \
+            -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader.so"
+          cmake --build build -j"$(nproc)" --target virtualjaguar vj_shader_tests vj_gl_context_integration
+          cmake --install build --prefix "$PWD/stage"
+          test -f stage/bin/librashader.so
+          find stage/bin/shaders -name '*.slangp' | wc -l
+
+      - name: What llvmpipe offers under Xvfb
+        run: |
+          set -eu
+          mkdir -p glq
+          export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11
+          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' glxinfo -B | tee glq/glxinfo.txt
+          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' build/vj_gl_context_integration | tee glq/gl-context-integration.txt
+
+      # The headless shader test on a real context: a skip (77) is a failure on this leg.
+      - name: shaders_gl (skip = failure)
+        run: |
+          set -eu
+          export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 VJ_LIBRASHADER="$PWD/stage/bin/librashader.so"
+          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Render every bundled preset
+        run: |
+          set -eu
+          refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
+          export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11
+          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' \
+            python3 -I "$QUALIFY" --os linux --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
+              --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 2 --timeout 240 \
+              --expect-renderer 'llvmpipe' \
+              --refused-allowlist "$LISTS/refused-linux.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
+              --goldens app/test/golden/gl/linux --preset-set "$PRESET_SET" "${refresh[@]}"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gl-qualification-linux-x86_64
+          path: glq
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------------------------------
+  windows:
+    name: Windows ${{ matrix.arch }} (bundled Mesa fallback)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+            msystem: MINGW64
+            pkgs: >-
+              zip
+              mingw-w64-x86_64-gcc
+              mingw-w64-x86_64-cmake
+              mingw-w64-x86_64-ninja
+              mingw-w64-x86_64-mesa
+              mingw-w64-x86_64-python
+            cmake_extra: ''
+          - arch: arm64
+            os: windows-11-arm
+            msystem: CLANGARM64
+            pkgs: >-
+              zip
+              mingw-w64-clang-aarch64-clang
+              mingw-w64-clang-aarch64-cmake
+              mingw-w64-clang-aarch64-ninja
+              mingw-w64-clang-aarch64-mesa
+              mingw-w64-clang-aarch64-python
+            cmake_extra: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    env:
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: false
+          install: ${{ matrix.pkgs }}
+
+      - name: Configure, build, unit tests, install
+        run: |
+          set -eu
+          cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON ${{ matrix.cmake_extra }}
+          cmake --build build -j4 --target virtualjaguar vj_gl_context_test vj_gl_context_integration vj_software_gl_test vj_shader_tests
+          build/vj_gl_context_test.exe
+          build/vj_software_gl_test.exe
+          cmake --install build --prefix "$PWD/stage"
+          test -f stage/bin/librashader.dll
+          find stage/bin/shaders -name '*.slangp' | wc -l
+
+      # The second app copy beside MSYS2 Mesa that the automatic retry launches (#1138/#1143).
+      - name: Stage the bundled software OpenGL runtime
+        run: |
+          set -eu
+          mkdir -p glq
+          python app/packaging/windows/stage-software-gl.py stage
+          command cp -f build/vj_gl_context_integration.exe stage/bin/software-opengl/
+
+      # What the runner's own WGL offers.  Hosted runners have no vendor driver: the GDI Generic
+      # OpenGL 1.1 of a stock Windows install, exactly the Store-certification machine.  If a
+      # runner image ever grows a real GL 3.3, the fallback is not exercised here any more; the
+      # step records that and the fallback assertions below are skipped with a warning.
+      - name: Probe the native OpenGL driver
+        id: native
+        run: |
+          set -eu
+          set +e
+          build/vj_gl_context_integration.exe legacy >glq/native-driver.txt 2>&1
+          legacy=$?
+          build/vj_gl_context_integration.exe >glq/native-driver-gl33.txt 2>&1
+          native=$?
+          set -e
+          echo "legacy loader exit: $legacy" | tee -a glq/native-driver.txt
+          echo "GL 3.3 probe exit: $native" | tee -a glq/native-driver-gl33.txt
+          cat glq/native-driver.txt glq/native-driver-gl33.txt
+          if [ "$native" -eq 0 ]; then
+            echo "::warning::this $ARCH runner has a native OpenGL 3.3 driver; the bundled-Mesa fallback is not exercised on this leg"
+            echo "fallback=no" >>"$GITHUB_OUTPUT"
+          else
+            echo "fallback=yes" >>"$GITHUB_OUTPUT"
+          fi
+
+      # The retry itself, with its side conditions: the child keeps the parent's data folder
+      # (config.ini lands there, no instance-2 saves) and picks d3d12 only for a hardware adapter.
+      - name: Automatic Mesa fallback boots to a window
+        if: steps.native.outputs.fallback == 'yes'
+        run: |
+          set -eu
+          timeout 120 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
+            --screenshot "$PWD/glq/automatic-fallback.png" --screenshot-frame "$SHOT_FRAME" \
+            >glq/automatic-stdout.txt 2>glq/automatic-stderr.txt
+          cat glq/automatic-stderr.txt
+          test -s glq/automatic-fallback.png
+          grep -q 'automatically retrying with bundled Mesa OpenGL' glq/automatic-stderr.txt
+          grep -E 'renderer=(llvmpipe|D3D12)' glq/automatic-stderr.txt
+          grep -E '\[gl\] (bundled Mesa will render through Direct3D 12|no hardware Direct3D 12 adapter)' glq/automatic-stderr.txt
+          test -f 'automatic fallback data/config.ini'
+          test ! -e 'automatic fallback data/saves/instance-2'
+
+      # The pre-#1138 loader against the bundled Mesa (before/after evidence), then the test
+      # binaries through the same library the fallback child uses.
+      - name: Loaders against the bundled Mesa
+        run: |
+          set -eu
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          set +e
+          stage/bin/software-opengl/vj_gl_context_integration.exe legacy >glq/legacy-loader.txt 2>&1
+          echo "legacy loader exit: $?" | tee -a glq/legacy-loader.txt
+          set -e
+          stage/bin/software-opengl/vj_gl_context_integration.exe 2>&1 | tee glq/sdl-loader.txt
+          test "${PIPESTATUS[0]}" -eq 0
+          command rm -f stage/bin/software-opengl/vj_gl_context_integration.exe
+
+      # shaders_gl: without a GL 3.3 context it would skip (77); here it runs on the bundled Mesa,
+      # and a skip is a failure.
+      - name: shaders_gl on the bundled Mesa (skip = failure)
+        run: |
+          set -eu
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          export VJ_LIBRASHADER="$(cygpath -w "$PWD/stage/bin/librashader.dll")"
+          build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
+          test "${PIPESTATUS[0]}" -eq 0
+
+      # Every preset through the SHIPPED path: the stage/bin exe, which retries beside Mesa on its
+      # own (so each launch is the parent plus the child; the renderer line is the child's).
+      - name: Render every bundled preset
+        run: |
+          set -eu
+          refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
+          expect_log=()
+          if [ "${{ steps.native.outputs.fallback }}" = yes ]; then
+            expect_log=(--expect-log 'automatically retrying with bundled Mesa OpenGL')
+          fi
+          python -I "$QUALIFY" --os windows --exe stage/bin/virtualjaguar.exe --shaders stage/bin/shaders \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 1 --timeout 300 \
+            --expect-renderer 'llvmpipe|D3D12' "${expect_log[@]}" \
+            --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
+            --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" "${refresh[@]}"
+
+      # The portable test build Store testers and #1138's reporters ran (arm64 only, as before).
+      - name: Package the portable test build
+        if: matrix.arch == 'arm64'
+        run: |
+          set -eu
+          printf '%s\n' 'Open virtualjaguar.exe normally. If its graphics driver cannot initialize, it automatically retries with bundled Mesa OpenGL: hardware rendering through Direct3D 12 when the machine has it, CPU rendering (slower) otherwise. No driver installation or special launcher is needed.' >stage/bin/TEST-BUILD.txt
+          bash app/packaging/windows/package.sh stage gl-test glq/portable --arch arm64
+          printf '%s\n' "$GITHUB_SHA" >glq/portable/SOURCE_COMMIT.txt
+          sha256sum glq/portable/*.zip >glq/portable/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gl-qualification-windows-${{ matrix.arch }}
+          path: glq
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------------------------------
+  macos:
+    name: macOS arm64 (Apple OpenGL 4.1)
+    runs-on: macos-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure, build and install
+        run: |
+          set -eu
+          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly
+          cmake --build build --config Release -j4 --target virtualjaguar vj_shader_tests vj_gl_context_integration
+          cmake --install build --prefix "$PWD/stage"
+          test -f stage/bin/librashader.dylib
+          find stage/bin/shaders -name '*.slangp' | wc -l
+
+      # A hosted runner's window server and Apple GL: what gl_context_integration sees.
+      - name: What the Apple OpenGL context offers
+        run: |
+          set -eu
+          mkdir -p glq
+          perl -e 'alarm shift; exec @ARGV' 120 build/vj_gl_context_integration 2>&1 | tee glq/gl-context-integration.txt
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: shaders_gl (skip = failure)
+        run: |
+          set -eu
+          export VJ_LIBRASHADER="$PWD/stage/bin/librashader.dylib"
+          perl -e 'alarm shift; exec @ARGV' 600 build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Render every bundled preset
+        run: |
+          set -eu
+          refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
+          python3 -I "$QUALIFY" --os macos --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 2 --timeout 240 --low-dpi \
+            --expect-renderer 'Apple' \
+            --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
+            --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" "${refresh[@]}"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gl-qualification-macos-arm64
+          path: glq
+          if-no-files-found: error

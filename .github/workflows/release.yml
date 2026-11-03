@@ -680,13 +680,28 @@ jobs:
     secrets: inherit
 
   # ----------------------------------------------------------------
+  # GL qualification (#1155): the desktop app boots windowed with a real
+  # OpenGL context on every desktop OS and renders every bundled shader
+  # preset.  Required on tags and release/** (the tagged release and the
+  # release-branch prerelease wait for it); the develop nightly does not
+  # run it here, gl-qualification.yml has its own nightly schedule.
+  # ----------------------------------------------------------------
+  gl-qualification:
+    name: GL qualification
+    needs: [guard]
+    if: ${{ github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/') }}
+    uses: ./.github/workflows/gl-qualification.yml
+    with:
+      preset_set: all
+
+  # ----------------------------------------------------------------
   # Release: collect all artifacts, generate SHA256SUMS, build the
   # release body from docs/RELEASE_NOTES_v<TAG>.md (artifact list
   # and embedded SHA256 checksums always appended), then create the
   # tagged release.  See SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, gl-qualification]
     # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
     # tag (release-notes lookup, release title, `gh release create <TAG>`), so
     # this guard is what keeps a develop push from creating a release literally
@@ -705,6 +720,7 @@ jobs:
       && needs.switch-build.result == 'success'
       && needs.jagcd-tools.result == 'success'
       && (needs.app-packages.result == 'success' || needs.app-packages.result == 'skipped')
+      && needs.gl-qualification.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -816,7 +832,7 @@ jobs:
   # ----------------------------------------------------------------
   nightly:
     name: Update rolling prerelease
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, gl-qualification]
     # The app packages (app-packages) are waited for and not required either:
     # a macOS notarization outage must not withhold the core nightly.
     # Wait for the tools build, but do not REQUIRE it.  chdman is an
@@ -832,6 +848,7 @@ jobs:
       && needs.build.result == 'success'
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
+      && (needs.gl-qualification.result == 'success' || needs.gl-qualification.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write   # move the tag, create/update the release
