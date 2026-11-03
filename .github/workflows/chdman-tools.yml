@@ -283,6 +283,18 @@ jobs:
       - name: Zip
         run: cd dist-jagcd && zip -r ../${{ matrix.artifact }}.zip .
 
+      # The release gate (#1152) re-checks the Developer ID signatures inside the zip itself; the
+      # one fact it cannot derive from the file is whether Apple issued the notarization ticket.
+      - name: Record the signing outcome for the release gate
+        if: matrix.os == 'macos-latest'
+        run: bash scripts/release/signing-status.sh "${{ matrix.artifact }}.zip" "${{ steps.sign.outputs.signed || 'false' }}" "${{ steps.sign.outputs.notarized || 'false' }}" developer-id signing-status
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'macos-latest'
+        with:
+          name: signing-status-jagcd-macos
+          path: signing-status/
+          retention-days: 14
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}

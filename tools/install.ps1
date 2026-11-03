@@ -30,7 +30,12 @@
 
   Nothing is written under -DryRun, and nothing needs administrator rights
   unless RetroArch lives somewhere protected (then re-run elevated, or pass
-  -CoreDir).  Every download is verified against the release's SHA256SUMS.txt.
+  -CoreDir).  Every download is verified against the release's SHA256SUMS.txt,
+  and that list is itself checked before it is trusted: with minisign on PATH
+  its detached signature must verify with the project release key pinned in
+  this script, otherwise with the GitHub CLI (gh, logged in) its build
+  attestation must verify.  A bad signature aborts; a release that predates
+  signing only warns.  -NoVerify (VJ_NOVERIFY=1) skips that step.
 
 .PARAMETER What
   core | app | both.  Default: ask; with no terminal, the core, plus the app if
@@ -55,6 +60,8 @@
   Reinstall even if already up to date.
 .PARAMETER NoShortcut
   Do not create the Start-menu shortcut.
+.PARAMETER NoVerify
+  Skip the SHA256SUMS.txt signature / provenance check (the checksums still apply).
 #>
 [CmdletBinding()]
 param(
@@ -68,7 +75,8 @@ param(
   [switch]$DryRun     = [bool]$env:VJ_DRYRUN,
   [switch]$List,
   [switch]$Force      = [bool]$env:VJ_FORCE,
-  [switch]$NoShortcut
+  [switch]$NoShortcut,
+  [switch]$NoVerify   = [bool]$env:VJ_NOVERIFY
 )
 
 # Windows PowerShell 5.1 renders the progress bar so slowly that downloads crawl, and
@@ -79,6 +87,12 @@ $script:Repo      = 'libretro/virtualjaguar-libretro'
 $script:CoreBase  = 'virtualjaguar_libretro'
 $script:AppExe    = 'virtualjaguar.exe'
 $script:AppName   = 'Virtual Jaguar'
+# The project release key (minisign), the second line of docs/release-signing.pub in the
+# repository.  Empty until the maintainer generates the key (app/packaging/README.md, "Signed
+# checksums"); empty means the signature check is skipped with a note.  Pinned on purpose: a
+# key fetched from the same place as the files would prove nothing.
+$script:MinisignPubKey = ''
+if ($env:VJ_INSTALL_MINISIGN_PUBKEY) { $script:MinisignPubKey = $env:VJ_INSTALL_MINISIGN_PUBKEY }
 
 # ---------------------------------------------------------------------------
 # output
@@ -178,7 +192,43 @@ function Get-Sums([string]$Work) {
   }
   if ($t.Count -eq 0) { return $null }
   $script:Sums = $t
+  Test-SumsProvenance $Work
   return $t
+}
+
+# The checksum list is the root of trust for every download, so check WHO published it before
+# trusting it (issue #1151): its minisign signature with the pinned release key, or, failing
+# minisign, its GitHub build attestation through gh.  Once per run.  A bad signature /
+# attestation is fatal; a release that has none (older than signing) only warns.
+function Test-SumsProvenance([string]$Work) {
+  if ($script:SumsChecked) { return }
+  $script:SumsChecked = $true
+  if ($NoVerify) { Write-Note 'SHA256SUMS.txt signature check skipped (-NoVerify)'; return }
+  $sums = Join-Path $Work 'SHA256SUMS.txt'
+  $minisign = Get-Command minisign -ErrorAction SilentlyContinue
+  if ($script:MinisignPubKey -and $minisign) {
+    $sig = Join-Path $Work 'SHA256SUMS.txt.minisig'
+    $have = $false
+    try { Receive-File (Get-ReleaseUrl $Channel 'SHA256SUMS.txt.minisig') $sig; $have = (Test-Path -LiteralPath $sig) -and ((Get-Item -LiteralPath $sig).Length -gt 0) } catch { $have = $false }
+    if (-not $have) {
+      Write-Warn2 'this release has no SHA256SUMS.txt.minisig (older than signed checksums, or signing was skipped): checksums only.'
+      return
+    }
+    $null = & $minisign.Source -Vm $sums -x $sig -P $script:MinisignPubKey -q 2>&1
+    if ($LASTEXITCODE -eq 0) { Write-Ok 'SHA256SUMS.txt signature verified (project release key)'; return }
+    Stop-Install "SHA256SUMS.txt.minisig does NOT verify with the project release key -- nothing was changed.`n     Either the download was tampered with or the key changed.  See`n     https://github.com/$($script:Repo)/blob/master/SECURITY.md  (-NoVerify skips this check)"
+  }
+  $gh = Get-Command gh -ErrorAction SilentlyContinue
+  if ($gh) {
+    $out = ''
+    try { $out = (& $gh.Source attestation verify $sums --repo $script:Repo 2>&1 | Out-String) } catch { $out = "$_" }
+    $rc = $LASTEXITCODE
+    if ($rc -eq 0) { Write-Ok 'SHA256SUMS.txt provenance verified (GitHub build attestation)'; return }
+    if ($out -match 'HTTP 404|no attestations') { Write-Warn2 'no build attestation for this release''s SHA256SUMS.txt (older than attestations): checksums only.'; return }
+    if ($out -match 'gh auth login') { Write-Note 'gh is not logged in, so the build attestation was not checked (gh auth login, or install minisign).'; return }
+    Stop-Install "the build attestation of SHA256SUMS.txt did NOT verify -- nothing was changed.`n     $($out.Trim())`n     See https://github.com/$($script:Repo)/blob/master/SECURITY.md  (-NoVerify skips this check)"
+  }
+  Write-Note 'install minisign (or the GitHub CLI, logged in) to verify the release signature: checksums only.'
 }
 
 function Test-FileHash([string]$Path, [string]$Name, [string]$Work) {
@@ -631,6 +681,7 @@ function Invoke-VjInstall {
   if (-not (Test-WindowsHost)) { Stop-Install 'This installer is for Windows.  On macOS and Linux use tools/install.sh.' }
   try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
   $script:Sums = $null
+  $script:SumsChecked = $false
   if ($What -and $What -notin 'core', 'app', 'both') { Stop-Install "-What takes core, app or both (got '$What')." }
   if ($AppFormat -and $AppFormat -notin 'portable', 'setup') { Stop-Install "-AppFormat takes portable or setup (got '$AppFormat')." }
 

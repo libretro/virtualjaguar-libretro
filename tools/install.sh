@@ -35,6 +35,8 @@
 #   ./install.sh --dry-run
 #   ./install.sh --auto-update weekly   install a background updater
 #   ./install.sh --auto-update off      remove it
+#   ./install.sh --no-verify            skip the SHA256SUMS.txt signature /
+#                                       provenance check (checksums still apply)
 #
 # Environment:
 #   VJ_INSTALL_BASE_URL   release host, default https://github.com/<repo>/releases
@@ -42,6 +44,17 @@
 #                         <base>/download/<tag>/<file>; file:// works)
 #   VJ_INSTALL_RETROARCH  path to the RetroArch binary, skips the search
 #   VJ_INSTALL_NO_TTY     1 = behave as if there were no terminal (tests, CI)
+#   VJ_INSTALL_MINISIGN_PUBKEY  overrides the pinned release public key (tests)
+#
+# VERIFICATION
+#   Every download is compared with the release's SHA256SUMS.txt.  That list
+#   is itself checked before it is trusted: with `minisign` installed, its
+#   detached signature (SHA256SUMS.txt.minisig) must verify with the project
+#   release key pinned in this script; otherwise, with the GitHub CLI (`gh`)
+#   installed and logged in, its build-provenance attestation must verify
+#   (`gh attestation verify`).  A bad signature or attestation aborts before
+#   anything is written; a release that predates signing only warns.
+#   --no-verify skips that step.  https://github.com/libretro/virtualjaguar-libretro/blob/master/SECURITY.md
 #
 # THE APP
 #   macOS    Virtual Jaguar.app from the zip into /Applications, or
@@ -78,6 +91,13 @@ set -eu
 REPO="libretro/virtualjaguar-libretro"
 # master = the released installer; --auto-update re-fetches this URL.
 RAW="https://raw.githubusercontent.com/$REPO/master/tools/install.sh"
+# The project release key (minisign), the second line of docs/release-signing.pub
+# in the repository.  Empty until the maintainer generates the key (see
+# app/packaging/README.md, "Signed checksums"); empty means the signature
+# check is skipped with a note.  Pinned here on purpose: a key fetched from
+# the same place as the files would prove nothing.
+MINISIGN_PUBKEY=""
+[ -z "${VJ_INSTALL_MINISIGN_PUBKEY:-}" ] || MINISIGN_PUBKEY=$VJ_INSTALL_MINISIGN_PUBKEY
 BASE="${VJ_INSTALL_BASE_URL:-https://github.com/$REPO/releases}"
 BASE="${BASE%/}"
 CORE_NAME="virtualjaguar_libretro"
@@ -97,6 +117,7 @@ FORCE=0
 ALLOW_UNSIGNED=0
 AUTO_UPDATE=""
 CORE_SOFT=0
+NO_VERIFY=0
 
 # --------------------------------------------------------------------------
 # output helpers
@@ -197,6 +218,7 @@ Virtual Jaguar -- installer / updater for the RetroArch core and the app.
   --dry-run                        print the plan, change nothing
   --yes                            no prompts, take every default
   --auto-update daily|weekly|off   background updater
+  --no-verify                      skip the SHA256SUMS.txt signature / provenance check
   --help
 
 Piped into a shell, prompts read /dev/tty; with no tty it takes defaults.
@@ -223,6 +245,7 @@ while [ $# -gt 0 ]; do
     --list)        LIST_ONLY=1; shift ;;
     --force)       FORCE=1; shift ;;
     --allow-unsigned) ALLOW_UNSIGNED=1; shift ;;
+    --no-verify)   NO_VERIFY=1; shift ;;
     -h|--help)     usage ;;
     *)             die "unknown option: $1   (try --help)" ;;
   esac
@@ -279,6 +302,55 @@ sums_hash() {
     [ "$_n" = "$1" ] && { printf '%s' "$_h" | tr 'A-F' 'a-f'; return 0; }
   done < "$WORK/SHA256SUMS.txt"
   return 1
+}
+
+# The checksum list is the root of trust for every download, so check WHO
+# published it before trusting it (issue #1151): its minisign signature with
+# the release key pinned above, or, failing minisign, its GitHub build
+# attestation through `gh`.  Once per run; prints what it did.  A bad
+# signature / attestation is fatal; a release that has none (older than
+# signing, or a nightly whose signing step was skipped) only warns.
+check_sums_provenance() {
+  [ -s "$WORK/SHA256SUMS.txt" ] || return 0
+  [ -e "$WORK/sums_checked" ] && return 0
+  : > "$WORK/sums_checked"
+  if [ "$NO_VERIFY" -eq 1 ]; then
+    note "SHA256SUMS.txt signature check skipped (--no-verify)"; return 0
+  fi
+  if [ -n "$MINISIGN_PUBKEY" ] && command -v minisign >/dev/null 2>&1; then
+    if curl -fsSL --retry 3 -o "$WORK/SHA256SUMS.txt.minisig" "$(release_url SHA256SUMS.txt.minisig)" 2>/dev/null \
+        && [ -s "$WORK/SHA256SUMS.txt.minisig" ]; then
+      if minisign -Vm "$WORK/SHA256SUMS.txt" -x "$WORK/SHA256SUMS.txt.minisig" -P "$MINISIGN_PUBKEY" -q >/dev/null 2>&1; then
+        ok "SHA256SUMS.txt signature verified (project release key)"
+      else
+        die "SHA256SUMS.txt.minisig does NOT verify with the project release key -- nothing was changed.
+     Either the download was tampered with or the key changed.  See
+     https://github.com/$REPO/blob/master/SECURITY.md  (--no-verify skips this check)"
+      fi
+    else
+      warn "this release has no SHA256SUMS.txt.minisig (older than signed checksums, or signing was skipped): checksums only."
+    fi
+    return 0
+  fi
+  if command -v gh >/dev/null 2>&1; then
+    _ao=$(gh attestation verify "$WORK/SHA256SUMS.txt" --repo "$REPO" 2>&1) && _arc=0 || _arc=$?
+    if [ "$_arc" -eq 0 ]; then
+      ok "SHA256SUMS.txt provenance verified (GitHub build attestation)"
+    else
+      case "$_ao" in
+        *"HTTP 404"*|*"no attestations"*|*"No attestations"*)
+          warn "no build attestation for this release's SHA256SUMS.txt (older than attestations): checksums only." ;;
+        *"gh auth login"*)
+          note "gh is not logged in, so the build attestation was not checked (gh auth login, or install minisign)." ;;
+        *)
+          die "the build attestation of SHA256SUMS.txt did NOT verify -- nothing was changed.
+     $_ao
+     See https://github.com/$REPO/blob/master/SECURITY.md  (--no-verify skips this check)" ;;
+      esac
+    fi
+    return 0
+  fi
+  note "install minisign (or the GitHub CLI, logged in) to verify the release signature: checksums only."
 }
 
 sha256_of() {
@@ -640,6 +712,7 @@ core_install() {
   ok "$((SIZE / 1024)) KB"
 
   step "Checking it"
+  ensure_sums && check_sums_provenance
   _vout=$(verify_sum "$WORK/core/core" "$ASSET" 2>&1) && _vrc=0 || _vrc=$?
   case "$_vrc" in
     0) ok "SHA-256 matches SHA256SUMS.txt" ;;
@@ -898,6 +971,7 @@ app_install() {
     app_no_build "Could not read $(release_url SHA256SUMS.txt) -- that release does not exist (yet), or you are offline."
     return 3
   fi
+  check_sums_provenance
   AASSET=$(sums_find "$PRE" "$SUF") || {
     app_no_build "The '$CHANNEL' release has no file named ${PRE}*${SUF}."
     return 3
