@@ -520,6 +520,7 @@ jobs:
           test -f portable.txt   # --headless uses a temp data dir, so portable mode itself cannot be observed here
           cd "$GITHUB_WORKSPACE"
           bash app/packaging/check-payload.sh build "$t/VirtualJaguar" virtualjaguar.exe
+          ls -l out/ | sed 's/^/package: /'
 
       - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
         run: |
@@ -531,6 +532,8 @@ jobs:
           test -f /c/vjtest/virtualjaguar.exe
           test ! -f /c/vjtest/portable.txt || { echo "::error::installer must not ship portable.txt"; exit 1; }
           /c/vjtest/virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          bash app/packaging/check-payload.sh build /c/vjtest virtualjaguar.exe
+          du -sk /c/vjtest | sed 's/^/installed tree KiB: /'
           /c/vjtest/unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           sleep 5
           test ! -f /c/vjtest/virtualjaguar.exe || { echo "::error::uninstall left the program behind"; exit 1; }
