@@ -103,6 +103,14 @@ Cutting a release:
 Don't: tag before the PR merges to master; put new features on a release branch (bug fixes only);
 forget the back-merge (step 8) or develop diverges from the tagged version string.
 
+Signing and provenance (#1151/#1152): after the builds, `release.yml`'s `stage` job writes and
+minisign-signs `SHA256SUMS.txt` and attests every file; `verify-signatures` (macOS runner,
+`scripts/release/verify.sh`) then checks each asset against its expected signing state, strict on
+tags and `release/**`, warn-only on `develop`, and the per-artifact table goes into the release body.
+Windows is expected `unsigned` until #1150 flips that one line. To prove a change to this pipeline,
+dispatch `release.yml` on the branch with **Dry run** ticked (builds everything, publishes nothing).
+Key setup: `app/packaging/README.md`, "Signed checksums" / "Signed AppImages".
+
 Savestate version policy: one bump per release (all in-flight changes share the version);
 develop breakage OK.
 

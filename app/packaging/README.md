@@ -85,21 +85,97 @@ macOS (Developer ID + notarization, existing Apple Developer account):
 | `APPLE_NOTARY_ISSUER_ID` | the issuer UUID shown on that page |
 | `APPLE_NOTARY_KEY_P8_BASE64` | `base64 -i AuthKey_XXXX.p8` |
 
-Windows (SignPath Foundation, **dormant until the OSS application is approved**):
+Windows: Authenticode is [issue #1150](https://github.com/libretro/virtualjaguar-libretro/issues/1150)
+(Azure Artifact Signing). Until it lands the Windows app, installer, core DLLs and tools ship unsigned,
+the release gate expects exactly that (`EXPECT_WINDOWS=unsigned` in
+[`scripts/release/verify.sh`](../../scripts/release/verify.sh); flip it to `signed` in the same change
+that adds the signing step) and SmartScreen may warn. The `SIGNPATH_*` steps still in `app-package.yml`
+are an earlier stub that is not used.
+
+Release key material (issue #1151; one-time setup, commands below):
 
 | Name | Kind | What |
 |---|---|---|
-| `SIGNPATH_API_TOKEN` | secret | submitter API token |
-| `SIGNPATH_ORGANIZATION_ID` | variable | organization id |
-| `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG` | variables, optional | default `virtualjaguar` / `release-signing` |
-
-The SignPath steps are written to the action's documented interface but have **never run**; expect to
-adjust them against the artifact configuration SignPath gives you (they sign `virtualjaguar.exe` before
-packaging and the installer after).
+| `MINISIGN_SECRET_KEY` | secret | the minisign secret key that signs `SHA256SUMS.txt` (the key file's contents) |
+| `MINISIGN_PASSWORD` | secret | its password (empty for a key generated with `-W`) |
+| `APPIMAGE_GPG_PRIVATE_KEY` | secret | armored GPG private key that signs the AppImages |
+| `APPIMAGE_GPG_PASSPHRASE` | secret | its passphrase (empty for a key without one) |
 
 Signing runs when the caller asks (`release.yml` and `app.yml` do; a manual dispatch needs the `sign`
 input) and the secrets exist. GitHub passes no secrets to a fork pull request, so those builds stay
-ad-hoc signed and the log warns.
+ad-hoc signed and the log warns. The checksum signature and the attestations are made by `release.yml`
+only (its `stage` job), never by PR runs.
+
+### Signed checksums (minisign, #1151)
+
+`release.yml`'s `stage` job writes `SHA256SUMS.txt` once for the whole release and signs it with the
+project release key: `SHA256SUMS.txt.minisig` is attached next to it on every tag, nightly and
+prerelease ([`scripts/release/sign-sums.sh`](../../scripts/release/sign-sums.sh)). The public half is
+committed as `docs/release-signing.pub` and shown on the site's Download page; the installers pin the
+same key. Without the secret the step prints a loud warning and ships no signature; once the public key
+is committed the gate below fails a tag or `release/**` build that lacks the signature.
+
+The maintainer generates the key on their own machine. `minisign` is in Homebrew and in Ubuntu 23.04+:
+
+```sh
+minisign -G -p docs/release-signing.pub -s ~/.minisign/virtualjaguar-release.key   # asks for a password
+cat docs/release-signing.pub                     # two lines; the second is the key itself
+gh secret set MINISIGN_SECRET_KEY --repo libretro/virtualjaguar-libretro < ~/.minisign/virtualjaguar-release.key
+gh secret set MINISIGN_PASSWORD   --repo libretro/virtualjaguar-libretro   # paste the password
+```
+
+Then, in one commit: `docs/release-signing.pub`, and the key's second line pasted into
+`MINISIGN_PUBKEY=` in `tools/install.sh` and `$script:MinisignPubKey` in `tools/install.ps1`
+(the Installer workflow fails if the three disagree). Keep the secret key out of the repository and
+back it up: a lost key means a new key, a new `.pub`, and every pinned copy updated.
+
+Verify a download: `minisign -Vm SHA256SUMS.txt -p docs/release-signing.pub`, then
+`sha256sum --check SHA256SUMS.txt`.
+
+### Signed AppImages (GPG, #1151)
+
+`appimagetool --sign` embeds an armored GPG signature of the image (and the public key) in the
+AppImage's `.sha256_sig` / `.sig_key` ELF sections; `app-package.yml`'s Linux jobs do that when the
+`APPIMAGE_GPG_PRIVATE_KEY` secret exists. appimagetool signs through gpgme and takes the passphrase from
+`APPIMAGETOOL_SIGN_PASSPHRASE`, so a passphrase-protected key works in CI. appimagetool ships no
+verifier: [`linux/verify-appimage.py`](linux/verify-appimage.py) re-hashes the file with the two
+sections zeroed and runs `gpg --verify`, on Linux or macOS. The public key is committed as
+`docs/release-signing-appimage.asc`; once it is, the gate requires every AppImage to be signed by it.
+
+```sh
+gpg --quick-generate-key "Virtual Jaguar release signing <releases@jaguar.provenance-emu.com>" ed25519 sign never
+gpg --armor --export  "Virtual Jaguar release signing" > docs/release-signing-appimage.asc
+gpg --armor --export-secret-keys "Virtual Jaguar release signing" \
+  | gh secret set APPIMAGE_GPG_PRIVATE_KEY --repo libretro/virtualjaguar-libretro
+gh secret set APPIMAGE_GPG_PASSPHRASE --repo libretro/virtualjaguar-libretro   # the key's passphrase
+```
+
+Verify a download: `python3 app/packaging/linux/verify-appimage.py VirtualJaguar-X.Y.Z-linux-x86_64.AppImage --pubkey docs/release-signing-appimage.asc`.
+
+### Build provenance attestations (#1151)
+
+The `stage` job also runs `actions/attest-build-provenance` over every file it stages, `SHA256SUMS.txt`
+and its signature included, so GitHub holds a signed SLSA provenance statement naming the commit and
+workflow run that produced each asset. No secret is involved (the job's OIDC token signs it). Verify
+any asset with the GitHub CLI:
+
+```sh
+gh attestation verify virtualjaguar_libretro-linux-x86_64.so --repo libretro/virtualjaguar-libretro
+```
+
+### The release gate (#1152)
+
+After staging and before anything is published, `release.yml`'s `verify-signatures` job
+([`scripts/release/verify.sh`](../../scripts/release/verify.sh), on a macOS runner) checks every asset
+against the state its class is expected to have: macOS files Developer ID signed and notarized
+(`codesign`, `spctl`, `stapler`, plus the sidecar the signing job wrote for bare Mach-O files, which
+cannot be stapled); Windows files as the one-line `EXPECT_WINDOWS` says; AppImages GPG-signed by the
+committed key once that key exists; `SHA256SUMS.txt` signed once its key exists; everything attested.
+The result is one table per artifact (signed, notarized, attested) in the job summary and in the
+release body. On tags and `release/**` a failed expectation fails the run and nothing is published;
+on `develop` it only warns, so a signing-service outage cannot withhold the core nightly. A
+`workflow_dispatch` of `release.yml` with **Dry run** ticked runs the whole pipeline up to the gate on
+any branch and publishes nothing.
 
 ### Every macOS build is signed (#989)
 
@@ -116,6 +192,11 @@ always deleted again, signs, submits one zip per call to `notarytool` (API key a
 | `virtualjaguar_libretro-macos-{arm64,x86_64}.dylib` | `release.yml` (tags, nightly, prerelease) | no |
 | `cue2cdi-macos-universal` | `release.yml` | no |
 | `chdman`, `jagcd-chd-check` in `jagcd-tools-macos.zip` | `chdman-tools.yml` | no |
+
+Each of these signing steps also records what it did in a `signing-status-*` artifact
+([`scripts/release/signing-status.sh`](../../scripts/release/signing-status.sh)): the release gate
+re-checks the signature on the file itself, and reads the sidecar only for whether Apple issued the
+notarization ticket, which a bare Mach-O file cannot carry.
 
 A bare Mach-O file cannot hold a stapled ticket: it is notarized inside a zip and Gatekeeper looks the
 ticket up online the first time. iOS and tvOS dylibs are not signed here (a Developer ID does not apply

@@ -22,8 +22,12 @@ name: App packages
 #   macOS    APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD,
 #            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64
 #            (same-repo PRs, nightlies and tags all pass them; fork PRs get none, see macos-sign)
-#   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub until
-#            the SignPath Foundation application is approved
+#   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub; Windows
+#            Authenticode is issue #1150 (Azure Artifact Signing)
+#   Linux    APPIMAGE_GPG_PRIVATE_KEY (+ APPIMAGE_GPG_PASSPHRASE): embedded GPG signature in both
+#            AppImages (#1151), verifiable with app/packaging/linux/verify-appimage.py
+# Every macOS and Linux signing step also writes a sidecar (scripts/release/signing-status.sh,
+# artifact signing-status-app-*) that release.yml's verify-signatures gate reads (#1152).
 # Details: app/packaging/README.md.
 
 on:
@@ -49,6 +53,10 @@ on:
       APPLE_NOTARY_KEY_P8_BASE64:
         required: false
       SIGNPATH_API_TOKEN:
+        required: false
+      APPIMAGE_GPG_PRIVATE_KEY:
+        required: false
+      APPIMAGE_GPG_PASSPHRASE:
         required: false
   workflow_dispatch:
     inputs:
@@ -315,6 +323,15 @@ jobs:
           fi
           rm -rf "$t"
           ls -la out
+
+      # What the gate cannot re-derive from the zip on its own: whether Apple issued the ticket.
+      - name: Record the signing outcome for the release gate
+        run: bash scripts/release/signing-status.sh "VirtualJaguar-${LABEL}-macos-universal.zip" "${{ steps.devid.outputs.signed || 'false' }}" "${{ steps.devid.outputs.notarized || 'false' }}" developer-id signing-status
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-macos
+          path: signing-status/
+          retention-days: 14
 
       - uses: actions/upload-artifact@v7
         with:
@@ -681,12 +698,65 @@ jobs:
           appstreamcli validate --no-net "$RUNNER_TEMP"/inst/share/metainfo/*.metainfo.xml | tee "$RUNNER_TEMP/appstream.txt" || true
           if grep -q '^E:' "$RUNNER_TEMP/appstream.txt"; then echo "::error::appstream metadata has errors"; exit 1; fi
 
+      # The AppImage signing key (#1151).  With the `sign` input and the APPIMAGE_GPG_PRIVATE_KEY
+      # secret, the armored private key goes into a throwaway GNUPGHOME and make-appimage.sh passes
+      # `--sign --sign-key <fingerprint>` to appimagetool, which signs through gpgme and takes the
+      # passphrase from APPIMAGETOOL_SIGN_PASSPHRASE (loopback pinentry).  Without the secret the
+      # AppImage is built unsigned, as before, and the log says so.
+      - name: Import the AppImage signing key
+        id: gpgkey
+        if: inputs.sign
+        env:
+          APPIMAGE_GPG_PRIVATE_KEY: ${{ secrets.APPIMAGE_GPG_PRIVATE_KEY }}
+        run: |
+          set -eu
+          if [ -z "$APPIMAGE_GPG_PRIVATE_KEY" ]; then
+            echo "::warning::AppImage is NOT signed: the APPIMAGE_GPG_PRIVATE_KEY secret is not configured (app/packaging/README.md, Signed AppImages)."
+            echo "fingerprint=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+          printf 'allow-loopback-pinentry\n' > "$GNUPGHOME/gpg-agent.conf"
+          printf '%s\n' "$APPIMAGE_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1=="fpr"{print $10; exit}')
+          [ -n "$fpr" ] || { echo "::error::APPIMAGE_GPG_PRIVATE_KEY did not import a secret key"; exit 1; }
+          # The committed public key must be this key, or every AppImage would fail the gate.
+          if [ -f docs/release-signing-appimage.asc ]; then
+            pub=$(gpg --batch --with-colons --import-options show-only --import docs/release-signing-appimage.asc | awk -F: '$1=="fpr"{print $10}')
+            case " $pub " in *" $fpr "*) ;; *) echo "::error::the APPIMAGE_GPG_PRIVATE_KEY secret ($fpr) is not the key committed as docs/release-signing-appimage.asc ($pub)"; exit 1 ;; esac
+          else
+            echo "::warning::docs/release-signing-appimage.asc is not committed; the gate cannot require AppImage signatures until it is."
+          fi
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "fingerprint=$fpr" >> "$GITHUB_OUTPUT"
+          echo "AppImage signing key: $fpr"
+
       - name: Package
+        env:
+          VJ_APPIMAGE_SIGN_KEY: ${{ steps.gpgkey.outputs.fingerprint }}
+          APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGE_GPG_PASSPHRASE }}
         run: |
           set -eu
           mkdir -p out
           bash app/packaging/linux/make-appimage.sh build "out/VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage" "${{ matrix.arch }}"
           bash app/packaging/linux/make-deb.sh build "out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb" "${{ matrix.debarch }}" "$DEB_VERSION"
+
+      - name: Record the signing outcome for the release gate
+        env:
+          FPR: ${{ steps.gpgkey.outputs.fingerprint }}
+        run: |
+          set -eu
+          f="VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage"
+          if [ -n "$FPR" ]; then
+            python3 app/packaging/linux/verify-appimage.py "out/$f" ${{ hashFiles('docs/release-signing-appimage.asc') != '' && '--pubkey docs/release-signing-appimage.asc' || '' }}
+            bash scripts/release/signing-status.sh "$f" true false gpg signing-status "$FPR"
+          else
+            bash scripts/release/signing-status.sh "$f" false false none signing-status "APPIMAGE_GPG_PRIVATE_KEY not configured or sign not requested"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-linux-${{ matrix.arch }}
+          path: signing-status/
+          retention-days: 14
 
       - name: Smoke-test the AppImage
         run: |

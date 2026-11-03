@@ -130,13 +130,46 @@ build_release "$NEW/download/nightly" nightly nightly-one
 fake_binary "$T/retroarch" ""
 chmod +x "$T/retroarch"
 
+# Fake verification tools (#1151), first on PATH for every run so the suite never
+# calls the real gh / minisign (a real `gh attestation verify` would hit GitHub).
+#   minisign: -Vm <file> -x <sig> -P <key>: succeeds when the key is the test key
+#             and the signature file says GOOD.
+#   gh:       `gh attestation verify ...` behaves as $FB/gh.mode says
+#             (ok | 404 | auth | bad); 404 by default, like a release that
+#             predates attestations.
+FB="$T/fakebin"; mkdir -p "$FB"
+cat > "$FB/minisign" <<'MS'
+#!/bin/sh
+key=""; sig=""
+while [ $# -gt 0 ]; do
+  case "$1" in -P) key=$2; shift 2 ;; -x) sig=$2; shift 2 ;; -Vm) shift 2 ;; *) shift ;; esac
+done
+[ "$key" = "RWTtestkey" ] || { echo "Signature verification failed" >&2; exit 1; }
+grep -q '^GOOD' "$sig" 2>/dev/null
+MS
+cat > "$FB/gh" <<'GH'
+#!/bin/sh
+mode=$(cat "$(dirname "$0")/gh.mode" 2>/dev/null || echo 404)
+[ "$1" = attestation ] || { echo "fake gh: unexpected $*" >&2; exit 2; }
+case "$mode" in
+  ok)   echo "Loaded digest sha256:0 for file://$3"; echo "✓ Verification succeeded!"; exit 0 ;;
+  404)  echo "Error: HTTP 404: Not Found (https://api.github.com/repos/x/y/attestations/sha256:0)" >&2; exit 1 ;;
+  auth) echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4 ;;
+  *)    echo "Error: ✗ Verification failed: signature does not match" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$FB/minisign" "$FB/gh"
+echo 404 > "$FB/gh.mode"
+PUBKEY=""
+
 # --- runner -----------------------------------------------------------------
 # vj <shell> <base> <home> args...   -> sets OUT and RC
 vj() {
   _sh=$1; _base=$2; _home=$3; shift 3
   mkdir -p "$_home"
-  OUT=$(env -i PATH="$PATH" HOME="$_home" TERM=dumb NO_COLOR=1 \
+  OUT=$(env -i PATH="$FB:$PATH" HOME="$_home" TERM=dumb NO_COLOR=1 \
         VJ_INSTALL_BASE_URL="file://$_base" VJ_INSTALL_RETROARCH="$T/retroarch" VJ_INSTALL_NO_TTY=1 \
+        VJ_INSTALL_MINISIGN_PUBKEY="$PUBKEY" \
         $_sh "$SCRIPT" "$@" 2>&1 </dev/null)
   RC=$?
 }
@@ -293,6 +326,51 @@ run_suite() {
   check_rc "both installs" "$RC" 0 "$OUT"
   check_true "both: core present" test -f "$CD3/virtualjaguar_libretro.${CORE_ASSET##*.}"
   check_true "both: app present" test -n "$(ls "$AD3" 2>/dev/null)"
+
+  # --- the checksum list's own signature / provenance (#1151) ---------------------
+  # Default so far: no pinned key, fake gh answers 404 -> warned, installed anyway.
+  check_has "no attestation (older release): warns and goes on" "$OUT" "no build attestation"
+  _sfx=$(basename "${SH%% *}")     # per shell: the suite runs several in one process
+  SIGNED="$T/signed-$_sfx"; command rm -rf "$SIGNED"; command cp -R "$NEW" "$SIGNED"
+  printf 'untrusted comment: test\nGOOD\n' > "$SIGNED/download/nightly/SHA256SUMS.txt.minisig"
+  printf 'untrusted comment: test\nBAD\n' > "$SIGNED/download/v4.0.0/SHA256SUMS.txt.minisig"
+  PUBKEY=RWTtestkey
+  H5="$T/h5-$_sfx"; AD5="$T/apps5-$_sfx"; CD5="$T/cores5-$_sfx"; mkdir -p "$CD5"
+  vj "$SH" "$SIGNED" "$H5" --app --channel nightly --dry-run --app-dest "$AD5"
+  check_rc "signed checksums: dry run ok" "$RC" 0 "$OUT"
+  check_has "minisign signature verified" "$OUT" "SHA256SUMS.txt signature verified (project release key)"
+  vj "$SH" "$SIGNED" "$H5" --core --channel nightly --yes --dest "$CD5"
+  check_has "core path verifies the signature too" "$OUT" "SHA256SUMS.txt signature verified"
+  check_has "... before the checksum" "$OUT" "SHA-256 matches"
+  vj "$SH" "$SIGNED" "$H5" --app --dry-run --app-dest "$AD5"
+  check_rc "channel without .minisig: still ok" "$RC" 0 "$OUT"
+  check_has "channel without .minisig: warns" "$OUT" "has no SHA256SUMS.txt.minisig"
+  vj "$SH" "$SIGNED" "$H5" --app --channel v4.0.0 --yes --app-dest "$AD5"
+  check_rc "bad checksum signature: refused" "$RC" 1 "$OUT"
+  check_has "bad signature message" "$OUT" "does NOT verify with the project release key"
+  check_has "bad signature: points at --no-verify" "$OUT" "--no-verify skips this check"
+  check_true "bad signature: nothing installed" test ! -e "$AD5"
+  vj "$SH" "$SIGNED" "$H5" --app --channel v4.0.0 --yes --app-dest "$AD5" --no-verify
+  check_rc "--no-verify installs despite the bad signature" "$RC" 0 "$OUT"
+  check_has "--no-verify says so" "$OUT" "signature check skipped (--no-verify)"
+  check_has "--no-verify keeps the checksum check" "$OUT" "SHA-256 matches SHA256SUMS.txt"
+  # No pinned key -> the attestation path through gh.
+  PUBKEY=""
+  for mode in ok auth bad; do
+    echo "$mode" > "$FB/gh.mode"
+    vj "$SH" "$SIGNED" "$H5" --app --channel nightly --dry-run --app-dest "$AD5"
+    case "$mode" in
+      ok)   check_rc "gh attestation ok: proceeds" "$RC" 0 "$OUT"
+            check_has "attestation verified" "$OUT" "provenance verified (GitHub build attestation)" ;;
+      auth) check_rc "gh not logged in: proceeds" "$RC" 0 "$OUT"
+            check_has "gh not logged in: notes it" "$OUT" "gh is not logged in" ;;
+      bad)  check_rc "bad attestation: refused" "$RC" 1 "$OUT"
+            check_has "bad attestation message" "$OUT" "did NOT verify" ;;
+    esac
+  done
+  echo 404 > "$FB/gh.mode"
+  vj "$SH" "$NEW" "$H5" --help
+  check_has "help lists --no-verify" "$OUT" "--no-verify"
 }
 
 # --- pick shells ------------------------------------------------------------

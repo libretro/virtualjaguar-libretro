@@ -15,19 +15,31 @@ name: Release
 # and the libretro buildbot only reacted after the tag, when a break becomes a
 # hotfix rather than a fix.
 #
-# workflow_dispatch exists ONLY to re-publish a rolling tag, so it must be run
-# with the branch set to `develop` or a `release/*` branch.  GitHub defaults
-# the branch picker to the repo default (`master` here), and every publishing
-# job is ref-gated, so a dispatch left on the default would build all 24
-# targets and publish nothing.
-# The `guard` job below fails that case immediately instead of burning the
-# matrix.  To test-build an arbitrary branch, use c-cpp.yml — it has its own
-# workflow_dispatch and runs on PRs.
+# workflow_dispatch re-publishes a rolling tag, so it must be run with the
+# branch set to `develop` or a `release/*` branch.  GitHub defaults the branch
+# picker to the repo default (`master` here), and every publishing job is
+# ref-gated, so a dispatch left on the default would build all 24 targets and
+# publish nothing.  The `guard` job below fails that case immediately instead
+# of burning the matrix.  The one exception is the `dry_run` input: it builds,
+# stages, signs, attests and runs the signing gate on ANY branch and publishes
+# nothing, which is how a change to this pipeline is proven before it merges
+# (issues #1151 / #1152).  To merely test-build a branch, use c-cpp.yml.
+#
+# After the builds, one `stage` job flattens every artifact, writes and signs
+# SHA256SUMS.txt and attests build provenance for every file; the
+# `verify-signatures` gate then checks each asset's signing state (strict on
+# tags and release/**, warn-only on develop), and only then does a publishing
+# job upload what was staged.
 on:
   push:
     tags: ['v*']
     branches: [develop, 'release/**']
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build, stage, sign, attest and verify on this branch; publish nothing"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -65,7 +77,7 @@ jobs:
         run: sleep 600
 
       - name: Refuse a dispatch that would publish nothing
-        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
         run: |
           # Built up in one variable because a ::error:: annotation has to be a
           # single line to render as one.
@@ -75,9 +87,15 @@ jobs:
           MSG="$MSG develop -> nightly, release/* -> prerelease), so a dispatch"
           MSG="$MSG from '${GITHUB_REF_NAME}' would build all 24 targets and"
           MSG="$MSG publish nothing."
-          MSG="$MSG To test-build a branch, use the C/C++ CI workflow instead."
+          MSG="$MSG To exercise the staging, signing and attestation pipeline on this branch"
+          MSG="$MSG without publishing, tick 'Dry run'. To merely test-build a branch, use the C/C++ CI workflow."
           echo "::error::$MSG"
           exit 1
+
+      - name: Dry run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          echo "::notice::Dry run on ${GITHUB_REF_NAME} -- everything up to and including the signing gate runs; the publishing jobs are skipped."
 
   # ----------------------------------------------------------------
   # Native + cross builds (Linux/macOS/Windows/iOS/tvOS/Android/WASM)
@@ -523,6 +541,7 @@ jobs:
       # the universal cue2cdi built above.
       # ----------------------------------------------------------------
       - name: Developer ID sign and notarize (macOS core${{ matrix.config.platform == 'macos-arm64' && ' + cue2cdi' || '' }})
+        id: macsign
         if: ${{ matrix.config.platform == 'macos-arm64' || matrix.config.platform == 'macos-x86_64' }}
         uses: ./.github/actions/macos-sign
         with:
@@ -535,6 +554,23 @@ jobs:
           apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+
+      # For the verify-signatures gate (#1152): it re-checks the Developer ID signature on the
+      # file, but a bare dylib carries no stapled ticket, so "notarized" comes from here.
+      - name: Record the signing outcome for the release gate
+        if: ${{ matrix.config.platform == 'macos-arm64' || matrix.config.platform == 'macos-x86_64' }}
+        run: |
+          set -e
+          for f in dist/virtualjaguar_libretro-${{ matrix.config.platform }}.dylib ${{ matrix.config.platform == 'macos-arm64' && 'dist/cue2cdi-macos-universal' || '' }}; do
+            bash scripts/release/signing-status.sh "$(basename "$f")" "${{ steps.macsign.outputs.signed || 'false' }}" "${{ steps.macsign.outputs.notarized || 'false' }}" developer-id signing-status
+          done
+      - name: Upload signing status
+        if: ${{ matrix.config.platform == 'macos-arm64' || matrix.config.platform == 'macos-x86_64' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-core-${{ matrix.config.platform }}
+          path: signing-status/
+          retention-days: 14
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -680,13 +716,140 @@ jobs:
     secrets: inherit
 
   # ----------------------------------------------------------------
-  # Release: collect all artifacts, generate SHA256SUMS, build the
-  # release body from docs/RELEASE_NOTES_v<TAG>.md (artifact list
-  # and embedded SHA256 checksums always appended), then create the
-  # tagged release.  See SECURITY.md for binary verification docs.
+  # Stage (#1151): flatten every artifact into release/, write
+  # SHA256SUMS.txt, sign it with the project's minisign key and attest build
+  # provenance for every file.  One job for all lanes, so the checksum list
+  # and the attestations are produced exactly once by one job; the publishing
+  # jobs below upload what this one staged and nothing else.
+  #
+  # Gated like the nightly, not like the release: the 24 cores must have
+  # built; the tools and app packages are picked up when they exist.  The
+  # `release` job still requires them on a tag.
+  # ----------------------------------------------------------------
+  stage:
+    name: Stage, sign and attest
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    if: |
+      always()
+      && needs.build.result == 'success'
+      && needs.vita-build.result == 'success'
+      && needs.switch-build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # Sigstore-sign the provenance statement
+      attestations: write   # store it on the repository
+    env:
+      LANE: ${{ github.ref_type == 'tag' && 'release' || (github.ref == 'refs/heads/develop' && 'nightly' || (startsWith(github.ref, 'refs/heads/release/') && 'prerelease' || 'dry-run')) }}
+    outputs:
+      sums_signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+
+      # librashader-* and ci-core-* are build intermediates and signing-status-*
+      # are the gate's sidecars; the script keeps them out of release/.
+      - name: Stage release files and write SHA256SUMS.txt
+        run: bash scripts/release/stage.sh artifacts release signing-status
+
+      # Detached minisign signature, SHA256SUMS.txt.minisig.  Without the secret
+      # the step only warns; once docs/release-signing.pub is committed the gate
+      # below turns a missing signature into a failure on tags and release/**.
+      - name: Sign SHA256SUMS.txt (minisign)
+        id: sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: bash scripts/release/sign-sums.sh release
+
+      # SLSA build provenance for EVERY shipped file, SHA256SUMS.txt and its
+      # signature included.  Verify any of them with
+      #   gh attestation verify <file> --repo libretro/virtualjaguar-libretro
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/*
+
+      - name: Upload the staged release
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-staged
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload the signing sidecars
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-signing-status
+          path: signing-status/
+          retention-days: 14
+
+  # ----------------------------------------------------------------
+  # The release signing gate (#1152): every staged asset's ACTUAL signing
+  # state against the state its class is EXPECTED to have (the table at the
+  # top of scripts/release/verify.sh; Windows is `unsigned` until #1150 flips
+  # one line), as a per-artifact table in the job summary and, through the
+  # signing-table artifact, in the release body.  Strict on tags and
+  # release/**: a missing signature or attestation stops the publish.
+  # Warn-only everywhere else, so a signing-service outage can never withhold
+  # the core nightly (the rule notarization already followed).  macOS, because
+  # codesign / spctl / stapler are the only authorities on Apple signatures.
+  # ----------------------------------------------------------------
+  verify-signatures:
+    name: Verify signatures and attestations
+    needs: [stage]
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MODE: ${{ (github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/')) && 'strict' || 'warn' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the staged release
+        uses: actions/download-artifact@v8
+        with:
+          name: release-staged
+          path: release/
+
+      - name: Download the signing sidecars
+        uses: actions/download-artifact@v8
+        with:
+          name: release-signing-status
+          path: signing-status/
+
+      # minisign checks the checksum signature, osslsigncode reads Authenticode.
+      # Best effort: a missing tool reads "unknown" in the table and strict mode
+      # then fails that row, so an install failure cannot pass a tag silently.
+      - name: Verification tools (minisign, osslsigncode)
+        run: brew install minisign osslsigncode || echo "::warning::brew install failed; some columns will read unknown"
+
+      - name: Verify every asset
+        run: bash scripts/release/verify.sh release signing-status "$MODE" "$RUNNER_TEMP/signing-table.md"
+
+      - name: Upload the signing table
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: signing-table
+          path: ${{ runner.temp }}/signing-table.md
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ----------------------------------------------------------------
+  # Release: take the staged files, build the release body from
+  # docs/RELEASE_NOTES_v<TAG>.md (artifact list, signing table and SHA-256
+  # checksums always appended), then create the tagged release.  See
+  # SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures]
     # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
     # tag (release-notes lookup, release title, `gh release create <TAG>`), so
     # this guard is what keeps a develop push from creating a release literally
@@ -705,50 +868,24 @@ jobs:
       && needs.switch-build.result == 'success'
       && needs.jagcd-tools.result == 'success'
       && (needs.app-packages.result == 'success' || needs.app-packages.result == 'skipped')
+      && needs.stage.result == 'success'
+      && needs.verify-signatures.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download all artifacts
+      # Exactly the files the stage job checksummed, signed and attested.
+      - name: Download the staged release
         uses: actions/download-artifact@v8
         with:
-          path: artifacts/
+          name: release-staged
+          path: release/
 
-      - name: Stage release files
-        run: |
-          set -e
-          mkdir -p release
-          # Flatten one level: each artifact directory contains the
-          # binary + matching -debug.tar.gz; copy them all into release/.
-          # librashader-<triple> are intermediates of the app packages (the shader runtime built
-          # from source, librashader.yml): already inside the packages, not release assets.
-          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -not -path 'artifacts/ci-core-*' -exec cp {} release/ \;
-          # Include the RetroArch core .info file so frontend maintainers
-          # / users can drop it into RetroArch's info/ dir.  The same file
-          # is what gets PR'd to libretro/libretro-super after the release.
-          if [ -f dist/info/virtualjaguar_libretro.info ]; then
-            cp dist/info/virtualjaguar_libretro.info release/
-          fi
-          echo "==> Staged release files:"
-          ls -la release/
-
-      - name: Generate SHA256SUMS
-        run: |
-          set -e
-          cd release
-          # Deterministic ordering, two-space format compatible with
-          # `sha256sum -c SHA256SUMS.txt` on Linux + Mac (with coreutils).
-          #
-          # Build it OUTSIDE the directory and move it in.  Redirecting straight
-          # to ./SHA256SUMS.txt races: the shell starts both pipeline stages at
-          # once, so `sort`'s redirect can create the (empty) file before
-          # `sha256sum`'s glob expands, leaving the manifest listing itself with
-          # the empty-file hash — which then fails `sha256sum --check` on that
-          # one line.  v2.3.2 happened to win the race; nightlies would not.
-          sha256sum -- * | sort -k 2 > "$RUNNER_TEMP/SHA256SUMS.txt"
-          mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
-          echo "==> SHA256SUMS.txt:"
-          cat SHA256SUMS.txt
+      - name: Download the signing table
+        uses: actions/download-artifact@v8
+        with:
+          name: signing-table
+          path: ${{ runner.temp }}/signing-table
 
       - name: Prepare release body
         id: prep_body
@@ -765,9 +902,11 @@ jobs:
             gh api repos/${{ github.repository }}/releases/generate-notes \
               -f tag_name="${TAG}" --jq '.body' > "$BODY_FILE" 2>/dev/null || true
           fi
-          # Append artifact list and embedded SHA256 checksums so users can
-          # verify binaries directly from the release page without needing to
-          # download SHA256SUMS.txt first.  See SECURITY.md for details.
+          # Append the artifact list, the gate's per-artifact signing table and
+          # the SHA-256 checksums, so a download can be verified from the release
+          # page alone.  The table replaces hand-written signing prose: it is
+          # generated from the files, and the gate already failed the tag if a
+          # required signature or attestation were missing.
           {
             echo
             echo "---"
@@ -778,16 +917,8 @@ jobs:
             find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
             echo '```'
             echo
-            echo "## SHA-256 checksums"
-            echo
-            echo "Verify with \`sha256sum --check SHA256SUMS.txt\` (Linux) or"
-            echo "\`shasum -a 256 --check SHA256SUMS.txt\` (macOS)."
-            echo "See [SECURITY.md](https://github.com/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)"
-            echo "for full verification instructions and antivirus false-positive guidance."
-            echo
-            echo '```'
-            cat release/SHA256SUMS.txt
-            echo '```'
+            bash scripts/release/body-signing.sh release "$RUNNER_TEMP/signing-table/signing-table.md" \
+              "${{ github.repository }}" "${{ github.event.repository.default_branch }}"
           } >> "$BODY_FILE"
           echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
 
@@ -816,7 +947,7 @@ jobs:
   # ----------------------------------------------------------------
   nightly:
     name: Update rolling prerelease
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures]
     # The app packages (app-packages) are waited for and not required either:
     # a macOS notarization outage must not withhold the core nightly.
     # Wait for the tools build, but do not REQUIRE it.  chdman is an
@@ -825,6 +956,11 @@ jobs:
     # package on a runner image silently withheld three days of good core
     # builds (2026-08-18).  Tagged releases still require it below, because
     # there the tools zips are part of the deliverable.
+    #
+    # The signing gate follows the same rule: it is warn-only on develop and
+    # the nightly does not wait for its verdict, so a broken gate runner or a
+    # signing-service outage cannot withhold the cores either.  On release/**
+    # it is strict and the prerelease waits for it (#1152).
     if: |
       always()
       && (github.ref == 'refs/heads/develop'
@@ -832,6 +968,8 @@ jobs:
       && needs.build.result == 'success'
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
+      && needs.stage.result == 'success'
+      && (github.ref == 'refs/heads/develop' || needs.verify-signatures.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write   # move the tag, create/update the release
@@ -858,37 +996,22 @@ jobs:
           # `nightly` tag pointed at on the previous run.
           fetch-depth: 0
 
-      - name: Download all artifacts
+      # Exactly the files the stage job checksummed, signed and attested (the
+      # nightly .info is already relabelled with the build's identity there).
+      - name: Download the staged release
         uses: actions/download-artifact@v8
         with:
-          path: artifacts/
+          name: release-staged
+          path: release/
 
-      - name: Stage release files
-        run: |
-          set -e
-          mkdir -p release
-          # (librashader-<triple> are intermediates of the app packages, not release assets.)
-          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -not -path 'artifacts/ci-core-*' -exec cp {} release/ \;
-          # The .info file's display_version names the last TAGGED release, so
-          # shipping it verbatim would label a nightly "v2.3.2".  Rewrite it to
-          # the build's actual identity — this also makes it obvious that a
-          # nightly .info is not the file to PR to libretro-super.
-          if [ -f dist/info/virtualjaguar_libretro.info ]; then
-            sed "s/^display_version = \".*\"/display_version = \"$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)-nightly-${GITHUB_SHA:0:7}\"/" \
-              dist/info/virtualjaguar_libretro.info > release/virtualjaguar_libretro.info
-          fi
-          echo "==> Staged nightly files:"
-          ls -la release/
-
-      - name: Generate SHA256SUMS
-        run: |
-          set -e
-          cd release
-          # Written outside the directory then moved in — see the release job's
-          # copy of this step for why the obvious redirect races.
-          sha256sum -- * | sort -k 2 > "$RUNNER_TEMP/SHA256SUMS.txt"
-          mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
-          cat SHA256SUMS.txt
+      # Absent when the gate crashed (develop does not wait for it); the body
+      # then says so instead of carrying a table.
+      - name: Download the signing table
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: signing-table
+          path: ${{ runner.temp }}/signing-table
 
       - name: Prepare rolling release body
         id: prep_body
@@ -948,16 +1071,8 @@ jobs:
             echo
             echo "Each platform ships alongside a \`-debug.tar.gz\` of its split debug symbols; extract it next to the binary to get symbolised backtraces."
             echo
-            echo "### SHA-256 checksums"
-            echo
-            P="Verify with \`sha256sum --check SHA256SUMS.txt\` (Linux) or"
-            P="$P \`shasum -a 256 --check SHA256SUMS.txt\` (macOS). See"
-            P="$P [SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)."
-            echo "$P"
-            echo
-            echo '```'
-            cat release/SHA256SUMS.txt
-            echo '```'
+            bash scripts/release/body-signing.sh release "$RUNNER_TEMP/signing-table/signing-table.md" \
+              "${REPO}" "${{ github.event.repository.default_branch }}" | sed 's/^## /### /'
           } > "$BODY_FILE"
           echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
@@ -1065,6 +1180,8 @@ jobs:
               P="$P signed and notarized by Apple when the release signing secrets are configured;"
               P="$P without them macOS needs right-click > Open the first time."
               P="$P Windows binaries are not code-signed yet, so SmartScreen may warn."
+              P="$P Every nightly asset carries a GitHub build-provenance attestation, and the release"
+              P="$P body lists each file's signing state (see Verifying a download below)."
               echo "$P"
               echo
               echo "---"
@@ -1122,8 +1239,10 @@ jobs:
             echo
             echo "### Verifying a download"
             echo
-            P="Each release lists SHA-256 checksums, and every platform has a matching"
-            P="$P \`-debug.tar.gz\` of split debug symbols. See"
+            P="Each release lists SHA-256 checksums and a per-file signing table, and every platform has a matching"
+            P="$P \`-debug.tar.gz\` of split debug symbols. Every asset is attested:"
+            P="$P \`gh attestation verify <file> --repo ${REPO}\` proves which commit and workflow run built it,"
+            P="$P and \`SHA256SUMS.txt.minisig\` is the checksum list's signature by the project release key. See"
             P="$P [SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)"
             P="$P for verification steps and antivirus false-positive guidance."
             echo "$P"

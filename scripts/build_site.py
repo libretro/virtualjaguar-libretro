@@ -590,7 +590,22 @@ DEBUG_ASSET_RE = re.compile(r"^virtualjaguar_libretro-(.+)-debug\.tar\.gz$")
 TOOL_ASSET_RE = re.compile(
     r"^(jagcd-tools|cue2cdi)-(linux|macos|windows)(?:-([\w.]+?))?(?:\.zip|\.exe)?$")
 SUMS_NAME = "SHA256SUMS.txt"
+SUMS_SIG_NAME = "SHA256SUMS.txt.minisig"     # its minisign signature (#1151)
 INFO_NAME = "virtualjaguar_libretro.info"
+# The project release key that signs SHA256SUMS.txt: committed once the
+# maintainer generates it (app/packaging/README.md, "Signed checksums").
+# Until then the Download page explains attestations only.
+RELEASE_SIGNING_PUB = ROOT / "docs" / "release-signing.pub"
+
+
+def release_signing_key():
+    """The minisign public key (second line of the .pub file), or ''."""
+    try:
+        lines = RELEASE_SIGNING_PUB.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    keys = [l.strip() for l in lines if l.strip() and not l.startswith("untrusted comment")]
+    return keys[0] if keys else ""
 
 # Platform id -> (label, icon id).  Order is display order for the core;
 # the app and the tools list follow the same order.  The icons are generic
@@ -776,11 +791,11 @@ def classify_assets(assets):
       core:  [(platform, target, ext, asset)]
       debug: [(platform, target, asset)]
       tools: [(tool, platform, arch, asset)]
-      other: [asset]   (SHA256SUMS.txt and the .info file are returned by
-                        name, not listed here)
+      other: [asset]   (SHA256SUMS.txt, its .minisig and the .info file are
+                        returned by name, not listed here)
     """
     app, core, debug, tools, other = [], [], [], [], []
-    sums = info = None
+    sums = sums_sig = info = None
     seen = set()
     for pat, plat, arch, label in APP_KINDS:
         for a in assets:
@@ -797,6 +812,8 @@ def classify_assets(assets):
         m_tool = TOOL_ASSET_RE.match(n)
         if n == SUMS_NAME:
             sums = a
+        elif n == SUMS_SIG_NAME:
+            sums_sig = a
         elif n == INFO_NAME:
             info = a
         elif m_dbg:
@@ -814,7 +831,7 @@ def classify_assets(assets):
         else:
             other.append(a)
     return {"app": app, "core": core, "debug": debug, "tools": tools,
-            "other": other, "sums": sums, "info": info}
+            "other": other, "sums": sums, "sums_sig": sums_sig, "info": info}
 
 
 def _plat_order(plat):
@@ -947,6 +964,9 @@ def render_panel(rel, kind, hidden, app_in=(), app_only=False):
         s = cls["sums"]
         meta.append(_dl(s, "SHA256SUMS.txt") + " <small>(%s)</small>"
                     % _esc(_size(s.get("size"))))
+    if cls["sums_sig"]:
+        meta.append(_dl(cls["sums_sig"], "signature")
+                    + ' <small class="dl-sig">(minisign)</small>')
     out = ['<div class="dl-panel" id="%s" data-rel="%s" data-kind="%s"%s>'
            % (_esc(_panel_id(tag)), _esc(tag), kind, " hidden" if hidden else ""),
            '<p class="dl-meta">%s</p>' % " &middot; ".join(meta)]
@@ -1139,24 +1159,58 @@ def render_downloads(releases, app_only=False):
 %(picker)s
 %(installer)s
 %(panels)s
-    <p class="footnote" id="verify">
-      Compare a download's SHA-256 with its line in <code>SHA256SUMS.txt</code>
-      (<code>shasum -a 256 &lt;file&gt;</code> on macOS and Linux,
-      <code>Get-FileHash &lt;file&gt;</code> in PowerShell). The macOS app is
-      Developer ID signed and notarized; the Windows installer is not yet
-      code-signed, so SmartScreen may warn; the core files are unsigned.
-      <a href="%(repo)s/blob/develop/app/packaging/README.md">Packaging details</a>.
-    </p>
+%(verify)s
   </div>
 </section>
 <script src="assets/js/download.js" defer></script>""" % {
         "sprite": ICON_SPRITE, "nojs": nojs, "picker": "\n".join(picker),
         "installer": _installer_widget(), "panels": "\n".join(panels),
-        "repo": REPO_URL}
+        "verify": _verify_note(app_only=False), "repo": REPO_URL}
 
 
 def _has_app(rel):
     return any(APP_ASSET_RE.match(a["name"]) for a in rel["assets"])
+
+
+def _verify_note(app_only):
+    """The 'Verify a download' note under the panels (#1151): attestation,
+    signed checksum list (with the public key once it is committed), AppImage
+    signature, and what is and is not platform-signed.  check_downloads.py
+    anchors on id="verify", so there is exactly one per page."""
+    key = release_signing_key()
+    if key:
+        sums = ('The checksum list itself is signed with the project release '
+                'key: <code>minisign -Vm SHA256SUMS.txt -P %s</code> (the '
+                '<a href="%s/releases/download/latest/SHA256SUMS.txt.minisig">'
+                'signature</a> sits next to it; the key is also '
+                '<a href="%s/blob/develop/docs/release-signing.pub">in the '
+                'repository</a>).' % (_esc(key), REPO_URL, REPO_URL))
+    else:
+        sums = ('The checksum list is signed with the project release key '
+                'from the first release after the key is published; the '
+                'public key will be shown here.')
+    gate = ('The macOS app, cores and tools are Developer ID signed and '
+            'notarized%s. The Windows app, installer and cores are not '
+            'code-signed yet (<a href="%s/issues/1150">#1150</a>), so '
+            'SmartScreen may warn. The Linux AppImages carry an embedded GPG '
+            'signature (<code>app/packaging/linux/verify-appimage.py</code>). '
+            'Every release body lists each file\'s signing state in a table '
+            'generated from the files.'
+            % (', so the app opens without a Gatekeeper prompt' if app_only
+               else '', REPO_URL))
+    return """    <p class="footnote" id="verify">
+      <strong>Verify a download.</strong> Every file is attested: with the
+      <a href="https://cli.github.com/">GitHub CLI</a>,
+      <code>gh attestation verify &lt;file&gt; --repo libretro/virtualjaguar-libretro</code>
+      proves which commit and workflow run built it. Compare a download's SHA-256
+      with its line in <code>SHA256SUMS.txt</code>
+      (<code>shasum -a 256 &lt;file&gt;</code> on macOS and Linux,
+      <code>Get-FileHash &lt;file&gt;</code> in PowerShell). %(sums)s
+      The installers below do these checks before installing.
+      %(gate)s
+      <a href="%(repo)s/blob/develop/SECURITY.md">Full instructions</a> &middot;
+      <a href="%(repo)s/blob/develop/app/packaging/README.md">Packaging details</a>.
+    </p>""" % {"sums": sums, "gate": gate, "repo": REPO_URL}
 
 
 def _render_app_downloads(latest, nightly, older):
@@ -1228,21 +1282,13 @@ def _render_app_downloads(latest, nightly, older):
 %(picker)s
 %(installer)s
 %(panels)s
-    <p class="footnote" id="verify">
-      Compare a download's SHA-256 with its line in <code>SHA256SUMS.txt</code>
-      (<code>shasum -a 256 &lt;file&gt;</code> on macOS and Linux,
-      <code>Get-FileHash &lt;file&gt;</code> in PowerShell). The macOS app is
-      Developer ID signed and notarized, so it opens without a Gatekeeper
-      prompt; the Windows installer is not yet code-signed, so SmartScreen may
-      warn. Builds you make yourself, and builds from forks, are unsigned.
-      <a href="%(repo)s/blob/develop/app/packaging/README.md">Packaging details</a>.
-    </p>
+%(verify)s
   </div>
 </section>
 <script src="assets/js/download.js" defer></script>""" % {
         "sprite": ICON_SPRITE, "nojs": nojs, "picker": "\n".join(picker),
         "installer": _installer_widget("app"), "panels": "\n".join(panels),
-        "repo": REPO_URL}
+        "verify": _verify_note(app_only=True), "repo": REPO_URL}
 
 
 def latest_link_html(releases):
