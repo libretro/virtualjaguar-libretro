@@ -129,10 +129,11 @@ jobs:
           echo "label=$label short=$short deb=$deb app_version=$proj run=$run"
 
   # ------------------------------------------------------------------------------------------
-  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for Intel macOS, Apple
-  # silicon macOS, and Linux x86_64 + aarch64: upstream's x86_64-macos zip holds an arm64 dylib
-  # and it publishes no Linux binary (#950).  Windows keeps upstream's DLLs.  Artifacts
-  # `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
+  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for every package: Intel and
+  # Apple silicon macOS, Linux x86_64 + aarch64, Windows x64 + arm64.  Upstream's x86_64-macos zip
+  # holds an arm64 dylib, it publishes no Linux binary (#950), and its Windows DLLs import
+  # D3DX9_43.dll + the VC++ redistributable, so they never loaded on a stock Windows (#1153).
+  # Artifacts `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
   # ------------------------------------------------------------------------------------------
   librashader:
     name: librashader runtime
@@ -330,13 +331,11 @@ jobs:
   # ------------------------------------------------------------------------------------------
   windows:
     name: Windows ${{ matrix.arch }}
-    needs: [meta]
+    needs: [meta, librashader]
     if: needs.meta.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
-    # arm64 is new in v3.8.1: a failure there skips its package instead of
-    # holding back every app asset (release.yml attaches app packages only
-    # when this whole workflow succeeds).
-    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    # Both legs are required (the arm64 continue-on-error of v3.8.1 went with #1153: a red arm64
+    # package now holds the release like every other asset).
     strategy:
       fail-fast: false
       matrix:
@@ -344,6 +343,7 @@ jobs:
           - arch: x64
             os: windows-latest
             msystem: MINGW64
+            triple: x86_64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-x86_64-gcc
@@ -355,6 +355,7 @@ jobs:
           - arch: arm64
             os: windows-11-arm
             msystem: CLANGARM64
+            triple: aarch64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-clang-aarch64-clang
@@ -374,6 +375,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The shader runtime, built from the pinned source for this CPU (librashader.yml; the MSVC-target
+      # DLL loads into the MinGW-built exe through the plain C ABI).  Lands beside the executable, in
+      # the portable zip and in the installer.
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-${{ matrix.triple }}
+          path: librashader
+
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -384,8 +394,10 @@ jobs:
       - name: Configure and build (GUI subsystem, static runtime)
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
+            -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$(cygpath -m "$PWD")/librashader/librashader.dll" \
             ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"} \
             ${{ matrix.cmake_extra }}
           grep -E 'librashader|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER:' build/CMakeCache.txt | head
@@ -402,8 +414,19 @@ jobs:
           echo "blitter_simd_ops definitions: $n"
           [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
 
+      # The runtime must load here (shaders_library FAILS instead of skipping: VJ_REQUIRE_LIBRASHADER,
+      # #1153; on the v3.11.0 tag it skipped on both legs because upstream's DLL could not be loaded).
+      # shaders_gl needs an OpenGL 3.3 context, which the hosted runners' GDI driver does not give;
+      # Windows GL rendering is qualified by windows-gl-test.yml (#1155).
       - name: Smoke tests (GUI-subsystem exe, output through pipes)
-        run: ctest --test-dir build --output-on-failure ${{ matrix.arch == 'arm64' && '-E shaders_gl' || '' }}
+        run: VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
+
+      - name: The shader runtime beside the executable loads (ABI 2) and parses the bundled presets
+        run: |
+          set -eu
+          test -f build/librashader.dll
+          python app/packaging/windows/check-librashader-dll.py build/librashader.dll --arch "$ARCH" --require-load
+          VJ_REQUIRE_LIBRASHADER=1 VJ_LIBRASHADER="$(cygpath -m "$PWD/build/librashader.dll")" build/vj_shader_tests.exe library
 
       - name: The exe must import only Windows system DLLs
         run: |
@@ -520,6 +543,9 @@ jobs:
           test -f portable.txt   # --headless uses a temp data dir, so portable mode itself cannot be observed here
           cd "$GITHUB_WORKSPACE"
           bash app/packaging/check-payload.sh build "$t/VirtualJaguar" virtualjaguar.exe
+          # The shader runtime in the zip: right CPU, Windows-only imports, loads with ABI 2, and the
+          # app's own lookup (beside the executable, VJ_LIBRASHADER unset) finds it (#1153).
+          bash app/packaging/windows/check-librashader.sh "$t/VirtualJaguar" "$ARCH" build/vj_shader_tests.exe
 
       - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
         run: |
@@ -531,6 +557,7 @@ jobs:
           test -f /c/vjtest/virtualjaguar.exe
           test ! -f /c/vjtest/portable.txt || { echo "::error::installer must not ship portable.txt"; exit 1; }
           /c/vjtest/virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          bash app/packaging/windows/check-librashader.sh /c/vjtest "$ARCH" build/vj_shader_tests.exe
           /c/vjtest/unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           sleep 5
           test ! -f /c/vjtest/virtualjaguar.exe || { echo "::error::uninstall left the program behind"; exit 1; }
@@ -553,7 +580,7 @@ jobs:
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    # New in v3.8.1: non-blocking, like the arm64 Windows leg above.
+    # New in v3.8.1: non-blocking (the arm64 Windows leg used to be too, until #1153).
     continue-on-error: true
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08

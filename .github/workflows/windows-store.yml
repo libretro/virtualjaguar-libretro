@@ -19,6 +19,9 @@ on:
       - 'app/src/app.cpp'
       - 'app/CMakeLists.txt'
       - 'app/src/platform/platform_windows.cpp'
+      - 'app/cmake/VJShaders.cmake'
+      - 'app/packaging/librashader/**'
+      - '.github/workflows/librashader.yml'
       - '.github/workflows/windows-store.yml'
   workflow_dispatch:
     inputs:
@@ -36,7 +39,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The shader runtime inside the MSIX, built from the pinned source (#1153): the same DLL the
+  # portable zip and the installer carry (app-package.yml), never upstream's download.
+  librashader:
+    if: github.event_name != 'workflow_dispatch' || inputs.candidate_run == ''
+    name: librashader runtime
+    permissions:
+      contents: read
+    uses: ./.github/workflows/librashader.yml
+    with:
+      targets: '["x86_64-pc-windows-msvc","aarch64-pc-windows-msvc"]'
+
   msix:
+    needs: [librashader]
     if: github.event_name != 'workflow_dispatch' || inputs.candidate_run == ''
     name: Store MSIX ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
@@ -47,15 +62,24 @@ jobs:
           - arch: x64
             os: windows-latest
             msystem: MINGW64
+            triple: x86_64-pc-windows-msvc
             packages: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-mesa mingw-w64-x86_64-python
             cmake_extra: ''
           - arch: arm64
             os: windows-11-arm
             msystem: CLANGARM64
+            triple: aarch64-pc-windows-msvc
             packages: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja mingw-w64-clang-aarch64-mesa mingw-w64-clang-aarch64-python
             cmake_extra: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
+    env:
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-${{ matrix.triple }}
+          path: librashader
       - name: Test MSIX staging and input rejection
         shell: pwsh
         run: ./app/packaging/windows/msix/test-package.ps1
@@ -74,14 +98,20 @@ jobs:
         shell: 'msys2 {0}'
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build-store -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DVJ_APP_WIN32_GUI=ON -DVJ_APP_BUILD_TESTS=OFF \
-            -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_TV_DEFAULT=manual -DVJ_BUILD_CHANNEL=release \
+            -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$(cygpath -m "$PWD")/librashader/librashader.dll" \
+            -DVJ_TV_DEFAULT=manual -DVJ_BUILD_CHANNEL=release \
             ${{ matrix.cmake_extra }}
+          grep -E 'librashader' build-store/CMakeCache.txt | head
           cmake --build build-store -j4
           cmake --install build-store --prefix "$PWD/stage-store"
           stage-store/bin/virtualjaguar.exe --headless --frames 300 --expect-hash f4c30ea3 test/roms/yarc.j64
           bash app/packaging/check-payload.sh build-store stage-store/bin virtualjaguar.exe
+          # The runtime in the install tree: right CPU, Windows-only imports, exports, and it LOADS
+          # here (this leg's own architecture) with ABI 2 (#1153).
+          python app/packaging/windows/check-librashader-dll.py stage-store/bin/librashader.dll --arch "$ARCH" --require-load
           python app/packaging/windows/stage-software-gl.py stage-store
       - name: Pack and validate Store MSIX with the Windows SDK
         shell: pwsh
@@ -92,6 +122,15 @@ jobs:
           'Unsigned Store submission only. Installation, upgrade and GUI qualification still required.' >> $env:GITHUB_STEP_SUMMARY
           Get-FileHash store-out/*.msix -Algorithm SHA256 | Format-Table | Out-String | Add-Content $env:GITHUB_STEP_SUMMARY
           $env:GITHUB_SHA | Set-Content store-out/SOURCE_COMMIT.txt
+      - name: The shader runtime inside the MSIX loads (layout and MakeAppx round trip)
+        shell: 'msys2 {0}'
+        run: |
+          set -eu
+          # package.ps1 leaves the staged layout and the unpacked copy of the finished .msix in store-out.
+          for d in "store-out/layout-$ARCH" "store-out/unpacked-$ARCH"; do
+            echo "--- $d"
+            python app/packaging/windows/check-librashader-dll.py "$d/librashader.dll" --arch "$ARCH" --require-load
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: store-msix-windows-${{ matrix.arch }}
