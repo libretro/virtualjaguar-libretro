@@ -20,9 +20,11 @@
 # One asset name must map to one file: the release attestation and the checksum
 # list are keyed by name, so a second artifact carrying the same basename with
 # DIFFERENT bytes would silently replace a shipped file.  That is an error here.
-# Byte-identical copies are fine: every build job uploads its dist/ tree, and
+# Byte-identical copies are fine.  Every build job uploads its dist/ tree, and
 # dist/info/virtualjaguar_libretro.info is in the repository, so each artifact
-# carries the same .info file (the final one is written below anyway).
+# carries a copy of the .info file, and the Windows ones differ (CRLF checkout):
+# those copies are skipped outright, the shipped .info is written below from
+# this job's checkout.
 set -euo pipefail
 art=${1:?artifacts dir}; rel=${2:?release dir}; st=${3:?status dir}
 lane=${LANE:-release}
@@ -30,6 +32,7 @@ mkdir -p "$rel" "$st"
 
 while IFS= read -r f; do
   n=$(basename "$f")
+  [ "$n" != virtualjaguar_libretro.info ] || continue
   if [ -e "$rel/$n" ]; then
     cmp -s "$f" "$rel/$n" && continue
     echo "::error::two artifacts ship different files named $n ($f and an earlier one)"; exit 1

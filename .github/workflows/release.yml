@@ -735,6 +735,7 @@ jobs:
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write       # Sigstore-sign the provenance statement
@@ -804,6 +805,9 @@ jobs:
     name: Verify signatures and attestations
     needs: [stage]
     runs-on: macos-latest
+    # A hung check (gh, spctl's online lookup) must not hold the develop
+    # nightly, which waits for this job to END (not to succeed).
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
@@ -863,6 +867,7 @@ jobs:
     if: |
       startsWith(github.ref, 'refs/tags/v')
       && !cancelled()
+      && !inputs.dry_run
       && needs.build.result == 'success'
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
@@ -958,9 +963,12 @@ jobs:
     # there the tools zips are part of the deliverable.
     #
     # The signing gate follows the same rule: it is warn-only on develop and
-    # the nightly does not wait for its verdict, so a broken gate runner or a
-    # signing-service outage cannot withhold the cores either.  On release/**
-    # it is strict and the prerelease waits for it (#1152).
+    # the nightly ignores its verdict, so a broken gate or a signing-service
+    # outage cannot withhold the cores either.  On release/** it is strict and
+    # the prerelease waits for it (#1152).  The gate is still in `needs`, so
+    # the nightly starts after it ends; its timeout-minutes bounds a hang, and
+    # its runner pool (macos-latest) is one the macOS core rows already need.
+    # A dry-run dispatch never publishes, whatever the branch.
     if: |
       always()
       && (github.ref == 'refs/heads/develop'
@@ -970,6 +978,7 @@ jobs:
       && needs.switch-build.result == 'success'
       && needs.stage.result == 'success'
       && (github.ref == 'refs/heads/develop' || needs.verify-signatures.result == 'success')
+      && !inputs.dry_run
     runs-on: ubuntu-latest
     permissions:
       contents: write   # move the tag, create/update the release

@@ -63,9 +63,9 @@ check_has "release .info kept verbatim" "$(cat "$T/rel-tag/virtualjaguar_libretr
 # Every build artifact carries the repository's dist/info/*.info: identical copies are fine.
 mkdir -p "$A/virtualjaguar_libretro-linux-x86_64/info" "$A/virtualjaguar_libretro-ios-arm64/info"
 cp dist/info/virtualjaguar_libretro.info "$A/virtualjaguar_libretro-linux-x86_64/info/"
-cp dist/info/virtualjaguar_libretro.info "$A/virtualjaguar_libretro-ios-arm64/info/"
+sed 's/$/\r/' dist/info/virtualjaguar_libretro.info > "$A/virtualjaguar_libretro-ios-arm64/info/virtualjaguar_libretro.info"   # a CRLF (Windows checkout) copy
 OUT=$(LANE=nightly GITHUB_SHA=0123456789abcdef bash "$S/stage.sh" "$A" "$T/rel-same" "$T/status-same" 2>&1); RC=$?
-check_rc "identical duplicates (the .info in every dist/) are accepted" "$RC" 0 "$OUT"
+check_rc "the .info copies in every dist/ (even a CRLF one) are ignored" "$RC" 0 "$OUT"
 check_has "... and the lane's .info still wins" "$(cat "$T/rel-same/virtualjaguar_libretro.info")" "-nightly-0123456"
 mk dup virtualjaguar_libretro-linux-x86_64.so
 OUT=$(LANE=nightly bash "$S/stage.sh" "$A" "$T/rel-dup" "$T/status-dup" 2>&1); RC=$?
@@ -140,7 +140,7 @@ if have minisign && [ -f "$T/rel/SHA256SUMS.txt.minisig" ]; then
 fi
 # tampered checksum list
 cp "$T/rel/SHA256SUMS.txt" "$T/sums.bak"
-sed -i.orig '1s/^./0/' "$T/rel/SHA256SUMS.txt" 2>/dev/null || sed -i '1s/^./0/' "$T/rel/SHA256SUMS.txt"
+sed -i.orig '1s/^[0-9a-f]\{64\}/0000000000000000000000000000000000000000000000000000000000000000/' "$T/rel/SHA256SUMS.txt"
 # shellcheck disable=SC2086
 gate strict $NOPUB
 check_has "tampered SHA256SUMS.txt fails" "$OUT" "SHA256SUMS.txt does not match the staged files"
