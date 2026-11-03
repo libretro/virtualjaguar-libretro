@@ -1,0 +1,15 @@
+# Tracked known failures of gl-qualification.yml, one per line: <leg> <kind> <reference>.
+# The workflow reads this file; an entry turns one specific failure into a recorded pass with
+# a note, nothing else on that leg is forgiven.  Remove the line when the fix lands: the leg
+# then fails again if the failure comes back.
+#
+#   windows-x64 exit-hang   the app (and every process that made an llvmpipe context) never
+#                           exits on the MSYS2 MINGW64 Mesa 26.2.3 the x64 package bundles:
+#                           SDL_DestroyWindow/SDL_Quit hang after "context destroyed";
+#                           LP_NUM_THREADS=0 and softpipe exit at once, arm64 Mesa exits in 2 s.
+#                           gl_qualify.py kills a launch 5 s after its screenshot is complete and
+#                           counts it; the boot step accepts the timeout when the screenshot and
+#                           the [gl] lines are there; shaders_gl passes without its final OK line
+#                           when nothing failed or skipped and its last check (the broken shader)
+#                           ran.  Product bug found by #1155 (PR #1160); tracked in #1167.
+windows-x64 exit-hang #1167

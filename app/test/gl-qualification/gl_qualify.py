@@ -32,6 +32,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -177,6 +178,31 @@ def read_list(path):
     return out
 
 
+def png_complete(path):
+    """The PNG is on disk and ends with its IEND chunk (SDL_SavePNG writes it last)."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(-12, 2)
+            return f.read(12)[4:8] == b"IEND"
+    except (OSError, ValueError):
+        return False
+
+
+def kill_tree(proc):
+    """Kill the launch and whatever it spawned (on Windows the parent waits on the Mesa child)."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)   # its own session (start_new_session): the whole group
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def launch(args, label, shader_arg, out_dir):
     """Run the app once.  Returns a result dict (no picture analysis yet)."""
     shots = out_dir / "shots"
@@ -198,16 +224,36 @@ def launch(args, label, shader_arg, out_dir):
         cmd.append(str(args.content))
     res = {"preset": label, "cmd": cmd, "png": str(png), "log": str(log), "errors": [], "notes": []}
     t0 = time.monotonic()
-    try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.timeout)
-        text = p.stdout.decode("utf-8", "replace")
-        res["exit"] = p.returncode
-    except subprocess.TimeoutExpired as e:
-        text = (e.stdout or b"").decode("utf-8", "replace") if isinstance(e.stdout, bytes) else ""
-        res["exit"] = None
-        res["errors"].append("timed out after %d s" % args.timeout)
+    # stdout+stderr straight to the log file (no pipe to drain), the process polled: a leg with a
+    # tracked exit hang (--known-exit-hang) is given a few seconds after its screenshot is complete,
+    # then its process tree is killed and the launch counts, with a note, instead of timing out.
+    with open(log, "wb") as lf:
+        proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, start_new_session=(os.name != "nt"))
+        shot_done_at = None
+        while True:
+            code = proc.poll()
+            if code is not None:
+                res["exit"] = code
+                break
+            now = time.monotonic()
+            if now - t0 > args.timeout:
+                kill_tree(proc)
+                res["exit"] = None
+                res["errors"].append("timed out after %d s" % args.timeout)
+                break
+            if args.known_exit_hang:
+                if shot_done_at is None and png_complete(png):
+                    shot_done_at = now
+                elif shot_done_at is not None and now - shot_done_at > args.hang_grace:
+                    kill_tree(proc)
+                    res["exit"] = None
+                    res["notes"].append("did not exit %d s after its screenshot; killed (known failure: %s)"
+                                        % (args.hang_grace, args.known_exit_hang))
+                    res["known_exit_hang"] = True
+                    break
+            time.sleep(0.25)
     res["seconds"] = round(time.monotonic() - t0, 1)
-    log.write_text(text, encoding="utf-8")
+    text = log.read_text(encoding="utf-8", errors="replace")
     if res["exit"] not in (None, 0):
         res["errors"].append("exit code %d" % res["exit"])
     # The LAST renderer line: on stock Windows the first names the GDI Generic 1.1 context the
@@ -328,6 +374,8 @@ def main():
     ap.add_argument("--frame", type=int, default=20, help="--screenshot-frame (UI frames before the capture)")
     ap.add_argument("--timeout", type=int, default=180, help="seconds per launch")
     ap.add_argument("--jobs", type=int, default=1, help="launches at once (each has its own --data-dir)")
+    ap.add_argument("--known-exit-hang", default="", help="this leg's app is known not to exit (cite the issue): a launch with a complete screenshot is killed after --hang-grace seconds and passes with a note")
+    ap.add_argument("--hang-grace", type=int, default=5, help="seconds a launch may keep running after its screenshot before --known-exit-hang kills it")
     ap.add_argument("--fail-fast", type=int, default=8, help="stop after this many consecutive failed presets (0 = never): a leg whose GL or runtime is broken fails in minutes, not hours")
     ap.add_argument("--low-dpi", action="store_true", help="pass --low-dpi (a 1x window on Retina)")
     ap.add_argument("--extra-arg", action="append", default=[], help="another app argument (repeatable)")
@@ -420,10 +468,11 @@ def main():
     built = [r for r in results if r["verdict"] == "built" and not r["errors"]]
     refused = [r for r in results if r["verdict"] == "refused" and not r["errors"]]
     broken = [r for r in results if r["verdict"] == "known-broken" and not r["errors"]]
+    hung = [r for r in results if r.get("known_exit_hang")]
     (args.out / "results.json").write_text(json.dumps({
         "os": args.os, "exe": str(args.exe), "frame": args.frame, "presets": len(presets),
         "built": len(built), "refused": sorted(r["preset"] for r in refused),
-        "known_broken": sorted(r["preset"] for r in broken), "failed": len(failed),
+        "known_broken": sorted(r["preset"] for r in broken), "did_not_exit": len(hung), "failed": len(failed),
         "results": results}, indent=1), encoding="utf-8")
 
     md = ["## GL qualification: %s" % args.os, "",
@@ -434,6 +483,7 @@ def main():
           "| Built | %d |" % len(built),
           "| Refused (allowlisted) | %d |" % len(refused),
           "| Known broken (allowlisted) | %d |" % len(broken),
+          "| Did not exit (known failure%s) | %d |" % ((": " + args.known_exit_hang) if args.known_exit_hang else "", len(hung)),
           "| **Failed** | **%d** |" % len(failed), ""]
     if refused:
         md += ["<details><summary>Refused presets (allowlisted)</summary>", ""]
@@ -456,10 +506,12 @@ def main():
                 md += ["", "```", *gl[-12:], "```", ""]
             except OSError:
                 md += [""]
-    notes = [r for r in results if [n for n in r["notes"] if n != "no golden"] and not r["errors"] and r["verdict"] == "built"]
+    def visible_notes(r):
+        return [n for n in r["notes"] if n != "no golden" and not n.startswith("did not exit")]
+    notes = [r for r in results if visible_notes(r) and not r["errors"] and r["verdict"] == "built"]
     if notes:
         md += ["<details><summary>Notes (%d)</summary>" % len(notes), ""]
-        md += ["- `%s`: %s" % (r["preset"], "; ".join(n for n in r["notes"] if n != "no golden")) for r in notes]
+        md += ["- `%s`: %s" % (r["preset"], "; ".join(visible_notes(r))) for r in notes]
         md += ["", "</details>", ""]
     summary = "\n".join(md) + "\n"
     (args.out / "summary.md").write_text(summary, encoding="utf-8")

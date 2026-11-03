@@ -58,6 +58,7 @@ int main(int argc, char** argv) {
     SDL_GL_DestroyContext(context);
     std::printf("context destroyed\n");
     SDL_DestroyWindow(window);
+    std::printf("window destroyed\n");
     SDL_Quit();
     std::printf("SDL quit; exiting %d\n", passed ? 0 : 1);
     return passed ? 0 : 1;

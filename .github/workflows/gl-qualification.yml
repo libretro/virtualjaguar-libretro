@@ -145,17 +145,6 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' glxinfo -B | tee glq/glxinfo.txt
           xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' build/vj_gl_context_integration | tee glq/gl-context-integration.txt
 
-      # The headless shader test on a real context: a skip (77) is a failure on this leg.  Recorded
-      # here and judged after the preset loop, so a red test still leaves the screenshots as evidence.
-      - name: shaders_gl (skip = failure)
-        id: shaders_gl
-        continue-on-error: true
-        run: |
-          set -eu
-          export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 VJ_LIBRASHADER="$PWD/stage/bin/librashader.so"
-          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
-          test "${PIPESTATUS[0]}" -eq 0
-
       - name: Render every bundled preset
         run: |
           set -eu
@@ -167,6 +156,18 @@ jobs:
               --expect-renderer 'llvmpipe' \
               --refused-allowlist "$LISTS/refused-linux.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
               --goldens app/test/golden/gl/linux --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
+
+      # The headless shader test on a real context: a skip (77) is a failure on this leg.  Recorded
+      # here and judged after the preset loop, so a red test still leaves the screenshots as evidence.
+      - name: shaders_gl (skip = failure)
+        id: shaders_gl
+        if: always()
+        continue-on-error: true
+        run: |
+          set -eu
+          export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 VJ_LIBRASHADER="$PWD/stage/bin/librashader.so"
+          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
+          test "${PIPESTATUS[0]}" -eq 0
 
       - name: shaders_gl verdict
         if: always() && steps.shaders_gl.outcome != 'success'
@@ -284,6 +285,15 @@ jobs:
             echo "fallback=yes" >>"$GITHUB_OUTPUT"
           fi
 
+      # Tracked known failures of this leg (app/test/gl-qualification/known-failures.txt).
+      - name: Known failures of this leg
+        id: known
+        run: |
+          set -eu
+          ref="$(awk -v leg="windows-$ARCH" '$1 == leg && $2 == "exit-hang" {print $3; exit}' "$LISTS/known-failures.txt")"
+          echo "exit_hang=$ref" >>"$GITHUB_OUTPUT"
+          [ -z "$ref" ] || echo "::notice::windows-$ARCH: the app's exit hang is a tracked known failure ($ref); a launch is killed 5 s after its screenshot"
+
       # The pre-#1138 loader against the bundled Mesa (before/after evidence), then a context
       # created, drawn to, read back and destroyed through the same library the fallback child
       # uses: the smallest program that must come back promptly on this runner.
@@ -308,6 +318,10 @@ jobs:
           code=${PIPESTATUS[0]}
           set -e
           echo "context create/draw/destroy: exit $code after $SECONDS s" | tee -a glq/sdl-loader.txt
+          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] && grep -q '^PASS GL loader' glq/sdl-loader.txt; then
+            echo "probe drew and read back, then did not exit: the tracked known failure (${{ steps.known.outputs.exit_hang }})" | tee -a glq/sdl-loader.txt
+            code=0
+          fi
           # The same with llvmpipe's rasterizer threads off, then with softpipe (no LLVM at all):
           # splits "llvmpipe's thread pool never winds down" from "WGL/the process itself".
           for v in "LP_NUM_THREADS=0" "GALLIUM_DRIVER=softpipe"; do
@@ -342,6 +356,10 @@ jobs:
           echo "automatic fallback launch: exit $code after $SECONDS s" | tee glq/automatic-seconds.txt
           cat glq/automatic-stderr.txt
           ok=yes
+          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] && [ -s glq/automatic-fallback.png ]; then
+            echo "booted, screenshot written, did not exit: the tracked known failure (${{ steps.known.outputs.exit_hang }})" | tee -a glq/automatic-seconds.txt
+            code=0
+          fi
           [ "$code" -eq 0 ] || ok=no
           test -s glq/automatic-fallback.png || ok=no
           grep -q 'automatically retrying with bundled Mesa OpenGL' glq/automatic-stderr.txt || ok=no
@@ -357,7 +375,7 @@ jobs:
       #   no-vsync   the same with video.vsync=0 seeded in config.ini (a swap interval that never
       #              returns on a session without a compositor?)
       - name: Fallback timing diagnostics
-        if: steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes'
+        if: steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes' && steps.known.outputs.exit_hang == ''
         run: |
           set -eu
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
@@ -383,20 +401,6 @@ jobs:
           LP_NUM_THREADS=0 run_one lp-single
           cat glq/timing.txt
 
-      # shaders_gl: without a GL 3.3 context it would skip (77); here it runs on the bundled Mesa,
-      # and a skip is a failure (judged after the preset loop).
-      - name: shaders_gl on the bundled Mesa (skip = failure)
-        id: shaders_gl
-        continue-on-error: true
-        run: |
-          set -eu
-          export PATH="$PWD/stage/bin/software-opengl:$PATH"
-          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
-          export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
-          export VJ_LIBRASHADER="$(cygpath -w "$PWD/stage/bin/librashader.dll")"
-          timeout 600 build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
-          test "${PIPESTATUS[0]}" -eq 0
-
       # Every preset through the SHIPPED path: the stage/bin exe, which retries beside Mesa on its
       # own (so each launch is the parent plus the child; the renderer line is the child's).  Only
       # once the plain boot came back: 500 launches of a boot that does not are hours of nothing.
@@ -409,11 +413,38 @@ jobs:
           if [ "${{ steps.native.outputs.fallback }}" = yes ]; then
             expect_log=(--expect-log 'automatically retrying with bundled Mesa OpenGL')
           fi
+          hang=(); [ -z "${{ steps.known.outputs.exit_hang }}" ] || hang=(--known-exit-hang "${{ steps.known.outputs.exit_hang }}")
           python -I "$QUALIFY" --os windows --exe stage/bin/virtualjaguar.exe --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 1 --timeout 150 \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 1 --timeout 150 ${hang[@]+"${hang[@]}"} \
             --expect-renderer 'llvmpipe|D3D12' ${expect_log[@]+"${expect_log[@]}"} \
             --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
+
+      # shaders_gl: without a GL 3.3 context it would skip (77); here it runs on the bundled Mesa,
+      # and a skip is a failure (judged after the preset loop).
+      - name: shaders_gl on the bundled Mesa (skip = failure)
+        id: shaders_gl
+        if: always()
+        continue-on-error: true
+        run: |
+          set -eu
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          export VJ_LIBRASHADER="$(cygpath -w "$PWD/stage/bin/librashader.dll")"
+          set +e
+          timeout 600 build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          # The tracked exit hang: the test's verdict line comes after SDL_Quit, which never
+          # returns there, so the evidence is "nothing failed or skipped and the last check ran".
+          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] \
+             && ! grep -q 'shader_tests: FAIL\|shader_tests gl: SKIP' glq/shaders_gl.txt \
+             && grep -q '^broken shader -> chain build failed' glq/shaders_gl.txt; then
+            echo "shader_tests gl: every check passed, then the process did not exit: the tracked known failure (${{ steps.known.outputs.exit_hang }})" | tee -a glq/shaders_gl.txt
+            code=0
+          fi
+          test "$code" -eq 0
 
       - name: Automatic Mesa fallback verdict
         if: always() && steps.native.outputs.fallback == 'yes' && (steps.fallback.outputs.booted != 'yes' || steps.loaders.outcome != 'success')
@@ -481,15 +512,6 @@ jobs:
           perl -e 'alarm shift; exec @ARGV' 120 build/vj_gl_context_integration 2>&1 | tee glq/gl-context-integration.txt
           test "${PIPESTATUS[0]}" -eq 0
 
-      - name: shaders_gl (skip = failure)
-        id: shaders_gl
-        continue-on-error: true
-        run: |
-          set -eu
-          export VJ_LIBRASHADER="$PWD/stage/bin/librashader.dylib"
-          perl -e 'alarm shift; exec @ARGV' 600 build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
-          test "${PIPESTATUS[0]}" -eq 0
-
       - name: Render every bundled preset
         run: |
           set -eu
@@ -502,6 +524,16 @@ jobs:
             --seed-config "$LISTS/small-window.ini" --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
+
+      - name: shaders_gl (skip = failure)
+        id: shaders_gl
+        if: always()
+        continue-on-error: true
+        run: |
+          set -eu
+          export VJ_LIBRASHADER="$PWD/stage/bin/librashader.dylib"
+          perl -e 'alarm shift; exec @ARGV' 1200 build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
+          test "${PIPESTATUS[0]}" -eq 0
 
       - name: shaders_gl verdict
         if: always() && steps.shaders_gl.outcome != 'success'

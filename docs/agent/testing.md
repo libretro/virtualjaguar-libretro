@@ -381,10 +381,11 @@ beside the bundled MSYS2 Mesa, #1138/#1143), Windows arm64 (same, plus the porta
 Store testers used), macOS arm64 (Apple OpenGL 4.1). Runs on PRs touching the GL/shader path,
 nightly, on dispatch, and `release.yml` requires it on tags and `release/**`.
 
-Per leg: one build, `cmake --install` into `stage/`, then `vj_shader_tests gl` run **directly**
-(exit 77 = skipped = failure here; everywhere else it is `-E shaders_gl`; the step is
-`continue-on-error` and a "shaders_gl verdict" step fails the job after the preset loop, so the
-screenshots exist even when the test is red), then
+Per leg: one build, `cmake --install` into `stage/`, the preset loop (below), then
+`vj_shader_tests gl` run **directly** after it (exit 77 = skipped = failure here; everywhere else
+it is `-E shaders_gl`; the step is `continue-on-error` and a "shaders_gl verdict" step fails the
+job, so the screenshots exist even when the test is red, and a test that has to be killed cannot
+wedge the window server before the loop). The loop:
 `app/test/gl-qualification/gl_qualify.py` launches `stage/bin/virtualjaguar --shader <preset>
 --screenshot <png> --screenshot-frame 20 test/roms/yarc.j64` for `--shader off` and every preset.
 Per (leg, preset) it asserts: exit 0 before the timeout; the `[gl] version=...; renderer=` line
@@ -421,6 +422,10 @@ candidates into the artifact.
 - `identical to the --shader off capture` → the preset changed nothing; either the chain fell back
   to the plain presenter (check for a `[shader]` line) or it is a true no-op at this scale (list it).
 - `screenshot is black` → the window drew nothing (lost context, hidden window, swap failure).
+- `known-failures.txt` holds tracked failures with their issue (`windows-x64 exit-hang`, #1167: the app never
+  exits on the x64 bundled Mesa; a launch with a complete screenshot is killed after 5 s and counted,
+  the boot step and `shaders_gl` accept the timeout when their evidence is complete). Remove the line
+  when the fix lands; nothing else on that leg is forgiven.
 - Windows "Automatic Mesa fallback verdict" red → the stock-Windows path (#1138) regressed or the
   boot did not come back: `automatic-seconds.txt` has the exit code, the seconds and which of the
   checks failed (the retry line, the `renderer=` line, `config.ini` in the parent's data dir, no

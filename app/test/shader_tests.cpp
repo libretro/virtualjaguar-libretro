@@ -717,12 +717,13 @@ static int runGl() {
 
 #ifdef VJ_SLANG_DIR
     // ---- the bundled slang-shaders presets that must work on this GL ----
-    // At a real-world output size: the 128x64 picture the pixel checks above use is below what
-    // some presets are written for (crt-royale's mask passes scale by 0.0625 of the viewport and
-    // its preset says "Safe for >= 341.333 horizontal triads at viewport size"; at 128x64 those
-    // passes are 8x4 px and the chain comes out black on llvmpipe and Apple's software renderer,
-    // while the app at 960x760 renders it; gl-qualification.yml, #1155).
-    const int BW = 640, BH = 480;
+    // At a size the presets are written for: the 128x64 picture the pixel checks above use is
+    // below what some need (crt-royale's mask passes scale by 0.0625 of the viewport and its preset
+    // says "Safe for >= 341.333 horizontal triads at viewport size"; at 128x64 those passes are
+    // 8x4 px and the chain comes out black on llvmpipe and Apple's software renderer, while the
+    // app at 960x760 renders it; gl-qualification.yml, #1155).  Not larger: on Apple's software
+    // renderer (hosted macOS) 640x480 did not finish the ~30 presets in 10 minutes.
+    const int BW = 384, BH = 288;
     ShaderFrame fb = f;
     fb.outW = BW;
     fb.outH = BH;
