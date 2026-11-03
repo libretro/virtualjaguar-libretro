@@ -141,8 +141,11 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' glxinfo -B | tee glq/glxinfo.txt
           xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' build/vj_gl_context_integration | tee glq/gl-context-integration.txt
 
-      # The headless shader test on a real context: a skip (77) is a failure on this leg.
+      # The headless shader test on a real context: a skip (77) is a failure on this leg.  Recorded
+      # here and judged after the preset loop, so a red test still leaves the screenshots as evidence.
       - name: shaders_gl (skip = failure)
+        id: shaders_gl
+        continue-on-error: true
         run: |
           set -eu
           export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 VJ_LIBRASHADER="$PWD/stage/bin/librashader.so"
@@ -160,6 +163,12 @@ jobs:
               --expect-renderer 'llvmpipe' \
               --refused-allowlist "$LISTS/refused-linux.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
               --goldens app/test/golden/gl/linux --preset-set "$PRESET_SET" "${refresh[@]}"
+
+      - name: shaders_gl verdict
+        if: steps.shaders_gl.outcome != 'success'
+        run: |
+          echo "::error::shaders_gl failed or skipped on a real llvmpipe context (glq/shaders_gl.txt in the artifact)"
+          exit 1
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -262,9 +271,13 @@ jobs:
         if: steps.native.outputs.fallback == 'yes'
         run: |
           set -eu
-          timeout 120 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
+          # arm64 boots, screenshots and exits in ~3 s; the first x64 run took longer than 120 s, so
+          # the time is recorded and the limit is generous (the preset loop has its own per-launch one).
+          SECONDS=0
+          timeout 300 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
             --screenshot "$PWD/glq/automatic-fallback.png" --screenshot-frame "$SHOT_FRAME" \
             >glq/automatic-stdout.txt 2>glq/automatic-stderr.txt
+          echo "automatic fallback launch: $SECONDS s" | tee glq/automatic-seconds.txt
           cat glq/automatic-stderr.txt
           test -s glq/automatic-fallback.png
           grep -q 'automatically retrying with bundled Mesa OpenGL' glq/automatic-stderr.txt
@@ -292,6 +305,8 @@ jobs:
       # shaders_gl: without a GL 3.3 context it would skip (77); here it runs on the bundled Mesa,
       # and a skip is a failure.
       - name: shaders_gl on the bundled Mesa (skip = failure)
+        id: shaders_gl
+        continue-on-error: true
         run: |
           set -eu
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
@@ -316,6 +331,12 @@ jobs:
             --expect-renderer 'llvmpipe|D3D12' "${expect_log[@]}" \
             --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" "${refresh[@]}"
+
+      - name: shaders_gl verdict
+        if: steps.shaders_gl.outcome != 'success'
+        run: |
+          echo "::error::shaders_gl failed or skipped on the bundled Mesa (glq/shaders_gl.txt in the artifact)"
+          exit 1
 
       # The portable test build Store testers and #1138's reporters ran (arm64 only, as before).
       - name: Package the portable test build
@@ -360,6 +381,8 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
 
       - name: shaders_gl (skip = failure)
+        id: shaders_gl
+        continue-on-error: true
         run: |
           set -eu
           export VJ_LIBRASHADER="$PWD/stage/bin/librashader.dylib"
@@ -375,6 +398,12 @@ jobs:
             --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" "${refresh[@]}"
+
+      - name: shaders_gl verdict
+        if: steps.shaders_gl.outcome != 'success'
+        run: |
+          echo "::error::shaders_gl failed or skipped on the Apple OpenGL context (glq/shaders_gl.txt in the artifact)"
+          exit 1
 
       - uses: actions/upload-artifact@v7
         if: always()

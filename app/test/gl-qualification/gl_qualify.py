@@ -310,6 +310,7 @@ def main():
     ap.add_argument("--frame", type=int, default=20, help="--screenshot-frame (UI frames before the capture)")
     ap.add_argument("--timeout", type=int, default=180, help="seconds per launch")
     ap.add_argument("--jobs", type=int, default=1, help="launches at once (each has its own --data-dir)")
+    ap.add_argument("--fail-fast", type=int, default=8, help="stop after this many consecutive failed presets (0 = never): a leg whose GL or runtime is broken fails in minutes, not hours")
     ap.add_argument("--low-dpi", action="store_true", help="pass --low-dpi (a 1x window on Retina)")
     ap.add_argument("--extra-arg", action="append", default=[], help="another app argument (repeatable)")
     ap.add_argument("--expect-renderer", default="", help="regex the GL renderer string must match")
@@ -363,12 +364,22 @@ def main():
             judge_shader(r, refused_ok)
             analyse_png(r, off_img, identical_ok, args)
             return r
+        streak, aborted = 0, False
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
             for r in ex.map(one, presets):
                 results.append(r)
                 tag = "FAIL" if r["errors"] else r["verdict"]
                 print("  %-60s %-8s %5s s%s" % (r["preset"], tag, r["seconds"],
                       ("  " + "; ".join(r["errors"])) if r["errors"] else ""), flush=True)
+                streak = streak + 1 if r["errors"] else 0
+                if args.fail_fast and streak >= args.fail_fast:
+                    aborted = True
+                    print("gl_qualify: %d presets failed in a row; stopping (--fail-fast %d)" % (streak, args.fail_fast), flush=True)
+                    ex.shutdown(wait=True, cancel_futures=True)
+                    break
+        if aborted:
+            results.append({"preset": "(aborted)", "errors": ["%d consecutive failures: the remaining %d presets were not run" % (streak, len(presets) - (len(results) - 1))],
+                            "notes": [], "verdict": "aborted", "exit": None, "seconds": 0, "log": "", "png": "", "shader": []})
     else:
         print("gl_qualify: the plain launch failed; not running the presets", flush=True)
 
@@ -407,6 +418,8 @@ def main():
             md += ["**`%s`** (exit %s, %s s)" % (r["preset"], r["exit"], r["seconds"])]
             md += ["- %s" % e for e in r["errors"]]
             try:
+                if not r["log"]:
+                    raise OSError("no log")
                 tail = pathlib.Path(r["log"]).read_text(encoding="utf-8", errors="replace").splitlines()
                 gl = [l for l in tail if l.startswith("[gl]") or l.startswith("[shader]")]
                 md += ["", "```", *gl[-12:], "```", ""]

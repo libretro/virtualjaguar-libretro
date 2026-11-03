@@ -382,14 +382,18 @@ Store testers used), macOS arm64 (Apple OpenGL 4.1). Runs on PRs touching the GL
 nightly, on dispatch, and `release.yml` requires it on tags and `release/**`.
 
 Per leg: one build, `cmake --install` into `stage/`, then `vj_shader_tests gl` run **directly**
-(exit 77 = skipped = failure here; everywhere else it is `-E shaders_gl`), then
+(exit 77 = skipped = failure here; everywhere else it is `-E shaders_gl`; the step is
+`continue-on-error` and a "shaders_gl verdict" step fails the job after the preset loop, so the
+screenshots exist even when the test is red), then
 `app/test/gl-qualification/gl_qualify.py` launches `stage/bin/virtualjaguar --shader <preset>
 --screenshot <png> --screenshot-frame 20 test/roms/yarc.j64` for `--shader off` and every preset.
 Per (leg, preset) it asserts: exit 0 before the timeout; the `[gl] version=...; renderer=` line
 matches the leg (`llvmpipe` / `llvmpipe|D3D12` after `automatically retrying with bundled Mesa
 OpenGL` / `Apple`); the PNG decodes and is not black; a `[shader] <preset> built` line
 (`shaders.cpp`); the picture differs from the plain capture unless the preset is in
-`identical-to-plain.txt`. A `[shader] ... refused` line (macOS OpenGL 4.1 has no
+`identical-to-plain.txt`. After 8 consecutive failed presets the loop stops (`--fail-fast`; the
+summary says how many were not run), so a leg with no working runtime fails in minutes. A
+`[shader] ... refused` line (macOS OpenGL 4.1 has no
 `GL_ARB_arrays_of_arrays`) passes only for presets in `refused-<os>.txt`, so the refused set can
 shrink but never grow. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
 compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
