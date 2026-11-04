@@ -16,7 +16,13 @@ staged and where it came from at every boot, so check the frontend log first.
   BIOS (default: the core does the boot setup itself and skips the boot animation) and
   the real boot ROM. GPU-only / jagcrypt carts (the BootIntro demos) turn the real boot
   ROM on even when this is set to HLE, because they contain no 68K program for the HLE
-  path to start.
+  path to start. Both paths enter the cartridge at `$802000` in supervisor mode with
+  SSP = `$4000`; neither sets the 68000 **user** stack pointer, because the real boot
+  ROM never writes USP (it only runs `move.w #$2700,sr` / `movea.l #$4000,a7`, and
+  neither the Series K nor the Model M image contains `MOVE An,USP`). A cartridge that
+  drops to user mode (`move.w #$0700,sr`) must seed USP itself first
+  (`lea stack,a0` / `move.l a0,usp`); on hardware an unseeded USP is undefined, in the
+  emulator it reads as 0 (#1165).
 - **CD discs.** `CD Boot Mode` (`virtualjaguar_cd_boot_mode`) chooses between the HLE CD
   BIOS (default) and a real CD BIOS (`Real BIOS`; `Auto` currently behaves the same).
   It overrides the cartridge setting for CD content. Audio-only (Red Book) discs always

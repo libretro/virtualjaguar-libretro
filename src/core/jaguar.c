@@ -151,7 +151,10 @@ extern uint8_t jagMemSpace[];
  * Cart-mode SSP=0x4000 matches what the real BIOS leaves behind on a
  * cart boot.  RAM-loaded executables (.abs/.cof/JagServer) park SSP at
  * the top of main RAM (0x200000) so the first push doesn't land inside
- * loaded code. */
+ * loaded code.
+ * The USER stack pointer is deliberately left alone: the real boot ROM
+ * never writes USP (no MOVE An,USP in the Series K or Model M image), so
+ * a cart that drops to user mode must seed it first; see #1165. */
 #define HLE_SSP_CART            0x00004000
 #define HLE_SSP_RAMLOAD         0x00200000
 
