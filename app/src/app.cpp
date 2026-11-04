@@ -10,6 +10,7 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
 #include "platform/platform.h"
+#include "software_gl.h"
 #include "platform/viewports.h"
 #include "theme_style.h"
 #include "tv/tv_app_host.h"
@@ -569,6 +570,11 @@ void App::shutdown() {
         SDL_GL_DestroyContext(gl_);
         gl_ = nullptr;
     }
+    // The copy running beside the bundled Mesa (Windows, #1167): SDL_DestroyWindow and SDL_Quit would FreeLibrary that
+    // Mesa, and the x64 build's DllMain never returns from winding down llvmpipe's rasterizer threads.  Everything that
+    // must outlive the process is done above (config, SRAM, the emulation thread); end the process here, before the GL
+    // library is unloaded.  A child whose graphics never started keeps the normal path: main() still shows its error.
+    if (window_ && graphicsStartupError.empty() && softwareGLChild()) exitSoftwareGLChild(exitCode_);
     if (window_) {
         SDL_DestroyWindow(window_);
         window_ = nullptr;
@@ -2603,6 +2609,7 @@ int App::run(const CliArgs& a) {
     int rc = a.headless ? (a.tvTestScript.empty() ? runHeadless(a) : runTvScript(a)) : runInteractive(a);
 
     saveConfig();
+    exitCode_ = rc;   // the bundled-Mesa child ends the process inside shutdown() (#1167)
     shutdown();
     if (!headlessTmp_.empty()) {
         std::error_code ec;

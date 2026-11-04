@@ -747,6 +747,49 @@ jobs:
           # app's own lookup (beside the executable, VJ_LIBRASHADER unset) finds it (#1153).
           bash app/packaging/windows/check-librashader.sh "$t/VirtualJaguar" "$ARCH" ref/stage-tests/vj_shader_tests.exe
 
+      # #1167: the copy relaunched beside the bundled Mesa must come back on its own (the x64 package
+      # of v3.11.0 never did: Mesa's DllMain hung the process while unloading llvmpipe).  Windowed, 20
+      # UI frames to a screenshot, from the PORTABLE zip.  First the child started exactly as
+      # retrySoftwareOpenGL() starts it (SDL_OPENGL_LIBRARY + VJ_SOFTWARE_OPENGL_RETRY, llvmpipe), so
+      # the check holds whatever OpenGL the runner itself offers; then the real path, the top-level
+      # exe, which on a runner without OpenGL 3.3 (GDI Generic 1.1, the hosted images) relaunches
+      # itself and must return the child's status.  124 = killed by timeout = the hang is back.
+      - name: The bundled-Mesa fallback exits on its own (#1167)
+        run: |
+          set -eu
+          t="$RUNNER_TEMP/portable/VirtualJaguar"
+          out="$RUNNER_TEMP/fallback-exit"; rm -rf "$out"; mkdir -p "$out"
+          run_bounded() {   # name data-dir exe [VAR=value...]: a bounded windowed launch; fails unless it exited 0 with its screenshot
+            local name="$1" data="$2" exe="$3"; shift 3
+            SECONDS=0
+            set +e
+            env "$@" timeout 120 "$exe" --data-dir "$data" --screenshot "$out/$name.png" --screenshot-frame 20 \
+              >"$out/$name.txt" 2>&1
+            local code=$?
+            set -e
+            echo "$name: exit $code after $SECONDS s"
+            cat "$out/$name.txt"
+            test -s "$out/$name.png" || { echo "::error::$name: no screenshot was written (the boot itself failed)"; return 1; }
+            [ "$code" -eq 0 ] || { echo "::error::$name: exit $code (124 = did not exit within 120 s, #1167)"; return 1; }
+          }
+          run_bounded child "$out/child-data" "$t/software-opengl/virtualjaguar.exe" \
+            SDL_OPENGL_LIBRARY="$(cygpath -w "$t/software-opengl/opengl32.dll")" VJ_SOFTWARE_OPENGL_RETRY=1 \
+            GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          grep -q 'renderer=llvmpipe' "$out/child.txt" || { echo "::error::the child did not render on llvmpipe"; exit 1; }
+          run_bounded parent "$out/parent-data" "$t/virtualjaguar.exe"
+          if grep -q 'renderer=GDI Generic' "$out/parent.txt"; then
+            grep -q 'automatically retrying with bundled Mesa OpenGL' "$out/parent.txt" || { echo "::error::no automatic retry after GDI Generic"; exit 1; }
+            grep -qE 'renderer=(llvmpipe|D3D12)' "$out/parent.txt" || { echo "::error::the relaunched copy did not render on the bundled Mesa"; exit 1; }
+          else
+            echo "::warning::this runner has an OpenGL 3.3 driver of its own: the automatic relaunch was not exercised; the direct child launch above still proves the exit"
+          fi
+          # The user-visible symptom: a start after the previous one is instance 1 again (a lingering
+          # copy would still hold instance-1.lock in the same data folder).
+          run_bounded again "$out/parent-data" "$t/virtualjaguar.exe"
+          if grep -q '\[app\] instance' "$out/again.txt" || [ -e "$out/parent-data/saves/instance-2" ]; then
+            echo "::error::the second start on the same data folder was not instance 1: the previous copy is still running (#1167)"; exit 1
+          fi
+
       - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
         run: |
           set -eu

@@ -480,6 +480,7 @@ private:
     bool headless_ = false;
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;
+    int exitCode_ = 1;                // run()'s result, for the bundled-Mesa child's early exit in shutdown() (#1167)
     SDL_Window* window_ = nullptr;
     uint64_t displayPeriodNs();                  // the window's display refresh period, cached; 0 when unknown
     uint64_t displayPeriodNs_ = 0;
