@@ -601,6 +601,10 @@ figcaption {
 .badge.warn { color: var(--warn); background: var(--warn-bg); }
 .badge.bad  { color: var(--bad);  background: var(--bad-bg); }
 .badge.plain { color: var(--fg-dim); background: var(--code-bg); }
+/* A pass for the title, not for this file: a rejected bad dump whose
+ * verified sibling boots (#976).  Good's ink on a neutral well. */
+.badge.info { color: var(--good); background: var(--code-bg); }
+td small.dim { display: block; color: var(--fg-dim); font-size: 0.78em; }
 
 /* -------------------------------------------------------------- tables */
 

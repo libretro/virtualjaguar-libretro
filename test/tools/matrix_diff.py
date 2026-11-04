@@ -32,7 +32,8 @@ Only that first table is read.  cd-boot-matrix.md carries several historical
 "| Title | Mode |" tables further down; they are dated snapshots and must not
 overwrite current rows (cd_boot_matrix.sh scopes its resume guard the same way).
 `<!-- build:... -->` stamps (after the last pipe in the cart doc, inside the last
-cell in the CD doc) are stripped before anything is compared.
+cell in the CD doc) and the cart doc's `<!-- id: ... -->` identity stamps (#976)
+are stripped before anything is compared.
 
 Row keys: cart = title; CD = title + mode.  Cart titles are not unique (the
 extension is dropped, so two dumps of one game collide).  Duplicates are
@@ -92,7 +93,9 @@ import json
 import re
 import sys
 
-STAMP_RE = re.compile(r"\s*<!--\s*build:[^>]*?-->\s*")
+# `<!-- build:... -->` and the identity stamp `<!-- id: ... -->` (#976): any
+# HTML comment on a row is metadata, never a cell.
+STAMP_RE = re.compile(r"\s*<!--.*?-->\s*")
 UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 SIG_RE = re.compile(
     r"\b(gpu_pc_escape|dsp_pc_escape|gpu_wedge|dsp_wedge|inframe_hang"

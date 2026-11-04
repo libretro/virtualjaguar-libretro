@@ -267,6 +267,39 @@ cls "$TMP/c12" bios; want "BIOS reject outranks trap_loop" "BIOS_REJECT|"
 probe_log "$TMP/c8" 'pc=$00803000 lit_frames=500 motion=100 audio_nonsilent=90000 audio_onset=3' </dev/null
 cls "$TMP/c8" bios; want "legacy probe line (no bios_ran) scores the whole run" "GAME_CODE|video, audio"
 
+echo "identity stamp (cart_identity_stamp, #976)"
+# The probe's identity tail becomes the row's <!-- id: ... --> stamp verbatim.
+probe_log "$TMP/i1" 'pc=$0050B6 lit_frames=230 motion=34 audio_nonsilent=105158 bios_ran=1 handoff=-1 final_op=$60FE halt_frames=30 scored_from=0 scored_frames=278 scored_lit_frames=230 scored_motion=34 scored_audio_nonsilent=105158 trap_frames=0 trap_pc=$000000 trap_handler=$000000 size=2097152 crc32=$4A08A2BD hdr_byte0=$F6 filedb=1 filedb_flags=$041 filedb_name="SuperCross 3D (World)" filedb_verified_sibling=$EC22F572' </dev/null
+ID="$(cart_identity_stamp "$TMP/i1")"
+[ "$ID" = '<!-- id: size=2097152 crc32=$4A08A2BD hdr_byte0=$F6 filedb=1 filedb_flags=$041 filedb_name="SuperCross 3D (World)" filedb_verified_sibling=$EC22F572 -->' ] \
+    && ok "identity fields copied into the id stamp" || bad "identity fields copied into the id stamp" "got: $ID"
+# A CRC that is not in filedb: the stamp stops at filedb=0.
+probe_log "$TMP/i2" 'pc=$0050B6 bios_ran=1 handoff=-1 final_op=$60FE halt_frames=30 size=2097152 crc32=$F7F3462B hdr_byte0=$F6 filedb=0' </dev/null
+ID="$(cart_identity_stamp "$TMP/i2")"
+[ "$ID" = '<!-- id: size=2097152 crc32=$F7F3462B hdr_byte0=$F6 filedb=0 -->' ] \
+    && ok "unknown CRC stamps filedb=0 and nothing else" || bad "unknown CRC stamps filedb=0" "got: $ID"
+# An old probe (no identity fields) and a LOAD_FAIL log produce no stamp at all.
+ID="$(cart_identity_stamp "$TMP/c8")"
+[ -z "$ID" ] && ok "legacy probe line yields no id stamp" || bad "legacy probe line yields no id stamp" "got: $ID"
+printf 'CARTPROBE rom="x.jag" load_fail=1\n' > "$TMP/i3"
+ID="$(cart_identity_stamp "$TMP/i3")"
+[ -z "$ID" ] && ok "LOAD_FAIL yields no id stamp" || bad "LOAD_FAIL yields no id stamp" "got: $ID"
+# The stamp must survive the xargs/bash -c subshell like the classifier.
+export -f cart_identity_stamp
+SUBSH="$(bash -c 'cart_identity_stamp "$1"' _ "$TMP/i2")"
+case "$SUBSH" in *crc32=\$F7F3462B*) ok "id stamp survives the xargs/bash -c subshell";;
+    *) bad "id stamp survives the xargs/bash -c subshell" "got: $SUBSH";; esac
+# matrix_diff.py strips the id stamp like the build stamp: a re-stamped
+# matrix is not a change, and a title's identity is never a cell.
+IDSTAMP='<!-- id: size=2097152 crc32=$E6BD422C hdr_byte0=$33 filedb=0 -->'
+cart "$TMP/oid" "$STAMP" "Rayman Demo|GAME_CODE|video, silent|GAME_CODE|video, silent"
+cart "$TMP/nid" "$STAMP$IDSTAMP" "Rayman Demo|GAME_CODE|video, silent|GAME_CODE|video, silent"
+run idsame "$TMP/oid" "$TMP/nid"
+expect "adding an id stamp is not a change" 0 "regressed (0)"
+cart "$TMP/nid2" "$STAMP$IDSTAMP" "Rayman Demo|GAME_CODE|video, silent|BIOS_REJECT|boot ROM halted"
+run idback "$TMP/oid" "$TMP/nid2"
+expect "stamped row still diffs on its cells (GAME_CODE = BIOS_REJECT)" 0 "regressed (0)"
+
 echo "CD matrix"
 cd_matrix "$TMP/co1" "$STAMP"  "Disc A.cue|hle|GAME_CODE|(none)" "Disc A.cue|bios|BOOT_STUB|(none)" "Disc B.cue|hle|GAME_CODE|(none)" "Disc B.cue|bios|GAME_CODE|(none)"
 cd_matrix "$TMP/cn1" "$STAMP2" "Disc A.cue|hle|GAME_CODE|(none)" "Disc A.cue|bios|BIOS_INTRO|(none)" "Disc B.cue|hle|GAME_CODE|(none)" "Disc B.cue|bios|GAME_CODE|(none)"

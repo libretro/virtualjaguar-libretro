@@ -124,6 +124,11 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   `GAME_CODE`/`BIOS_REJECT` (boot ROM halted on `BRA.S *`, never handed off: red "Jaguar" screen,
   an authentic reject)/`? (bios_trap)` (cart ran, PC fell back into `$E00000`)/`? (...)`/`LOAD_FAIL`.
   `bios_ran=0` (headerless RAM-loaded `.jag`, e.g. Music Demo) has no boot phase: whole run scored.
+  Every row ends in an `<!-- id: size= crc32= hdr_byte0= filedb= ... -->` identity stamp (#976:
+  the probe's `jaguarMainROMCRC32`, byte 0 of the image at `$800000`, the filedb row) that the
+  site reads to say WHY the boot ROM rejected a file and to fold same-byte twins into one row;
+  `test/tools/cart_matrix_identify.py docs/cart-boot-matrix.md` backfills or `--check`s the
+  stamps from the files alone (no core), `scripts/test_build_site_cart.py` pins the labels.
   Crash-watchdog signatures are never handoff-relative (an early escape is a real bug, #853).
 - `test/tools/matrix_diff.py OLD.md NEW.md` — never-backward gate (#749) between two copies of the
   same matrix (cart or CD): prints regressed / still-asymmetric / improved, exit 1 on any backward
