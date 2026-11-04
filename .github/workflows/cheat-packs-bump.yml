@@ -123,7 +123,7 @@ jobs:
 
           check "regenerate site/cheats at the new pin" gen site/cheats
           check "converter and generator unit tests" python -m unittest discover -s tools/cheat-import
-          check "site check unit tests" python3 -m unittest discover -s scripts -p 'test_check_site*.py'
+          check "site check unit tests" python3 -m unittest discover -s scripts -p 'test_*.py'
           check "regeneration is deterministic (two runs)" twice
           check "site/cheats holds exactly the generated files" diff -r "$RUNNER_TEMP/a" site/cheats
           check "site build and check_site accept the packs" site

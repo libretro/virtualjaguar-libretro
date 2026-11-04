@@ -11,6 +11,10 @@
 #
 # BIOS-mode runs are scored from the boot-ROM -> cart handoff onward, and a
 # cart the boot ROM rejects is BIOS_REJECT; see cart_classify.sh (issue #852).
+# Every row also carries an `<!-- id: ... -->` identity stamp (CRC32, byte 0 of
+# the image, filedb flags; issue #976) so the site can say WHY the boot ROM
+# rejected a file.  test/tools/cart_matrix_identify.py backfills the stamp
+# on rows from older sweeps without a core.
 #
 # Honesty rules (mirrors the CD matrix):
 #   - "GAME_CODE" means the final 68K PC sits in game-owned RAM or cart space
@@ -141,15 +145,18 @@ process_one() {
         --post-handoff "$FRAMES" --bios $PROBE_ARGS
     bios_rc=$?
     bios="$(cart_classify_mode "$bios_rc" "$bios_log" bios)"
+    # Image identity (CRC, byte 0, filedb row; issue #976): mode-independent,
+    # so the HLE log is enough.  Empty when the probe did not print it.
+    ident="$(cart_identity_stamp "$hle_log")"
 
-    printf '| %s | %s | %s | %s | %s |<!-- build:%s -->\n' \
+    printf '| %s | %s | %s | %s | %s |<!-- build:%s -->%s\n' \
         "$title" \
         "${hle%%|*}" "${hle#*|}" \
         "${bios%%|*}" "${bios#*|}" \
-        "$CACHE_ID" > "$rowfile"
+        "$CACHE_ID" "$ident" > "$rowfile"
     echo "done: $title  [hle: ${hle%%|*}]  [bios: ${bios%%|*}]"
 }
-export -f process_one run_bounded cart_classify_mode field
+export -f process_one run_bounded cart_classify_mode cart_identity_stamp field
 export -f matrix_core_error matrix_run_bounded
 export ROWDIR LOGDIR FRAMES BIOS_BOOT_FRAMES TIMEOUT_SECS MATRIX_TIMEOUT_BIN PROBE CORE BUILD_ID CACHE_ID VJ_EXPECT_BUILD PROBE_ARGS
 

@@ -148,7 +148,28 @@ ALL_PAGES = PAGES + LEGAL_PAGES
 EXPECTED_HEADER = ["Title", "Mode", "Score", "Stage", "Watchdog", "PC evidence"]
 CART_EXPECTED_HEADER = ["Title", "HLE", "HLE notes", "Real BIOS", "BIOS notes"]
 BUILD_STAMP_RE = re.compile(r"<!--\s*build:([^\s>]+)\s*-->")
+# Per-row identity stamp written by cart_boot_matrix.sh from the probe's
+# identity fields (issue #976): `<!-- id: size=N crc32=$X hdr_byte0=$X
+# filedb=0|1 [filedb_flags=$X filedb_name="..." filedb_verified_sibling=$X] -->`.
+# Older rows have none; every label below degrades to a stage-only wording.
+ID_STAMP_RE = re.compile(r"<!--\s*id:\s*(.*?)\s*-->")
+ID_FIELD_RE = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S+)')
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->")
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# src/core/filedb.h FileFlags, the bits the labels read.
+FF_BAD_DUMP = 0x40
+FF_VERIFIED = 0x80
+
+# Signed cartridge: byte 0 of the image at $800000 is the encrypted boot
+# block's block count ($F6 = 10 blocks ... $FE = 2), which is what the real
+# boot ROM checks first (jagcrypt; issue #976).  Anything else is an image
+# the boot ROM cannot authenticate.
+SIGNED_BYTE0 = (0xF6, 0xFE)
+
+# "[a1]"-style dump tags and "(alt)": the matrix title minus these is the
+# key that joins a dump to its same-title siblings.
+DUMP_TAG_RE = re.compile(r"\s*(\[[^\]]*\]|\((?:alt|a\d+)\))", re.I)
 
 
 def die(msg):
@@ -466,7 +487,10 @@ def parse_cart_matrix(path):
             break
         for m in BUILD_STAMP_RE.finditer(lines[i]):
             build_ids.add(m.group(1))
-        cells = split_md_row(BUILD_STAMP_RE.sub("", lines[i]).strip())
+        identity = {}
+        for m in ID_STAMP_RE.finditer(lines[i]):
+            identity = parse_identity_fields(m.group(1))
+        cells = split_md_row(HTML_COMMENT_RE.sub("", lines[i]).strip())
         if len(cells) != len(CART_EXPECTED_HEADER):
             die("row %d of %s has %d cells, expected %d:\n  %r"
                 % (i + 1, path, len(cells), len(CART_EXPECTED_HEADER),
@@ -484,43 +508,197 @@ def parse_cart_matrix(path):
                 die("row %d in %s has invalid-infrastructure stage %r -- "
                     "re-run cart_boot_matrix.sh against a matching wide-ABI "
                     "core (make TEST_EXPORTS=1)" % (i + 1, path, st))
-        rows.append({"title": title,
-                     "hle_stage": hle_stage, "hle_notes": hle_notes,
-                     "bios_stage": bios_stage, "bios_notes": bios_notes})
+        row = {"title": title,
+               "hle_stage": hle_stage, "hle_notes": hle_notes,
+               "bios_stage": bios_stage, "bios_notes": bios_notes}
+        row.update(identity)
+        rows.append(row)
     if not rows:
         die("cart matrix in %s has zero data rows" % path)
     return rows, sorted(build_ids)
 
 
-def classify_cart_stage(stage, notes, mode="hle"):
+def _id_int(text):
+    """'$1F' / '0x1F' -> 31, '1234' -> 1234; None when it is neither."""
+    t = text.strip()
+    try:
+        if t.startswith("$"):
+            return int(t[1:], 16)
+        return int(t, 0)
+    except ValueError:
+        return None
+
+
+def parse_identity_fields(text):
+    """The `<!-- id: ... -->` stamp body -> dict (see ID_STAMP_RE).
+
+    Keys when present: size (int), crc32 (8 upper hex chars), hdr_byte0
+    (int), filedb_flags (int), filedb_name (str), filedb_sibling (8 hex
+    chars: the CRC of a verified same-title filedb entry).  A stamp that
+    says filedb=0 contributes no filedb_* keys.  Unparseable values are
+    dropped rather than guessed."""
+    out = {}
+    for m in ID_FIELD_RE.finditer(text):
+        key, raw = m.group(1), m.group(2)
+        if raw.startswith('"'):
+            raw = raw[1:-1].replace('\\"', '"')
+        if key == "size":
+            v = _id_int(raw)
+            if v is not None:
+                out["size"] = v
+        elif key == "crc32":
+            v = _id_int(raw)
+            if v is not None:
+                out["crc32"] = "%08X" % (v & 0xFFFFFFFF)
+        elif key == "hdr_byte0":
+            v = _id_int(raw)
+            if v is not None:
+                out["hdr_byte0"] = v & 0xFF
+        elif key == "filedb_flags":
+            v = _id_int(raw)
+            if v is not None:
+                out["filedb_flags"] = v
+        elif key == "filedb_name":
+            if raw:
+                out["filedb_name"] = raw
+        elif key == "filedb_verified_sibling":
+            v = _id_int(raw)
+            if v:
+                out["filedb_sibling"] = "%08X" % (v & 0xFFFFFFFF)
+    if "filedb_flags" not in out:
+        out.pop("filedb_name", None)
+        out.pop("filedb_sibling", None)
+    return out
+
+
+def dump_family_key(title):
+    """'Iron Soldier (1994) [a1]' and 'Iron Soldier (1994)' share one key."""
+    return " ".join(DUMP_TAG_RE.sub("", title).split()).casefold()
+
+
+def verified_dump_families(rows):
+    """family key -> set of sizes (or None) of the dumps the real boot ROM
+    accepted (BIOS column GAME_CODE: 'a verified dump boots', #976)."""
+    fam = {}
+    for r in rows:
+        if r["bios_stage"].strip() == "GAME_CODE":
+            fam.setdefault(dump_family_key(r["title"]), set()).add(
+                r.get("size"))
+    return fam
+
+
+def collapse_twin_rows(rows):
+    """Merge rows that are the same bytes: the same CRC32 (`.jag`/`.rom`
+    twins, or one dump filed under two names) with the same verdicts
+    becomes one row that remembers how many files it stands for and
+    every distinct title they carried (#976).  Rows without a CRC, and
+    same-CRC rows whose verdicts differ (a nondeterminism worth seeing),
+    stay separate."""
+    out = []
+    seen = {}
+    for r in rows:
+        r = dict(r)
+        r["files"] = 1
+        r["titles"] = [r["title"]]
+        crc = r.get("crc32")
+        if crc:
+            key = (crc, r["hle_stage"], r["hle_notes"],
+                   r["bios_stage"], r["bios_notes"])
+            if key in seen:
+                seen[key]["files"] += 1
+                if r["title"] not in seen[key]["titles"]:
+                    seen[key]["titles"].append(r["title"])
+                continue
+            seen[key] = r
+        out.append(r)
+    return out
+
+
+def classify_bios_reject(row, families):
+    """Label a BIOS_REJECT cell by its cause (issue #976).
+
+    BIOS_REJECT is the real boot ROM's red "Jaguar" reject screen
+    (#852/#744): an observed, authentic outcome for that image, so it is
+    never "not verified".  Why the boot ROM rejected it is derived from
+    the row's identity stamp, never typed per title:
+
+    * filedb marks the CRC FF_BAD_DUMP: an altered or bad dump of a title
+      whose verified dump boots (curated, so it is read first).
+    * byte 0 outside $F6..$FE: there is no encrypted boot block, so the
+      boot ROM cannot accept it whatever else is true of the bytes (Phase
+      Zero (PD) has its blocks erased and a signed sibling that boots);
+      HLE boot does not care, said only when the HLE column agrees.
+    * byte 0 in $F6..$FE and filedb has a verified entry of the same name,
+      or another dump of the same title (same size when both are known)
+      boots under the real BIOS: altered or bad dump, as above.
+    * byte 0 in $F6..$FE otherwise: a signed image nobody has verified.
+      The label does not claim the hardware would reject it.
+    * no identity stamp (a row from an older sweep): the bare fact."""
+    bad_dump_label = ("info", "Rejected by the real boot ROM: altered or "
+                              "bad dump (a verified dump boots)")
+    if row is None:
+        return ("plain", "Rejected by the real boot ROM")
+    flags = row.get("filedb_flags")
+    if flags is not None and flags & FF_BAD_DUMP:
+        return bad_dump_label
+    b0 = row.get("hdr_byte0")
+    if b0 is None:
+        return ("plain", "Rejected by the real boot ROM")
+    if not SIGNED_BYTE0[0] <= b0 <= SIGNED_BYTE0[1]:
+        label = "Unsigned image: the real boot ROM does not accept it"
+        if row.get("hle_stage", "").strip() == "GAME_CODE":
+            label += " (works in HLE)"
+        return ("plain", label)
+    if row.get("filedb_sibling"):
+        return bad_dump_label
+    sizes = (families or {}).get(dump_family_key(row["title"]))
+    if sizes:
+        size = row.get("size")
+        if size is None or None in sizes or size in sizes:
+            return bad_dump_label
+    return ("plain", "Rejected by the real boot ROM (dump cannot be verified)")
+
+
+def classify_cart_stage(stage, notes, mode="hle", row=None, families=None):
     """Map a cart stage + notes to (css_class, human_label).
 
-    Same honest three-state as the CD table, plus 'plain' for an
-    authentic outcome that is neither a pass nor a bug (#976).
+    Same honest three-state as the CD table, plus 'plain' (an authentic
+    outcome that is neither a pass nor a bug) and 'info' (a pass for the
+    title, just not for this file) (#976).  `row` is the parsed matrix row
+    (identity stamp included) and `families` the verified_dump_families()
+    index; both optional, and without them the labels fall back to what
+    the stage alone supports.
 
-    * 'GAME_CODE' with a black-video note downgrades to warn: the title
-      executes but headless video evidence is inconclusive (headless
-      read-path caveat).
+    * 'GAME_CODE' with a black-video note: the title executes but the
+      headless run saw no picture, which an audio-only program or one
+      waiting for input also gives (headless read-path caveat).  Since
+      the trap-loop classifier (#975) a crashed run is not GAME_CODE, so
+      this is a warning, not a verdict.
     * In the real-BIOS column, a run whose notes never mention the
       handoff had no boot phase at all (cart_classify.sh: bios_ran=0, a
       RAM-loaded executable), so the cell says the boot ROM was not used
       rather than implying it accepted the file.
-    * 'BIOS_REJECT' is the real boot ROM's red "Jaguar" reject screen
-      (#852/#744): an observed, authentic outcome, never "not verified".
-    * '? (trap_loop)' / '? (bios_trap)' are crashes (#975)."""
+    * 'BIOS_REJECT': see classify_bios_reject.
+    * '? (trap_loop)' / '? (bios_trap)' are crashes (#975); the loader's
+      ILLEGAL guard at $1000 names the fault when the notes show it."""
     s = stage.strip()
     if s == "GAME_CODE":
         no_boot_rom = mode == "bios" and "handoff" not in notes
         if "black video" in notes:
-            return ("warn", "Boot ROM not used; runs, no picture in the test"
-                    if no_boot_rom else
-                    "Runs; no picture in the test")
-        return ("good", "Boot ROM not used; runs" if no_boot_rom
-                else "Boots and runs")
+            if no_boot_rom:
+                return ("plain", "Boot ROM not used (RAM-loaded executable)")
+            return ("warn", "Runs; no picture in the test "
+                            "(may be audio-only or need input)")
+        if no_boot_rom:
+            return ("good", "Runs (boot ROM not used: RAM-loaded executable)")
+        return ("good", "Boots and runs")
     if s == "BIOS_REJECT":
-        return ("plain", "Rejected by the boot ROM")
+        return classify_bios_reject(row, families)
     if s.startswith("? (trap_loop"):
-        return ("bad", "Known issue: crashes at start")
+        if "handler $001000" in notes:
+            return ("bad", "Known issue: crashes at start "
+                           "(illegal instruction)")
+        return ("bad", "Known issue: crashes at start (68K exception loop)")
     if s.startswith("? (bios_trap"):
         return ("bad", "Known issue: crashes after the boot ROM")
     if (s == "LOAD_FAIL" or s.startswith("? (pc_escape") or
@@ -531,19 +709,36 @@ def classify_cart_stage(stage, notes, mode="hle"):
     return ("warn", "Not yet verified: " + s)
 
 
+def cart_title_html(row):
+    """The filedb name when the CRC is in filedb (it names the dump, e.g.
+    'Fight for Life (World) (alt)'), otherwise the file's title; the
+    files' own titles underneath whenever they add anything (a collapsed
+    row lists every name its bytes were filed under)."""
+    titles = row.get("titles") or [row["title"]]
+    name = row.get("filedb_name") or titles[0]
+    others = [t for t in titles if t != name]
+    if not others:
+        return html.escape(name)
+    return '%s<br><small class="dim">%s</small>' % (
+        html.escape(name), " / ".join(html.escape(t) for t in others))
+
+
 def render_cart_table(rows):
     """One table row per title; badge per boot mode; merged notes cell."""
+    families = verified_dump_families(rows)
+    rows = collapse_twin_rows(rows)
     out = []
     out.append('<div class="table-wrap"><table>')
     out.append("<tr><th>Cartridge</th><th>HLE boot</th><th>Real-BIOS boot</th>"
                "<th>Notes</th></tr>")
     n_good = {"hle": 0, "bios": 0, "hle_run": 0, "bios_run": 0}
     for r in rows:
-        cells = ['<td>%s</td>' % html.escape(r["title"])]
+        cells = ['<td>%s</td>' % cart_title_html(r)]
         notes = []
         for mode, stage_k, notes_k in (("hle", "hle_stage", "hle_notes"),
                                        ("bios", "bios_stage", "bios_notes")):
-            cls, label = classify_cart_stage(r[stage_k], r[notes_k], mode)
+            cls, label = classify_cart_stage(r[stage_k], r[notes_k], mode,
+                                             r, families)
             if cls == "good":
                 n_good[mode] += 1
             # "Reaches game code" regardless of the headless video verdict.
@@ -557,6 +752,9 @@ def render_cart_table(rows):
                 notes.append('<span title="%s"><code>%s</code> (%s)</span>'
                              % (html.escape(r[notes_k], quote=True),
                                 html.escape(wd), mode))
+        if r["files"] > 1:
+            notes.append("%d files, same bytes (CRC32 %s)"
+                         % (r["files"], html.escape(r["crc32"])))
         # No em-dash anywhere the site renders: a plain hyphen is what a
         # 1994 printout put in an empty cell, and it is the character the
         # copy standard on every page uses.
