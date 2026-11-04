@@ -401,8 +401,9 @@ summary says how many were not run), so a leg with no working runtime fails in m
 (packHalf2x16 on macOS), passes only for presets in `refused-<os>.txt`, so that set can shrink but
 never grow. The macOS leg runs in a 640x480 window (`small-window.ini`, `--seed-config`): the hosted
 display is too small for 960x760 (the window came back 960x642, ~45 s a launch), and a seeded 480x360
-window gave uniform white captures (run 41727418224); its "Capture diagnostics" step launches `off`
-once per window configuration and prints each picture's statistics. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
+window captures uniform white while ImGui's extra OS windows are on (the default; off, or at 640x480
+and up, it captures the game), which its "Capture diagnostics" step keeps showing. The leg captures
+after 4 UI frames instead of 20, since a heavy chain costs ~12 s a frame on Apple's software renderer. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
 compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
 candidates into the artifact.
 

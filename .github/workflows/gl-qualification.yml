@@ -482,7 +482,9 @@ jobs:
     name: macOS arm64 (Apple OpenGL 4.1)
     needs: [librashader]
     runs-on: macos-latest
-    timeout-minutes: 150
+    # Build ~4 min, the preset loop (run 41760278887: ~12 s a frame for the heavy chains on Apple's
+    # software renderer), shaders_gl 10-18 min.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v7
 
@@ -515,9 +517,9 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
 
       # Run 41727418224: in a seeded 480x360 window every capture (--shader off included) came back a uniform
-      # white, 1.9 s a launch, while 960x642 windows (run 3) and the other legs' 960x760 windows show the game.
-      # The same `off` capture under several window configurations, side by side, so the artifact says which
-      # of the size, the seeded config.ini, ImGui's extra OS windows or vsync is the variable.
+      # white.  Run 41760278887 named the variable: ImGui's extra OS windows (ui.viewports, on by default).
+      # With them on, 480x360 and 480x362 capture white; with them off, or at 640x480 and up, the game.
+      # The leg runs at 640x480 with the shipped default; these launches keep the finding visible.
       - name: Capture diagnostics (one `off` launch per window configuration)
         run: |
           set -u
@@ -552,13 +554,8 @@ jobs:
           }
           CFG=""                                   run_one default-960x760
           CFG=$'window.w=480\nwindow.h=360'       run_one seeded-480x360
-          CFG=$'window.w=480\nwindow.h=360'       run_one seeded-480x360-f120 --screenshot-frame 120
-          CFG=$'window.w=480\nwindow.h=360'       run_one seeded-480x360-emu60 --screenshot-emu-frames 60
           CFG=$'window.w=480\nwindow.h=360\nui.viewports=0' run_one seeded-480x360-novp
-          CFG=$'window.w=480\nwindow.h=360\nvideo.vsync=0'  run_one seeded-480x360-novsync
-          CFG=$'window.w=480\nwindow.h=362'       run_one seeded-480x362
           CFG=$'window.w=640\nwindow.h=480'       run_one seeded-640x480
-          CFG=$'window.w=960\nwindow.h=760'       run_one seeded-960x760
           echo; echo "## macOS capture diagnostics" >> "$GITHUB_STEP_SUMMARY"
           { echo '```'; cat "$D/display.txt" "$D/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           rm -rf "${D:?}"/*/   # the data folders (lock files, saves) are noise in the artifact
@@ -570,8 +567,10 @@ jobs:
           refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
           # The hosted display is too small for the default 960x760 window (it came back 960x642 and ~45 s a
           # launch; run 41571727219 managed 205 of 500 in 150 min at 2 jobs): 640x480 (small-window.ini), 3 at once.
+          # 4 UI frames, not 20: Apple's software renderer runs a heavy chain at ~12 s a frame (run 41760278887:
+          # 49 of its 57 timeouts had built the chain), and --emu-frames already makes the capture the game's picture.
           python3 -I "$QUALIFY" --os macos --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 3 --timeout 240 --low-dpi \
+            --out glq --content "$CONTENT_ROM" --frame 4 --emu-frames "$SHOT_EMU_FRAMES" --jobs 3 --timeout 240 --low-dpi \
             --seed-config "$LISTS/small-window.ini" --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
@@ -583,7 +582,7 @@ jobs:
         run: |
           set -eu
           export VJ_LIBRASHADER="$PWD/stage/bin/librashader.dylib"
-          perl -e 'alarm shift; exec @ARGV' 1200 build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
+          perl -e 'alarm shift; exec @ARGV' 1800 build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
           test "${PIPESTATUS[0]}" -eq 0
 
       - name: shaders_gl verdict
