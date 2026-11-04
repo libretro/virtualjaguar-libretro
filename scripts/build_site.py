@@ -161,10 +161,14 @@ ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FF_BAD_DUMP = 0x40
 FF_VERIFIED = 0x80
 
-# Signed cartridge: byte 0 of the image at $800000 is the encrypted boot
-# block's block count ($F6 = 10 blocks ... $FE = 2), which is what the real
-# boot ROM checks first (jagcrypt; issue #976).  Anything else is an image
-# the boot ROM cannot authenticate.
+# Signed cartridge: byte 0 of the image at $800000 is the negated count of
+# 65-byte RSA boot blocks the boot ROM decrypts ($F6 = Atari's standard
+# 10-block header, $F7..$FE = the 2..9-block jagcrypt / GPU-only carts).
+# Source: src/core/file.c JaguarCartNeedsBIOS and LooksLikeBjlRamImage
+# (issues #784/#785: every one of the 127 commercial carts in the corpus
+# reads $F6; Tursi's intros $FC/$FE, PolyEngine $FD).  $FF is blank padding,
+# never a block count.  Anything outside the range is an image the boot ROM
+# cannot authenticate.
 SIGNED_BYTE0 = (0xF6, 0xFE)
 
 # "[a1]"-style dump tags and "(alt)": the matrix title minus these is the

@@ -95,6 +95,19 @@ else
     matrix_find_core || exit 1
     CORE="./$MATRIX_CORE"
 fi
+# The identity stamp (#976) needs these dlsym'able symbols.  The probe prints
+# nothing for a core that lacks them, which the site would read as "no
+# identity data", so refuse to sweep with such a core instead of publishing
+# 155 rows without a stamp.  nm -gU as matrix_require_test_exports.
+if command -v nm >/dev/null 2>&1; then
+    for sym in jaguarMainROMCRC32 jaguarROMSize jagMemSpace FindRomIdentifier FindVerifiedRomVariant; do
+        if ! nm -gU "$CORE" 2>/dev/null | grep -q "[ _]$sym\$"; then
+            echo "error: $CORE does not export $sym (identity stamp, #976)" >&2
+            echo "rebuild with:  make TEST_EXPORTS=1" >&2
+            exit 1
+        fi
+    done
+fi
 PROBE=./test/tools/cart_boot_probe
 
 BUILD_ID="$(matrix_build_id)"

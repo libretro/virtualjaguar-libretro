@@ -356,10 +356,13 @@ static bool probe_frame_cb(void *userdata, unsigned frame)
  *   crc32         the core's jaguarMainROMCRC32 -- the CRC filedb is keyed
  *                 on (whole image, or image minus a universal header)
  *   hdr_byte0     the byte at $800000 as the boot ROM sees it: $F6..$FE
- *                 is the encrypted boot block's block count on a signed
- *                 cartridge; anything else is an image the boot ROM
- *                 cannot authenticate (an Alpine image reads $FF, a
- *                 RAM-loaded executable whatever the slot holds)
+ *                 is the negated RSA boot-block count of a signed
+ *                 cartridge ($F6 = Atari's 10-block header, $F7..$FE the
+ *                 2..9-block jagcrypt carts; see JaguarCartNeedsBIOS in
+ *                 src/core/file.c, issues #784/#785); anything else is an
+ *                 image the boot ROM cannot authenticate (an Alpine image
+ *                 reads the loader's $FF fill, a RAM-loaded executable
+ *                 the untouched slot, $00)
  *   filedb        1 when the CRC is in src/core/filedb.c, then
  *   filedb_flags  its FileFlags (FF_BAD_DUMP $40, FF_VERIFIED $80, ...),
  *   filedb_name   its name (quoted; filedb names carry no quotes), and
@@ -463,6 +466,10 @@ int main(int argc, char **argv)
         cfg.frame_callback_data = &boot;
     }
 
+    /* harness_load_rom above ran retro_load_game, and the core loads the
+     * image inside it (libretro.c retro_load_game -> JaguarLoadFile), so
+     * the CRC, size and cart slot are final here; harness_run only steps
+     * frames. */
     probe_identity(&cfg, &ident);
 
     harness_run(&cfg);
