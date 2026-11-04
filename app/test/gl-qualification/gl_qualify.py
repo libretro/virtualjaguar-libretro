@@ -22,8 +22,15 @@ Goldens (second pass, not blocking): with --goldens DIR, a <DIR>/<preset>.png is
 --refresh-goldens copies every passing capture into the golden layout under the output folder
 (app/test/golden/gl/<os>/<preset>.png) for a human to commit.
 
-Everything the run produced (screenshots, per-preset logs, results.json, the summary) lands in
---out, which the workflow uploads pass or fail.  Standard library only; run with `python3 -I`.
+Everything the run produced (screenshots, per-preset logs, results.json, times.tsv, the summary)
+lands in --out, which the workflow uploads pass or fail.  Standard library only; run with `python3 -I`.
+
+A slow leg (hosted macOS, Apple's software renderer) splits the list with --shard I/N (preset
+index modulo N; every shard also captures `off`, its own baseline) and a later job joins the
+shards with --merge DIR... into one summary.  --known-failures FILE --leg NAME reads the leg's
+`<leg> slow <measured> <preset>` lines: a listed preset is stopped at --slow-threshold seconds and
+counted as a tracked known failure; an unlisted one that takes longer fails and is printed as a
+line to paste into that file.
 """
 import argparse
 import concurrent.futures
@@ -188,19 +195,46 @@ def png_complete(path):
         return False
 
 
-def kill_tree(proc):
-    """Kill the launch and whatever it spawned (on Windows the parent waits on the Mesa child)."""
+def kill_tree(proc, grace=0):
+    """Kill the launch and whatever it spawned (on Windows the parent waits on the Mesa child).
+
+    grace > 0 (POSIX): SIGTERM first and that many seconds to quit through the app's own teardown
+    (on macOS a GL process killed outright left the next window creation hanging).  Returns False
+    when something of the process group is still alive afterwards."""
     if os.name == "nt":
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)   # its own session (start_new_session): the whole group
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
+        return True
+    def group_alive():
+        try:
+            os.killpg(proc.pid, 0)
+            return True
         except (ProcessLookupError, PermissionError):
+            return False
+    if grace > 0:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+        t_end = time.monotonic() + grace
+        while time.monotonic() < t_end and (proc.poll() is None or group_alive()):
+            time.sleep(0.25)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)   # its own session (start_new_session): the whole group
+    except (ProcessLookupError, PermissionError):
+        if proc.poll() is None:
             proc.kill()
     try:
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
         pass
+    t_end = time.monotonic() + 5
+    while group_alive() and time.monotonic() < t_end:
+        time.sleep(0.25)
+    return not group_alive()
 
 
 def launch(args, label, shader_arg, out_dir):
@@ -225,6 +259,8 @@ def launch(args, label, shader_arg, out_dir):
     if args.content:
         cmd.append(str(args.content))
     res = {"preset": label, "cmd": cmd, "png": str(png), "log": str(log), "errors": [], "notes": []}
+    slow = args.slow_listed.get(label)
+    limit = args.slow_threshold if (slow is not None and args.slow_threshold) else args.timeout
     t0 = time.monotonic()
     # stdout+stderr straight to the log file (no pipe to drain), the process polled: a leg with a
     # tracked exit hang (--known-exit-hang) is given a few seconds after its screenshot is complete,
@@ -238,16 +274,22 @@ def launch(args, label, shader_arg, out_dir):
                 res["exit"] = code
                 break
             now = time.monotonic()
-            if now - t0 > args.timeout:
-                kill_tree(proc)
+            if now - t0 > limit:
+                if not kill_tree(proc, args.graceful_kill):
+                    res["leftover"] = True
+                    res["notes"].append("part of the process group was still alive after the kill")
                 res["exit"] = None
-                res["errors"].append("timed out after %d s" % args.timeout)
+                if slow is not None:
+                    res["slow_capped"] = limit   # judged in judge_slow: a tracked known failure
+                else:
+                    res["timed_out"] = limit
+                    res["errors"].append("timed out after %d s" % limit)
                 break
             if args.known_exit_hang:
                 if shot_done_at is None and png_complete(png):
                     shot_done_at = now
                 elif shot_done_at is not None and now - shot_done_at > args.hang_grace:
-                    kill_tree(proc)
+                    kill_tree(proc, args.graceful_kill)
                     res["exit"] = None
                     res["notes"].append("did not exit %d s after its screenshot; killed (known failure: %s)"
                                         % (args.hang_grace, args.known_exit_hang))
@@ -363,13 +405,228 @@ def judge_shader(res, refused_ok, known_broken=frozenset()):
         res["verdict"] = "no-chain"
 
 
+def judge_slow(res, args):
+    """The leg's time limit (--slow-threshold) and its `slow` known failures.
+
+    Listed and stopped at the limit: a tracked known failure, `slow-built` when the chain was built
+    (it compiled on this GL, it just did not finish a frame in time) or `slow-nochain` when it was
+    not.  Listed but finished in time: a note to drop the entry.  Unlisted and over the limit (or
+    timed out): a failure, flagged `slow_unlisted` so --fail-fast does not count it and the summary
+    prints the line to paste.  No `[gl]` line at all is never "slow": the window did not come up."""
+    if res["preset"] == "off" or not args.slow_threshold:
+        return
+    listed = args.slow_listed.get(res["preset"])
+    has_gl = res.get("gl_lines", 0) > 0
+    built = any(s["what"] == "built" for s in res["shader"])
+    if res.get("slow_capped") is not None:
+        if not has_gl:
+            res["errors"].append("no `[gl]` line within %d s: the window never came up (not counted as slow)" % res["slow_capped"])
+            return
+        if res.get("verdict") not in ("built", "no-chain"):
+            return   # failed / refused / known-broken before the limit: that verdict stands
+        res["errors"] = [e for e in res["errors"] if not e.startswith("no `[shader] ... built` line")]
+        res["verdict"] = "slow-built" if built else "slow-nochain"
+        res["notes"].append("%s within %d s on this leg (known failure: slow, measured %s)"
+                            % ("chain built, not rendered" if built else "no chain", res["slow_capped"], listed))
+        return
+    if listed is not None and not res["errors"]:
+        res["notes"].append("listed as slow (measured %s) but rendered in %s s: drop it from known-failures.txt"
+                            % (listed, res["seconds"]))
+        res["stale_slow"] = True
+        return
+    if listed is None and has_gl and (res.get("timed_out") or (built and res["seconds"] > args.slow_threshold)):
+        res["slow_unlisted"] = True
+        if not res.get("timed_out"):
+            res["errors"].append("took %s s, over this leg's %d s limit: list it in known-failures.txt as slow"
+                                 % (res["seconds"], args.slow_threshold))
+
+
+def read_known_slow(path, leg):
+    """`<leg> slow <measured> <preset path, may contain spaces>` lines of known-failures.txt."""
+    out = {}
+    if not path:
+        return out
+    for line in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 3)
+        if len(parts) == 4 and parts[0] == leg and parts[1] == "slow":
+            out[parts[3]] = parts[2]
+    return out
+
+
+def times_tsv(results):
+    rows = ["preset\tverdict\tseconds\tstatus"]
+    for r in results:
+        if r["preset"] == "(aborted)":
+            continue
+        status = ("slow-capped" if r.get("slow_capped") is not None else
+                  "timed-out" if r.get("timed_out") else "failed" if r["errors"] else "ok")
+        rows.append("%s\t%s\t%s\t%s" % (r["preset"], r.get("verdict", ""), r.get("seconds", ""), status))
+    return "\n".join(rows) + "\n"
+
+
+def write_report(out, meta, results, summary_path):
+    """summary.md (+ the job summary), times.tsv; returns the number of failed entries."""
+    off = next((r for r in results if r["preset"] == "off"), {"renderer": "", "gl_version": ""})
+    failed = [r for r in results if r["errors"]]
+    built = [r for r in results if r.get("verdict") == "built" and not r["errors"]]
+    refused = [r for r in results if r.get("verdict") == "refused" and not r["errors"]]
+    broken = [r for r in results if r.get("verdict") == "known-broken" and not r["errors"]]
+    hung = [r for r in results if r.get("known_exit_hang")]
+    slow_built = [r for r in results if r.get("verdict") == "slow-built" and not r["errors"]]
+    slow_nochain = [r for r in results if r.get("verdict") == "slow-nochain" and not r["errors"]]
+    unlisted = [r for r in results if r.get("slow_unlisted")]
+    stale = [r for r in results if r.get("stale_slow")]
+    retried = [r for r in results if r.get("retried")]
+    leftover = [r for r in results if r.get("leftover")]
+    (out / "times.tsv").write_text(times_tsv(results), encoding="utf-8")
+    md = ["## GL qualification: %s" % meta["title"], "",
+          "| | |", "|---|---|",
+          "| Executable | `%s` |" % meta["exe"],
+          "| Renderer (plain launch) | `%s` (OpenGL %s) |" % (off.get("renderer", ""), off.get("gl_version", "")),
+          "| Presets | %d (%s) |" % (meta["presets"], meta["set"]),
+          "| Built | %d |" % len(built),
+          "| Refused (allowlisted) | %d |" % len(refused),
+          "| Known broken (allowlisted) | %d |" % len(broken),
+          "| Did not exit (known failure%s) | %d |" % ((": " + meta["known_exit_hang"]) if meta.get("known_exit_hang") else "", len(hung))]
+    if meta.get("slow_threshold"):
+        md += ["| Slow, chain built, not rendered in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_built)),
+               "| Slow, no chain in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_nochain))]
+    md += ["| **Failed** | **%d** |" % len(failed), ""]
+    if meta.get("settings"):
+        md += ["Settings: %s" % meta["settings"], ""]
+    if retried or leftover:
+        md += ["Retried after no `[gl]` line: %d; process group alive after a kill: %d" % (len(retried), len(leftover)), ""]
+    if refused:
+        md += ["<details><summary>Refused presets (allowlisted)</summary>", ""]
+        md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in refused]
+        md += ["", "</details>", ""]
+    if broken:
+        md += ["<details><summary>Known-broken presets (allowlisted, fail to build everywhere)</summary>", ""]
+        md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in broken]
+        md += ["", "</details>", ""]
+    if slow_built or slow_nochain:
+        md += ["<details><summary>Slow presets (known failures: stopped at %d s, not rendered)</summary>" % meta["slow_threshold"], ""]
+        md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in slow_built + slow_nochain]
+        md += ["", "</details>", ""]
+    if unlisted:
+        run = os.environ.get("GITHUB_RUN_ID", "local")
+        md += ["### Unlisted slow presets", "",
+               "Over this leg's %d s limit with the chain built; to track them, paste into "
+               "`app/test/gl-qualification/known-failures.txt`:" % meta["slow_threshold"], "", "```"]
+        md += ["%s slow %s@%s %s" % (meta["leg"], (">%ds" % r["timed_out"]) if r.get("timed_out") else ("%ss" % r["seconds"]),
+                                     run, r["preset"]) for r in unlisted]
+        md += ["```", ""]
+    if stale:
+        md += ["<details><summary>Listed as slow but rendered in time (%d): drop these entries</summary>" % len(stale), ""]
+        md += ["- `%s` — %s s" % (r["preset"], r["seconds"]) for r in stale]
+        md += ["", "</details>", ""]
+    if failed:
+        md += ["### Failures", ""]
+        for r in failed:
+            md += ["**`%s`** (exit %s, %s s)" % (r["preset"], r.get("exit"), r.get("seconds"))]
+            md += ["- %s" % e for e in r["errors"]]
+            try:
+                if not r.get("log"):
+                    raise OSError("no log")
+                tail = pathlib.Path(r["log"]).read_text(encoding="utf-8", errors="replace").splitlines()
+                gl = [l for l in tail if l.startswith("[gl]") or l.startswith("[shader]")]
+                md += ["", "```", *gl[-12:], "```", ""]
+            except OSError:
+                md += [""]
+    timed = sorted((r for r in results if isinstance(r.get("seconds"), (int, float)) and r["preset"] not in ("off", "(aborted)", "(merge)")),
+                   key=lambda r: -r["seconds"])[:25]
+    if timed:
+        md += ["<details><summary>Slowest launches</summary>", "", "| Preset | Seconds | Verdict |", "|---|---|---|"]
+        md += ["| `%s` | %s | %s |" % (r["preset"], r["seconds"], "FAIL" if r["errors"] else r.get("verdict", "")) for r in timed]
+        md += ["", "</details>", ""]
+    def visible_notes(r):
+        return [n for n in r["notes"] if n != "no golden" and not n.startswith("did not exit")]
+    notes = [r for r in results if visible_notes(r) and not r["errors"] and r.get("verdict") == "built" and not r.get("stale_slow")]
+    if notes:
+        md += ["<details><summary>Notes (%d)</summary>" % len(notes), ""]
+        md += ["- `%s`: %s" % (r["preset"], "; ".join(visible_notes(r))) for r in notes]
+        md += ["", "</details>", ""]
+    summary = "\n".join(md) + "\n"
+    (out / "summary.md").write_text(summary, encoding="utf-8")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as f:
+            f.write(summary)
+    print("gl_qualify: %d built, %d refused, %d slow (known), %d failed"
+          % (len(built), len(refused), len(slow_built) + len(slow_nochain), len(failed)), flush=True)
+    return len(failed)
+
+
+def merge_main(args):
+    """--merge: one summary for a leg split with --shard.  Fails unless every shard is there and
+    the shards together ran every preset exactly once."""
+    out = args.out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    shards, problems = {}, []
+    for d in args.merge:
+        p = pathlib.Path(d) / "results.json"
+        if not p.is_file():
+            problems.append("`%s` has no results.json (the shard did not get as far as its preset loop)" % d)
+            continue
+        j = json.loads(p.read_text(encoding="utf-8"))
+        idx, n = (int(x) for x in j.get("shard", "0/1").split("/"))
+        if args.expect_shards and n != args.expect_shards:
+            problems.append("`%s` is shard %d/%d, expected N=%d" % (d, idx, n, args.expect_shards))
+        if idx in shards:
+            problems.append("shard %d appears twice" % idx)
+        for r in j["results"]:   # each log as downloaded, beside this shard's results.json
+            if r.get("log"):
+                r["log"] = str(pathlib.Path(d) / "logs" / pathlib.PurePath(r["log"]).name)
+        shards[idx] = j
+    want = args.expect_shards or (max(shards) + 1 if shards else 1)
+    for i in range(want):
+        if i not in shards:
+            problems.append("shard %d/%d is missing" % (i, want))
+    results, seen = [], {}
+    total = None
+    for i in sorted(shards):
+        j = shards[i]
+        total = j.get("presets_total", total)
+        for r in j["results"]:
+            if r["preset"] == "off":
+                if i == 0 or r["errors"]:
+                    r = dict(r)
+                    if i != 0:
+                        r["preset"] = "off (shard %d)" % i
+                    results.append(r)
+                continue
+            if r["preset"] != "(aborted)":
+                if r["preset"] in seen:
+                    problems.append("`%s` ran in shards %d and %d" % (r["preset"], seen[r["preset"]], i))
+                seen[r["preset"]] = i
+            results.append(r)
+        missing = sorted(set(j.get("selected", [])) - {r["preset"] for r in j["results"]})
+        if missing:
+            problems.append("shard %d did not run %d of its presets (aborted or cancelled)" % (i, len(missing)))
+    if total is not None and len(seen) != total and not problems:
+        problems.append("the shards ran %d presets, the list has %d" % (len(seen), total))
+    for p in problems:
+        results.append({"preset": "(merge)", "errors": [p], "notes": [], "verdict": "merge", "exit": None,
+                        "seconds": 0, "log": "", "png": "", "shader": []})
+    first = shards[min(shards)] if shards else {}
+    meta = {"title": "%s (%d shards)" % (args.os, want), "exe": first.get("exe", ""), "presets": total or 0,
+            "set": first.get("preset_set", ""), "known_exit_hang": first.get("known_exit_hang", ""),
+            "slow_threshold": first.get("slow_threshold", 0), "leg": first.get("leg", args.os),
+            "settings": first.get("settings", "")}
+    (out / "results.json").write_text(json.dumps({"os": args.os, "shards": want, "presets_total": total,
+                                                  "results": results}, indent=1), encoding="utf-8")
+    return 1 if write_report(out, meta, results, args.summary) else 0
+
+
 # ---------------------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--exe", required=True, type=pathlib.Path, help="the app executable (install tree: <prefix>/bin/virtualjaguar[.exe])")
-    ap.add_argument("--shaders", required=True, type=pathlib.Path, help="the shaders/ folder beside it (first-party + slang-shaders/)")
+    ap.add_argument("--exe", type=pathlib.Path, help="the app executable (install tree: <prefix>/bin/virtualjaguar[.exe])")
+    ap.add_argument("--shaders", type=pathlib.Path, help="the shaders/ folder beside it (first-party + slang-shaders/)")
     ap.add_argument("--out", required=True, type=pathlib.Path, help="output folder: shots/, logs/, results.json, summary.md")
     ap.add_argument("--os", required=True, choices=["linux", "windows", "macos"], help="leg name, for the summary and the golden layout")
     ap.add_argument("--content", type=pathlib.Path, default=None, help="a ROM to run (the picture the chain filters); default: no content")
@@ -397,7 +654,27 @@ def main():
     ap.add_argument("--goldens-strict", action="store_true", help="a golden miss is a failure")
     ap.add_argument("--refresh-goldens", action="store_true", help="write passing captures to <out>/golden/gl/<os>/")
     ap.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY", ""), help="append the Markdown summary here too")
+    ap.add_argument("--shard", default="0/1", help="I/N: run the presets whose index modulo N is I (plus `off`, the shard's baseline)")
+    ap.add_argument("--known-failures", default="", help="known-failures.txt: this leg's `slow` lines (--leg)")
+    ap.add_argument("--leg", default="", help="this leg's name in known-failures.txt (macos-arm64, ...)")
+    ap.add_argument("--slow-threshold", type=int, default=0,
+                    help="seconds: a listed `slow` preset is stopped here and counted as a known failure; an unlisted one "
+                         "that takes longer fails (0 = no limit beyond --timeout)")
+    ap.add_argument("--graceful-kill", type=int, default=0, help="POSIX: SIGTERM and this many seconds before SIGKILL")
+    ap.add_argument("--retry-no-gl", action="store_true", help="launch again (once) a preset whose log has no `[gl]` line")
+    ap.add_argument("--merge", nargs="+", default=[], help="join these shard output folders into --out (no launches)")
+    ap.add_argument("--expect-shards", type=int, default=0, help="with --merge: how many shards there must be")
     args = ap.parse_args()
+    if args.merge:
+        return merge_main(args)
+    if not args.exe or not args.shaders:
+        sys.exit("gl_qualify: --exe and --shaders are required")
+    try:
+        shard_i, shard_n = (int(x) for x in args.shard.split("/"))
+        assert 0 <= shard_i < shard_n
+    except (ValueError, AssertionError):
+        sys.exit("gl_qualify: --shard wants I/N with 0 <= I < N, got %r" % args.shard)
+    args.slow_listed = read_known_slow(args.known_failures, args.leg) if args.leg else {}
 
     args.exe = args.exe.resolve()
     args.shaders = args.shaders.resolve()
@@ -420,11 +697,15 @@ def main():
         presets = [p for p in presets if p in wanted]
     elif args.preset_set == "smoke":
         presets = [p for p in SMOKE_PRESETS if p in set(presets)]
+    presets_total = len(presets)
+    presets = [p for k, p in enumerate(presets) if k % shard_n == shard_i]
     refused_ok = read_list(args.refused_allowlist)
     identical_ok = read_list(args.identical_ok)
     known_broken = read_list(args.known_broken)
 
-    print("gl_qualify: %s, %d presets, frame %d, %d job(s), timeout %d s" % (args.os, len(presets), args.frame, args.jobs, args.timeout), flush=True)
+    print("gl_qualify: %s, %d presets (shard %s of %d), frame %d, %d job(s), timeout %d s, %d listed slow"
+          % (args.os, len(presets), args.shard, presets_total, args.frame, args.jobs, args.timeout,
+             sum(1 for p in presets if p in args.slow_listed)), flush=True)
 
     # The plain picture first: everything else is compared with it.
     off = launch(args, "off", "off", args.out)
@@ -437,8 +718,20 @@ def main():
     if not off["errors"]:
         def one(rel):
             r = launch(args, rel, str(args.shaders / rel), args.out)
+            if args.retry_no_gl and r.get("gl_lines", 0) == 0:
+                # The window never came up: once more after a pause, the first attempt kept in the result.
+                first = {k: r[k] for k in ("seconds", "errors", "exit")}
+                try:
+                    os.replace(r["log"], r["log"] + ".first")
+                except OSError:
+                    pass
+                time.sleep(10)
+                r = launch(args, rel, str(args.shaders / rel), args.out)
+                r["retried"] = first
+                r["notes"].append("retried: the first launch had no `[gl]` line (%s)" % "; ".join(first["errors"]))
             judge_shader(r, refused_ok, known_broken)
-            if r["verdict"] != "known-broken":
+            judge_slow(r, args)
+            if r["verdict"] not in ("known-broken", "slow-built", "slow-nochain") and r.get("slow_capped") is None:
                 analyse_png(r, off_img, identical_ok, args)
             return r
         streak, aborted = 0, False
@@ -448,7 +741,8 @@ def main():
                 tag = "FAIL" if r["errors"] else r["verdict"]
                 print("  %-60s %-8s %5s s%s" % (r["preset"], tag, r["seconds"],
                       ("  " + "; ".join(r["errors"])) if r["errors"] else ""), flush=True)
-                streak = streak + 1 if r["errors"] else 0
+                # An unlisted slow preset fails but is no sign of a broken GL path: it does not stop the shard.
+                streak = streak + 1 if (r["errors"] and not r.get("slow_unlisted")) else 0
                 if args.fail_fast and streak >= args.fail_fast:
                     aborted = True
                     print("gl_qualify: %d presets failed in a row; stopping (--fail-fast %d)" % (streak, args.fail_fast), flush=True)
@@ -469,62 +763,25 @@ def main():
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(r["png"], dst)
 
-    failed = [r for r in results if r["errors"]]
-    built = [r for r in results if r["verdict"] == "built" and not r["errors"]]
-    refused = [r for r in results if r["verdict"] == "refused" and not r["errors"]]
-    broken = [r for r in results if r["verdict"] == "known-broken" and not r["errors"]]
-    hung = [r for r in results if r.get("known_exit_hang")]
+    settings = "%d job(s) at once, --frame %d, --emu-frames %d, timeout %d s%s" % (
+        args.jobs, args.frame, args.emu_frames, args.timeout,
+        (", slow limit %d s" % args.slow_threshold) if args.slow_threshold else "")
+    meta = {"title": args.os + ("" if shard_n == 1 else " shard %s" % args.shard), "exe": str(args.exe),
+            "presets": len(presets), "set": args.preset_set if not args.only else "selected",
+            "known_exit_hang": args.known_exit_hang, "slow_threshold": args.slow_threshold,
+            "leg": args.leg or args.os, "settings": settings}
     (args.out / "results.json").write_text(json.dumps({
         "os": args.os, "exe": str(args.exe), "frame": args.frame, "presets": len(presets),
-        "built": len(built), "refused": sorted(r["preset"] for r in refused),
-        "known_broken": sorted(r["preset"] for r in broken), "did_not_exit": len(hung), "failed": len(failed),
+        "presets_total": presets_total, "shard": args.shard, "selected": presets, "preset_set": meta["set"],
+        "leg": meta["leg"], "known_exit_hang": args.known_exit_hang, "slow_threshold": args.slow_threshold,
+        "settings": settings,
+        "built": sum(1 for r in results if r.get("verdict") == "built" and not r["errors"]),
+        "refused": sorted(r["preset"] for r in results if r.get("verdict") == "refused" and not r["errors"]),
+        "known_broken": sorted(r["preset"] for r in results if r.get("verdict") == "known-broken" and not r["errors"]),
+        "did_not_exit": sum(1 for r in results if r.get("known_exit_hang")),
+        "failed": sum(1 for r in results if r["errors"]),
         "results": results}, indent=1), encoding="utf-8")
-
-    md = ["## GL qualification: %s" % args.os, "",
-          "| | |", "|---|---|",
-          "| Executable | `%s` |" % args.exe,
-          "| Renderer (plain launch) | `%s` (OpenGL %s) |" % (off["renderer"], off["gl_version"]),
-          "| Presets | %d (%s) |" % (len(presets), args.preset_set if not args.only else "selected"),
-          "| Built | %d |" % len(built),
-          "| Refused (allowlisted) | %d |" % len(refused),
-          "| Known broken (allowlisted) | %d |" % len(broken),
-          "| Did not exit (known failure%s) | %d |" % ((": " + args.known_exit_hang) if args.known_exit_hang else "", len(hung)),
-          "| **Failed** | **%d** |" % len(failed), ""]
-    if refused:
-        md += ["<details><summary>Refused presets (allowlisted)</summary>", ""]
-        md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in refused]
-        md += ["", "</details>", ""]
-    if broken:
-        md += ["<details><summary>Known-broken presets (allowlisted, fail to build everywhere)</summary>", ""]
-        md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in broken]
-        md += ["", "</details>", ""]
-    if failed:
-        md += ["### Failures", ""]
-        for r in failed:
-            md += ["**`%s`** (exit %s, %s s)" % (r["preset"], r["exit"], r["seconds"])]
-            md += ["- %s" % e for e in r["errors"]]
-            try:
-                if not r["log"]:
-                    raise OSError("no log")
-                tail = pathlib.Path(r["log"]).read_text(encoding="utf-8", errors="replace").splitlines()
-                gl = [l for l in tail if l.startswith("[gl]") or l.startswith("[shader]")]
-                md += ["", "```", *gl[-12:], "```", ""]
-            except OSError:
-                md += [""]
-    def visible_notes(r):
-        return [n for n in r["notes"] if n != "no golden" and not n.startswith("did not exit")]
-    notes = [r for r in results if visible_notes(r) and not r["errors"] and r["verdict"] == "built"]
-    if notes:
-        md += ["<details><summary>Notes (%d)</summary>" % len(notes), ""]
-        md += ["- `%s`: %s" % (r["preset"], "; ".join(visible_notes(r))) for r in notes]
-        md += ["", "</details>", ""]
-    summary = "\n".join(md) + "\n"
-    (args.out / "summary.md").write_text(summary, encoding="utf-8")
-    if args.summary:
-        with open(args.summary, "a", encoding="utf-8") as f:
-            f.write(summary)
-    print("gl_qualify: %d built, %d refused, %d failed" % (len(built), len(refused), len(failed)), flush=True)
-    return 1 if failed else 0
+    return 1 if write_report(args.out, meta, results, args.summary) else 0
 
 
 if __name__ == "__main__":

@@ -402,8 +402,23 @@ summary says how many were not run), so a leg with no working runtime fails in m
 never grow. The macOS leg runs in a 640x480 window (`small-window.ini`, `--seed-config`): the hosted
 display is too small for 960x760 (the window came back 960x642, ~45 s a launch), and a seeded 480x360
 window captures uniform white while ImGui's extra OS windows are on (the default; off, or at 640x480
-and up, it captures the game), which its "Capture diagnostics" step keeps showing. The leg captures
-after 4 UI frames instead of 20, since a heavy chain costs ~12 s a frame on Apple's software renderer. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
+and up, it captures the game), which its "Capture diagnostics" step keeps showing.
+
+The macOS leg is **sharded**: Apple's software renderer (hosted runners have no GPU) takes minutes
+over a heavy chain's first frame, so one runner cannot render ~500 presets in a job. Three `macos`
+jobs each take the presets whose sorted index modulo 3 is their shard (`--shard I/3`, each with its
+own `off` baseline, 2 launches at once); the GL probe, the capture diagnostics and `shaders_gl` run in
+shard 0 only; `macos-summary` joins them (`gl_qualify.py --merge ... --expect-shards 3`), failing if
+a shard is missing or the shards did not run every preset exactly once, and uploads the one
+`gl-qualification-macos-arm64` summary (screenshots and logs stay in the
+`gl-qualification-macos-arm64-shard-<n>` artifacts). A preset that alone takes over `SLOW_LIMIT`
+(120 s) there is a `macos-arm64 slow <measured>@<run> <preset>` line in `known-failures.txt`: it is
+stopped at the limit and listed as a known failure ("chain built, not rendered" / "no chain"), not
+a checked picture. An unlisted preset over the limit fails and the summary prints its line to paste;
+a listed one that renders in time is noted for removal. A launch with no `[gl]` line is retried once
+(after a run of killed GL processes a hosted Mac stopped giving later launches a window) and never
+counts as slow. Each folder has `times.tsv` (seconds per preset) and the summary a "Slowest
+launches" table. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
 compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
 candidates into the artifact.
 
@@ -430,7 +445,8 @@ candidates into the artifact.
 - `known-failures.txt` holds tracked failures with their issue (`windows-x64 exit-hang`, #1167: the app never
   exits on the x64 bundled Mesa; a launch with a complete screenshot is killed after 5 s and counted,
   the boot step and `shaders_gl` accept the timeout when their evidence is complete). Remove the line
-  when the fix lands; nothing else on that leg is forgiven.
+  when the fix lands; nothing else on that leg is forgiven. `macos-arm64 slow` lines are the
+  presets Apple's software renderer cannot render within 120 s (above).
 - Windows "Automatic Mesa fallback verdict" red → the stock-Windows path (#1138) regressed or the
   boot did not come back: `automatic-seconds.txt` has the exit code, the seconds and which of the
   checks failed (the retry line, the `renderer=` line, `config.ini` in the parent's data dir, no

@@ -478,13 +478,26 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------------------------------
+  # Apple's software renderer takes minutes over a heavy chain's first frame, so one runner cannot
+  # render all ~500 presets in a job's time: three shards (preset index modulo 3, every preset once,
+  # each shard with its own `off` baseline), the GL probe, the capture diagnostics and shaders_gl in
+  # shard 0 only, and macos-summary joins the three into the leg's one summary and artifact.
+  # A preset that alone takes over SLOW_LIMIT seconds here is a `macos-arm64 slow` line in
+  # known-failures.txt (its measured time and run): stopped at the limit and reported, not rendered.
   macos:
-    name: macOS arm64 (Apple OpenGL 4.1)
+    name: macOS arm64 (Apple OpenGL 4.1), shard ${{ matrix.shard }}/3
     needs: [librashader]
     runs-on: macos-latest
-    # Build ~4 min, the preset loop (run 41760278887: ~12 s a frame for the heavy chains on Apple's
-    # software renderer), shaders_gl 10-18 min.
+    # Build ~4 min, a third of the presets at 2 at once (60-100 min estimated from runs 41760278887 and
+    # 41776934638), shaders_gl 10-18 min in shard 0.
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    env:
+      SHARDS: '3'
+      SLOW_LIMIT: '120'
     steps:
       - uses: actions/checkout@v7
 
@@ -503,13 +516,16 @@ jobs:
           cat librashader/BUILD-INFO.txt
           cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly \
             -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader.dylib"
-          cmake --build build --config Release -j4 --target virtualjaguar vj_shader_tests vj_gl_context_integration
+          targets=(virtualjaguar)
+          [ "${{ matrix.shard }}" = 0 ] && targets+=(vj_shader_tests vj_gl_context_integration)
+          cmake --build build --config Release -j4 --target "${targets[@]}"
           cmake --install build --prefix "$PWD/stage"
           test -f stage/bin/librashader.dylib
           find stage/bin/shaders -name '*.slangp' | wc -l
 
       # A hosted runner's window server and Apple GL: what gl_context_integration sees.
       - name: What the Apple OpenGL context offers
+        if: matrix.shard == 0
         run: |
           set -eu
           mkdir -p glq
@@ -521,6 +537,7 @@ jobs:
       # With them on, 480x360 and 480x362 capture white; with them off, or at 640x480 and up, the game.
       # The leg runs at 640x480 with the shipped default; these launches keep the finding visible.
       - name: Capture diagnostics (one `off` launch per window configuration)
+        if: matrix.shard == 0
         run: |
           set -u
           D="$PWD/glq/capture-diag"; mkdir -p "$D"
@@ -560,24 +577,28 @@ jobs:
           { echo '```'; cat "$D/display.txt" "$D/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           rm -rf "${D:?}"/*/   # the data folders (lock files, saves) are noise in the artifact
 
-      - name: Render every bundled preset
+      - name: Render this shard's presets
         run: |
           set -eu
           # (${arr[@]+"${arr[@]}"}: an empty array under set -u is an error on macOS's bash 3.2)
           refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
           # The hosted display is too small for the default 960x760 window (it came back 960x642 and ~45 s a
-          # launch; run 41571727219 managed 205 of 500 in 150 min at 2 jobs): 640x480 (small-window.ini), 3 at once.
-          # 4 UI frames, not 20: Apple's software renderer runs a heavy chain at ~12 s a frame (run 41760278887:
-          # 49 of its 57 timeouts had built the chain), and --emu-frames already makes the capture the game's picture.
-          python3 -I "$QUALIFY" --os macos --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame 4 --emu-frames "$SHOT_EMU_FRAMES" --jobs 3 --timeout 240 --low-dpi \
+          # launch): 640x480 (small-window.ini).  2 at once: at 3, launches slowed each other and a run of
+          # killed GL processes left later launches without a window (run 41760278887: no `[gl]` line at all),
+          # hence also the SIGTERM before the kill and one retry of a launch that never got a window.
+          # An unlisted preset that takes longer than SLOW_LIMIT fails, with the line to list it printed.
+          # --summary '': the run summary gets macos-summary's joined table, not three shard tables.
+          python3 -I "$QUALIFY" --os macos --summary '' --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 2 --timeout 240 --low-dpi \
+            --shard "${{ matrix.shard }}/$SHARDS" --known-failures "$LISTS/known-failures.txt" --leg macos-arm64 \
+            --slow-threshold "$SLOW_LIMIT" --graceful-kill 10 --retry-no-gl \
             --seed-config "$LISTS/small-window.ini" --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
       - name: shaders_gl (skip = failure)
         id: shaders_gl
-        if: always()
+        if: always() && matrix.shard == 0
         continue-on-error: true
         run: |
           set -eu
@@ -586,10 +607,39 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
 
       - name: shaders_gl verdict
-        if: always() && steps.shaders_gl.outcome != 'success'
+        if: always() && matrix.shard == 0 && steps.shaders_gl.outcome != 'success'
         run: |
           echo "::error::shaders_gl failed or skipped on the Apple OpenGL context (glq/shaders_gl.txt in the artifact)"
           exit 1
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gl-qualification-macos-arm64-shard-${{ matrix.shard }}
+          path: glq
+          if-no-files-found: error
+
+  # The macOS leg as one: every shard present, every preset run exactly once, one summary.
+  macos-summary:
+    name: macOS arm64 (Apple OpenGL 4.1)
+    needs: [macos]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: gl-qualification-macos-arm64-shard-*
+          path: shards
+
+      - name: Join the shards
+        run: |
+          set -eu
+          dirs=()
+          for i in 0 1 2; do dirs+=("shards/gl-qualification-macos-arm64-shard-$i"); done
+          python3 -I "$QUALIFY" --os macos --merge "${dirs[@]}" --expect-shards 3 --out glq
 
       - uses: actions/upload-artifact@v7
         if: always()
