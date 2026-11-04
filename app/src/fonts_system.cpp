@@ -374,47 +374,45 @@ const SystemFont* findSystemFont(const std::vector<SystemFont>& list, const std:
 // ---------------------------------------------------------------------------------------------
 // the machine's list
 // ---------------------------------------------------------------------------------------------
+FontIndex::~FontIndex() {
+    if (th_.joinable()) th_.join();   // the scan is short; wait rather than race the process teardown
+}
+
+void FontIndex::start(std::vector<std::string> dirs) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (started_) return;
+    started_ = true;
+    th_ = std::thread([this, dirs = std::move(dirs)]() {
+        auto list = std::make_shared<const std::vector<SystemFont>>(scanFontDirs(dirs));
+        std::lock_guard<std::mutex> lk2(mu_);
+        list_ = std::move(list);
+    });
+}
+
+bool FontIndex::ready() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return list_ != nullptr;
+}
+
+std::shared_ptr<const std::vector<SystemFont>> FontIndex::list() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return list_;
+}
+
 namespace {
 
-struct Index {
-    std::mutex mu;
-    std::thread th;
-    bool started = false;
-    std::shared_ptr<const std::vector<SystemFont>> list;
-    ~Index() {
-        if (th.joinable()) th.join();   // the scan is short; wait rather than race the process teardown
-    }
-};
-Index& index() {
-    static Index i;
+FontIndex& index() {
+    static FontIndex i;
     return i;
 }
 
 }  // namespace
 
-void systemFontsStart() {
-    Index& ix = index();
-    std::lock_guard<std::mutex> lk(ix.mu);
-    if (ix.started) return;
-    ix.started = true;
-    ix.th = std::thread([&ix]() {
-        auto list = std::make_shared<const std::vector<SystemFont>>(scanFontDirs(systemFontDirs(hostOs(), systemProbe())));
-        std::lock_guard<std::mutex> lk2(ix.mu);
-        ix.list = std::move(list);
-    });
-}
+void systemFontsStart() { index().start(systemFontDirs(hostOs(), systemProbe())); }
 
-bool systemFontsReady() {
-    Index& ix = index();
-    std::lock_guard<std::mutex> lk(ix.mu);
-    return ix.list != nullptr;
-}
+bool systemFontsReady() { return index().ready(); }
 
-std::shared_ptr<const std::vector<SystemFont>> systemFonts() {
-    Index& ix = index();
-    std::lock_guard<std::mutex> lk(ix.mu);
-    return ix.list;
-}
+std::shared_ptr<const std::vector<SystemFont>> systemFonts() { return index().list(); }
 
 }  // namespace fonts
 }  // namespace vj

@@ -251,7 +251,8 @@ endif()
 add_test(NAME fonts_unit COMMAND vj_fonts_test "${CMAKE_CURRENT_SOURCE_DIR}/src" "${imgui_SOURCE_DIR}")
 set_tests_properties(fonts_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
-# Installed-font enumeration (fonts_system.cpp, #935): name tables of synthetic fonts, the folder walk, the per-OS folders.
+# Installed-font enumeration (fonts_system.cpp, #935): name tables of synthetic fonts, the folder walk, the per-OS folders,
+# the scan worker over an injected folder (#1148); the host scan itself is a SKIP-able smoke check (#1078).
 add_executable(vj_fonts_system_test tests/fonts_system_test.cpp src/fonts.cpp src/fonts_system.cpp src/paths.cpp src/config.cpp)
 target_include_directories(vj_fonts_system_test PRIVATE src ${imgui_SOURCE_DIR})
 target_link_libraries(vj_fonts_system_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
