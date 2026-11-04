@@ -370,11 +370,22 @@ static void testArtUrl() {
     CHECK(chooseArtUrl(vj::lib::Section::Bios, "Anything", root, up, mirror, exists).empty());
 }
 
+// The Mac App Store edition has no Discord (its IPC socket is outside the sandbox): statusText() says
+// so whatever the settings.  The website edition explains the actual state.
+static void checkStatus(const Presence& p, const char* websiteNeedle) {
+#ifdef VJ_MAC_APP_STORE
+    (void)websiteNeedle;
+    CHECK(p.statusText().find("Mac App Store") != std::string::npos);
+#else
+    CHECK(p.statusText().find(websiteNeedle) != std::string::npos);
+#endif
+}
+
 static void testPresenceManager() {
     Presence p;
     PresenceSettings s;
     CHECK(!p.available());
-    CHECK(p.statusText().find("no Discord application ID") != std::string::npos);
+    checkStatus(p, "no Discord application ID");
     s.appId = "";
     p.configure(s);
     CHECK(!p.active());
@@ -383,12 +394,12 @@ static void testPresenceManager() {
     s.instance = 2;
     p.configure(s);
     CHECK(!p.active() && !p.available());
-    CHECK(p.statusText().find("first window") != std::string::npos);
+    checkStatus(p, "first window");
     s.instance = 1;
     s.enabled = false;
     p.configure(s);
     CHECK(!p.active());
-    CHECK_EQ(p.statusText(), "Off.");
+    checkStatus(p, "Off.");
     p.shutdown();
 }
 
