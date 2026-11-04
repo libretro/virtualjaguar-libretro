@@ -3,17 +3,16 @@
 # a note, nothing else on that leg is forgiven.  Remove the line when the fix lands: the leg
 # then fails again if the failure comes back.
 #
-#   windows-x64 exit-hang   the app (and every process that made an llvmpipe context) never
-#                           exits on the MSYS2 MINGW64 Mesa 26.2.3 the x64 package bundles:
-#                           SDL_DestroyWindow/SDL_Quit hang after "context destroyed";
-#                           LP_NUM_THREADS=0 and softpipe exit at once, arm64 Mesa exits in 2 s.
-#                           gl_qualify.py kills a launch 5 s after its screenshot is complete and
-#                           counts it; the boot step accepts the timeout when the screenshot and
-#                           the [gl] lines are there; shaders_gl passes without its final OK line
+#   windows-x64 test-exit-hang   the TEST programs vj_gl_context_integration and `vj_shader_tests
+#                           gl` load the x64 bundled MSYS2 MINGW64 Mesa in-process and unload it at
+#                           SDL_Quit; Mesa's DllMain then waits for llvmpipe threads that never
+#                           finish, so they never exit (#1179).  The loader probe passes when its
+#                           `PASS GL loader` line is there before the timeout; shaders_gl passes
 #                           when nothing failed or skipped and its last check (the broken shader)
-#                           ran.  Product bug found by #1155 (PR #1160); tracked in #1167.
-windows-x64 exit-hang #1167
-
+#                           ran.  App launches have NO allowance: the app's own hang (#1167) is
+#                           fixed by #1172, which ends the bundled-Mesa child without unloading
+#                           Mesa, so an app launch that does not exit fails the leg.
+#
 #   macos-arm64 slow        <measured>@<run id> <preset path, as gl_qualify.py names it>: a preset
 #                           that alone takes over the leg's SLOW_LIMIT (120 s) to render its first
 #                           frames on Apple's software OpenGL 4.1 renderer (hosted runners have no
@@ -25,6 +24,7 @@ windows-x64 exit-hang #1167
 #                           timed out at 240 s without a picture.  Measured at 640x480, 3 launches
 #                           at once (runs 41760278887 and 41776934638): slow in every run that
 #                           measured it.  Not a product bug: real Macs render these on the GPU.
+windows-x64 test-exit-hang #1179
 macos-arm64 slow 122s@41760278887 slang-shaders/anti-aliasing/aa-shader-4.0.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/blurs/gaussian_blur-sharp.slangp
 macos-arm64 slow 211s@41760278887 slang-shaders/blurs/gaussian_blur.slangp

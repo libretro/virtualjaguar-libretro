@@ -442,11 +442,13 @@ candidates into the artifact.
 - `identical to the --shader off capture` → the preset changed nothing; either the chain fell back
   to the plain presenter (check for a `[shader]` line) or it is a true no-op at this scale (list it).
 - `screenshot is black` → the window drew nothing (lost context, hidden window, swap failure).
-- `known-failures.txt` holds tracked failures with their issue (`windows-x64 exit-hang`, #1167: the app never
-  exits on the x64 bundled Mesa; a launch with a complete screenshot is killed after 5 s and counted,
-  the boot step and `shaders_gl` accept the timeout when their evidence is complete). Remove the line
-  when the fix lands; nothing else on that leg is forgiven. `macos-arm64 slow` lines are the
-  presets Apple's software renderer cannot render within 120 s (above).
+- `known-failures.txt` holds tracked failures, one line each; nothing else on that leg is forgiven.
+  `macos-arm64 slow`: presets Apple's software renderer cannot render within 120 s (above).
+  `windows-x64 test-exit-hang #1179`: the two TEST programs (`vj_gl_context_integration`,
+  `vj_shader_tests gl`) load the bundled Mesa in-process and never exit after unloading it; the
+  loader probe and `shaders_gl` accept the timeout only with their complete evidence (`PASS GL
+  loader`; no FAIL/SKIP and the broken-shader check ran). App launches have no allowance: the
+  app's own exit hang (#1167) is fixed by #1172, so an app launch that does not exit fails the leg.
 - Windows "Automatic Mesa fallback verdict" red → the stock-Windows path (#1138) regressed or the
   boot did not come back: `automatic-seconds.txt` has the exit code, the seconds and which of the
   checks failed (the retry line, the `renderer=` line, `config.ini` in the parent's data dir, no

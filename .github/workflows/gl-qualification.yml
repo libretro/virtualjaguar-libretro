@@ -286,14 +286,17 @@ jobs:
             echo "fallback=yes" >>"$GITHUB_OUTPUT"
           fi
 
-      # Tracked known failures of this leg (app/test/gl-qualification/known-failures.txt).
+      # Tracked known failures of this leg (app/test/gl-qualification/known-failures.txt).  Only the two
+      # TEST programs (vj_gl_context_integration, vj_shader_tests gl) may hang at exit, and only with
+      # complete evidence: they load the bundled Mesa in-process and unload it at SDL_Quit (#1179, the
+      # #1167 DllMain hang).  App launches have no allowance: #1172 ended the app's own hang.
       - name: Known failures of this leg
         id: known
         run: |
           set -eu
-          ref="$(awk -v leg="windows-$ARCH" '$1 == leg && $2 == "exit-hang" {print $3; exit}' "$LISTS/known-failures.txt")"
-          echo "exit_hang=$ref" >>"$GITHUB_OUTPUT"
-          [ -z "$ref" ] || echo "::notice::windows-$ARCH: the app's exit hang is a tracked known failure ($ref); a launch is killed 5 s after its screenshot"
+          ref="$(awk -v leg="windows-$ARCH" '$1 == leg && $2 == "test-exit-hang" {print $3; exit}' "$LISTS/known-failures.txt")"
+          echo "test_exit_hang=$ref" >>"$GITHUB_OUTPUT"
+          [ -z "$ref" ] || echo "::notice::windows-$ARCH: the test programs' exit hang is a tracked known failure ($ref); app launches must exit"
 
       # The pre-#1138 loader against the bundled Mesa (before/after evidence), then a context
       # created, drawn to, read back and destroyed through the same library the fallback child
@@ -319,8 +322,8 @@ jobs:
           code=${PIPESTATUS[0]}
           set -e
           echo "context create/draw/destroy: exit $code after $SECONDS s" | tee -a glq/sdl-loader.txt
-          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] && grep -q '^PASS GL loader' glq/sdl-loader.txt; then
-            echo "probe drew and read back, then did not exit: the tracked known failure (${{ steps.known.outputs.exit_hang }})" | tee -a glq/sdl-loader.txt
+          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.test_exit_hang }}" ] && grep -q '^PASS GL loader' glq/sdl-loader.txt; then
+            echo "probe drew and read back, then did not exit: the tracked test-program known failure (${{ steps.known.outputs.test_exit_hang }})" | tee -a glq/sdl-loader.txt
             code=0
           fi
           # The same with llvmpipe's rasterizer threads off, then with softpipe (no LLVM at all):
@@ -345,8 +348,8 @@ jobs:
         if: steps.native.outputs.fallback == 'yes'
         run: |
           set -eu
-          # arm64 boots, screenshots and exits in 2 s; the first two x64 runs never came back
-          # within 120 s and 300 s although the PNG was written (frame 20 reached).
+          # arm64 boots, screenshots and exits in 2 s.  x64's Mesa child never exited until #1172 (#1167:
+          # it now ends without unloading Mesa); a launch that does not come back here fails the leg.
           SECONDS=0
           set +e
           timeout 150 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
@@ -357,10 +360,6 @@ jobs:
           echo "automatic fallback launch: exit $code after $SECONDS s" | tee glq/automatic-seconds.txt
           cat glq/automatic-stderr.txt
           ok=yes
-          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] && [ -s glq/automatic-fallback.png ]; then
-            echo "booted, screenshot written, did not exit: the tracked known failure (${{ steps.known.outputs.exit_hang }})" | tee -a glq/automatic-seconds.txt
-            code=0
-          fi
           [ "$code" -eq 0 ] || ok=no
           test -s glq/automatic-fallback.png || ok=no
           grep -q 'automatically retrying with bundled Mesa OpenGL' glq/automatic-stderr.txt || ok=no
@@ -376,7 +375,7 @@ jobs:
       #   no-vsync   the same with video.vsync=0 seeded in config.ini (a swap interval that never
       #              returns on a session without a compositor?)
       - name: Fallback timing diagnostics
-        if: steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes' && steps.known.outputs.exit_hang == ''
+        if: steps.native.outputs.fallback == 'yes' && steps.fallback.outputs.booted != 'yes'
         run: |
           set -eu
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
@@ -414,9 +413,8 @@ jobs:
           if [ "${{ steps.native.outputs.fallback }}" = yes ]; then
             expect_log=(--expect-log 'automatically retrying with bundled Mesa OpenGL')
           fi
-          hang=(); [ -z "${{ steps.known.outputs.exit_hang }}" ] || hang=(--known-exit-hang "${{ steps.known.outputs.exit_hang }}")
           python -I "$QUALIFY" --os windows --exe stage/bin/virtualjaguar.exe --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 1 --timeout 240 ${hang[@]+"${hang[@]}"} \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 1 --timeout 240 \
             --expect-renderer 'llvmpipe|D3D12' ${expect_log[@]+"${expect_log[@]}"} \
             --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
@@ -437,13 +435,13 @@ jobs:
           timeout 600 build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
           code=${PIPESTATUS[0]}
           set -e
-          # The tracked exit hang: the test's final verdict line comes after SDL_Quit, which never
+          # The tracked test-program exit hang (#1179): the final verdict line comes after SDL_Quit, which never
           # returns there, so the evidence is "nothing failed or skipped and the last check ran"
           # (the test writes stdout unbuffered, so a killed run still has every line before it).
-          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] \
+          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.test_exit_hang }}" ] \
             && ! grep -q 'shader_tests: FAIL\|shader_tests gl: SKIP' glq/shaders_gl.txt \
             && grep -q '^broken shader -> chain build failed' glq/shaders_gl.txt; then
-            echo "shader_tests gl: every check passed, then the process did not exit: the tracked known failure (${{ steps.known.outputs.exit_hang }})" | tee -a glq/shaders_gl.txt
+            echo "shader_tests gl: every check passed, then the process did not exit: the tracked test-program known failure (${{ steps.known.outputs.test_exit_hang }})" | tee -a glq/shaders_gl.txt
             code=0
           fi
           test "$code" -eq 0
@@ -639,7 +637,8 @@ jobs:
           set -eu
           dirs=()
           for i in 0 1 2; do dirs+=("shards/gl-qualification-macos-arm64-shard-$i"); done
-          python3 -I "$QUALIFY" --os macos --merge "${dirs[@]}" --expect-shards 3 --out glq
+          python3 -I "$QUALIFY" --os macos --merge "${dirs[@]}" --expect-shards 3 --out glq \
+            --known-failures "$LISTS/known-failures.txt"
 
       - uses: actions/upload-artifact@v7
         if: always()

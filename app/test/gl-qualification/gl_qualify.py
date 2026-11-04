@@ -456,6 +456,31 @@ def read_known_slow(path, leg):
     return out
 
 
+def slow_list_statement(listed, leg, limit):
+    """One plain sentence on what the leg's `slow` list leaves unchecked, with the measured times
+    (a `>240s` entry timed out: its time is a lower bound, so it is counted apart, not averaged in)."""
+    if not listed:
+        return ""
+    done, over = [], 0
+    for v in listed.values():
+        m = re.match(r"(>?)(\d+(?:\.\d+)?)s", v)
+        if m and m.group(1):
+            over += 1
+        elif m:
+            done.append(float(m.group(2)))
+    done.sort()
+    parts = []
+    if done:
+        n = len(done)
+        med = done[n // 2] if n % 2 else (done[n // 2 - 1] + done[n // 2]) / 2
+        parts.append("%d rendered in %d-%d s, median %d s" % (n, done[0], done[-1], med))
+    if over:
+        parts.append("%d timed out at 240 s without a picture" % over)
+    return ("**%d presets are listed `%s slow` in known-failures.txt and were therefore NOT rendered on this leg** "
+            "(each is stopped at %d s; when measured, %s): this leg does not check their pictures, only that the "
+            "other presets build and render." % (len(listed), leg, limit, "; ".join(parts) or "no usable time"))
+
+
 def times_tsv(results):
     rows = ["preset\tverdict\tseconds\tstatus"]
     for r in results:
@@ -495,6 +520,10 @@ def write_report(out, meta, results, summary_path):
         md += ["| Slow, chain built, not rendered in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_built)),
                "| Slow, no chain in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_nochain))]
     md += ["| **Failed** | **%d** |" % len(failed), ""]
+    if meta.get("slow_statement"):
+        md += [meta["slow_statement"] + " This run stopped %d of them at the limit%s." % (
+            len(slow_built) + len(slow_nochain),
+            ("; %d rendered in time (drop their lines)" % len(stale)) if stale else ""), ""]
     if meta.get("settings"):
         md += ["Settings: %s" % meta["settings"], ""]
     if retried or leftover:
@@ -615,6 +644,9 @@ def merge_main(args):
             "set": first.get("preset_set", ""), "known_exit_hang": first.get("known_exit_hang", ""),
             "slow_threshold": first.get("slow_threshold", 0), "leg": first.get("leg", args.os),
             "settings": first.get("settings", "")}
+    if args.known_failures and meta["slow_threshold"]:
+        meta["slow_statement"] = slow_list_statement(read_known_slow(args.known_failures, meta["leg"]),
+                                                     meta["leg"], meta["slow_threshold"])
     (out / "results.json").write_text(json.dumps({"os": args.os, "shards": want, "presets_total": total,
                                                   "results": results}, indent=1), encoding="utf-8")
     return 1 if write_report(out, meta, results, args.summary) else 0
@@ -769,7 +801,8 @@ def main():
     meta = {"title": args.os + ("" if shard_n == 1 else " shard %s" % args.shard), "exe": str(args.exe),
             "presets": len(presets), "set": args.preset_set if not args.only else "selected",
             "known_exit_hang": args.known_exit_hang, "slow_threshold": args.slow_threshold,
-            "leg": args.leg or args.os, "settings": settings}
+            "leg": args.leg or args.os, "settings": settings,
+            "slow_statement": slow_list_statement(args.slow_listed, args.leg, args.slow_threshold) if args.slow_threshold else ""}
     (args.out / "results.json").write_text(json.dumps({
         "os": args.os, "exe": str(args.exe), "frame": args.frame, "presets": len(presets),
         "presets_total": presets_total, "shard": args.shard, "selected": presets, "preset_set": meta["set"],
