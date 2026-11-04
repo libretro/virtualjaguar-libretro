@@ -321,6 +321,7 @@ jobs:
         env:
           SIGNED: ${{ steps.winsign.outputs.signed || 'false' }}
         run: |
+          set -eu
           method=none; [ "$SIGNED" != true ] || method=azure-artifact-signing
           bash scripts/release/signing-status.sh "${{ matrix.artifact }}.zip" "$SIGNED" false "$method" signing-status
       - uses: actions/upload-artifact@v7
