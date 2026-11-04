@@ -709,6 +709,9 @@ jobs:
   app-packages:
     name: App packages
     needs: [guard]
+    permissions:
+      contents: read
+      id-token: write   # Windows signing logs in to Azure with OIDC (#1150)
     uses: ./.github/workflows/app-package.yml
     with:
       release_tag: ${{ github.ref_type == 'tag' && github.ref_name || (github.ref == 'refs/heads/develop' && 'nightly' || 'prerelease') }}
@@ -793,8 +796,10 @@ jobs:
   # ----------------------------------------------------------------
   # The release signing gate (#1152): every staged asset's ACTUAL signing
   # state against the state its class is EXPECTED to have (the table at the
-  # top of scripts/release/verify.sh; Windows is `unsigned` until #1150 flips
-  # one line), as a per-artifact table in the job summary and, through the
+  # top of scripts/release/verify.sh; the Windows APP packages are expected
+  # `signed` whenever the Azure Artifact Signing secrets and variables exist,
+  # #1150, the Windows cores and tools stay `unsigned` until their jobs sign
+  # too), as a per-artifact table in the job summary and, through the
   # signing-table artifact, in the release body.  Strict on tags and
   # release/**: a missing signature or attestation stops the publish.
   # Warn-only everywhere else, so a signing-service outage can never withhold
@@ -813,6 +818,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       MODE: ${{ (github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/')) && 'strict' || 'warn' }}
+      # The same six values app-package.yml's windows-package job signs with: when they all exist
+      # the app zips and installers MUST carry Authenticode (strict on tags and release/**).
+      WINDOWS_APP_EXPECT: ${{ (secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' && vars.AZURE_SIGNING_PROFILE != '') && 'signed' || 'unsigned' }}
     steps:
       - uses: actions/checkout@v7
 

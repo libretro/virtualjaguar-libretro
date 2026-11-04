@@ -34,6 +34,14 @@ mk virtualjaguar_libretro-linux-x86_64 virtualjaguar_libretro-linux-x86_64-debug
 mk virtualjaguar_libretro-ios-arm64 virtualjaguar_libretro-ios-arm64.dylib
 mk virtualjaguar_libretro-windows-x86_64 virtualjaguar_libretro-windows-x86_64.dll
 mk app-package-windows-x64 VirtualJaguar-dev-windows-x64-setup.exe
+# The app zip holds more PE files than the executable (#1150): the gate scans them all.
+mkdir -p "$T/zip/VirtualJaguar/software-opengl"
+head -c 3000 /dev/urandom > "$T/zip/VirtualJaguar/virtualjaguar.exe"
+head -c 3000 /dev/urandom > "$T/zip/VirtualJaguar/librashader.dll"
+head -c 3000 /dev/urandom > "$T/zip/VirtualJaguar/software-opengl/opengl32.dll"
+printf 'portable\n' > "$T/zip/VirtualJaguar/portable.txt"
+(cd "$T/zip" && zip -qr "$A/app-package-windows-x64/VirtualJaguar-dev-windows-x64.zip" VirtualJaguar)
+mk windows-stage-x64 virtualjaguar.exe
 mk app-package-linux-x86_64 virtualjaguar_dev_amd64.deb
 mk app-package-flatpak VirtualJaguar-dev-linux-x86_64.flatpak
 mk app-package-flatpak-aarch64 VirtualJaguar-dev-linux-aarch64.flatpak
@@ -54,6 +62,7 @@ check_rc "stage exits 0" "$RC" 0 "$OUT"
 check_has "shipped file staged" "$(ls "$T/rel")" "virtualjaguar_libretro-linux-x86_64.so"
 check_lacks "librashader intermediate excluded" "$(ls "$T/rel")" "librashader"
 check_lacks "ci-core intermediate excluded" "$(ls "$T/rel")" "BUILD.json"
+check_lacks "windows-stage intermediate excluded" "$(ls "$T/rel")" "virtualjaguar.exe"
 check_lacks "signing sidecar is not a release asset" "$(ls "$T/rel")" ".status"
 check_has "sidecar collected for the gate" "$(ls "$T/status")" "virtualjaguar_libretro-macos-arm64.dylib.status"
 check_has "nightly .info is relabelled" "$(cat "$T/rel/virtualjaguar_libretro.info")" "-nightly-0123456"
@@ -118,10 +127,19 @@ check_has "windows unsigned is expected today" "$OUT" "| \`virtualjaguar_libretr
 check_has "x86_64 flatpak row" "$OUT" "| \`VirtualJaguar-dev-linux-x86_64.flatpak\` | flatpak | n/a | n/a | skipped | ✅ |"
 check_has "aarch64 flatpak row" "$OUT" "| \`VirtualJaguar-dev-linux-aarch64.flatpak\` | flatpak | n/a | n/a | skipped | ✅ |"
 check_lacks "windows row does not fail while expected unsigned" "$OUT" "no Authenticode signature"
+check_has "app zip row counts every PE file inside" "$OUT" "| \`VirtualJaguar-dev-windows-x64.zip\` | windows-app-zip |"
+check_has "app zip row summarises the PE files" "$OUT" "(3 PE files) |"
+# shellcheck disable=SC2086
+gate strict $NOPUB WINDOWS_APP_EXPECT=signed
+check_rc "flipping the Windows app expectation makes the unsigned installer and zip fail" "$RC" 1 "$OUT"
+check_has "names the unsigned installer" "$OUT" "::error title=release signing gate::VirtualJaguar-dev-windows-x64-setup.exe:"
+check_has "names the first unsigned file inside the zip" "$OUT" "::error title=release signing gate::VirtualJaguar-dev-windows-x64.zip: 3 of 3 PE files unsigned: VirtualJaguar/librashader.dll:"
+check_lacks "the core DLL keeps its own expectation" "$OUT" "::error title=release signing gate::virtualjaguar_libretro-windows-x86_64.dll"
 # shellcheck disable=SC2086
 gate strict $NOPUB WINDOWS_EXPECT=signed
-check_rc "flipping the Windows expectation makes unsigned PE files fail" "$RC" 1 "$OUT"
-check_has "names the unsigned file" "$OUT" "::error title=release signing gate::VirtualJaguar-dev-windows-x64-setup.exe:"
+check_rc "flipping the Windows core/tool expectation makes the unsigned core DLL fail" "$RC" 1 "$OUT"
+check_has "names the unsigned core DLL" "$OUT" "::error title=release signing gate::virtualjaguar_libretro-windows-x86_64.dll:"
+check_lacks "the app packages keep their own expectation" "$OUT" "::error title=release signing gate::VirtualJaguar-dev-windows-x64"
 if [ "$OS" = Darwin ]; then
   # shellcheck disable=SC2086
   gate strict $NOPUB
@@ -132,7 +150,7 @@ if [ "$OS" = Darwin ]; then
   check_has "warn: same finding as a warning" "$OUT" "::warning title=release signing gate::virtualjaguar_libretro-macos-arm64.dylib: not Developer ID signed (ad-hoc)"
 fi
 if have minisign && [ -f "$T/rel/SHA256SUMS.txt.minisig" ]; then
-  gate strict "MINISIGN_PUBKEY_FILE=$T/k.pub" "APPIMAGE_PUBKEY_FILE=$T/none.asc" WINDOWS_EXPECT=unsigned
+  gate strict "MINISIGN_PUBKEY_FILE=$T/k.pub" "APPIMAGE_PUBKEY_FILE=$T/none.asc" WINDOWS_EXPECT=unsigned WINDOWS_APP_EXPECT=unsigned
   check_has "checksum signature verified with the committed key" "$OUT" "| \`SHA256SUMS.txt\` | checksums | minisign (verified) |"
   mv "$T/rel/SHA256SUMS.txt.minisig" "$T/sig.bak"
   gate strict "MINISIGN_PUBKEY_FILE=$T/k.pub" "APPIMAGE_PUBKEY_FILE=$T/none.asc"
