@@ -48,7 +48,7 @@ if [ -n "$iscc" ]; then
     ${arm64_def:+"$arm64_def"} \
     "/DOutputName=VirtualJaguar-${label}-windows-${arch}-setup" \
     "$(cygpath -w "$here/virtualjaguar.iss")"
-  sign_files "$out/VirtualJaguar-${label}-windows-x64-setup.exe"
+  sign_files "$out/VirtualJaguar-${label}-windows-${arch}-setup.exe"
 fi
 
 # Portable: the same tree plus portable.txt (keeps settings in .\data).

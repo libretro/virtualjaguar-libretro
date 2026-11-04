@@ -19,7 +19,8 @@
 #   REPO                   owner/name for `gh attestation verify` (default libretro/virtualjaguar-libretro)
 #   GH_TOKEN               for gh
 #   SKIP_ATTEST=1          do not call gh (hermetic tests); the column says "skipped"
-#   WINDOWS_EXPECT         see the expectation table below
+#   WINDOWS_EXPECT         see the expectation table below (Windows cores and tools)
+#   WINDOWS_APP_EXPECT     same, for the Windows app zips and installers (#1150)
 #   MINISIGN_PUBKEY_FILE   default docs/release-signing.pub
 #   APPIMAGE_PUBKEY_FILE   default docs/release-signing-appimage.asc
 #
@@ -34,7 +35,8 @@ set -euo pipefail
 # a class gains a signature; the gate then enforces it on tags and release/**.
 # ---------------------------------------------------------------------------
 EXPECT_MACOS="signed-notarized"                # Developer ID Application + Apple notarization ticket (#989)
-EXPECT_WINDOWS=${WINDOWS_EXPECT:-unsigned}    # -> "signed" when Azure Artifact Signing lands (#1150)
+EXPECT_WINDOWS=${WINDOWS_EXPECT:-unsigned}    # core DLLs, cue2cdi, jagcd tools: "signed" once release.yml / chdman-tools.yml sign them (#1150 follow-up)
+EXPECT_WINDOWS_APP=${WINDOWS_APP_EXPECT:-unsigned}  # app zips + installers: release.yml passes "signed" when the Azure Artifact Signing secrets exist (#1150)
 EXPECT_IOS=unsigned                           # Developer ID does not apply; Provenance signs them when it embeds them
 EXPECT_APPIMAGE=auto                          # "signed" once docs/release-signing-appimage.asc is committed (#1151)
 EXPECT_SUMS_SIG=auto                          # required once docs/release-signing.pub is committed (#1151)
@@ -157,8 +159,8 @@ want_macos() { # <signed-desc> <notarized yes|no> -> ok|reason
   [ "$2" = yes ] || { echo "not notarized"; return; }
   echo ok
 }
-want_windows() { # <signed-desc> -> ok|reason
-  case "$EXPECT_WINDOWS" in
+want_windows() { # <signed-desc> <expectation> -> ok|reason
+  case "$2" in
     signed) case "$1" in Authenticode*) echo ok ;; *) echo "no Authenticode signature ($1)" ;; esac ;;
     *)      echo ok ;;
   esac
@@ -172,7 +174,7 @@ files=()
 while IFS= read -r f; do files+=("$f"); done < <(cd "$rel" && find . -maxdepth 1 -type f | sed 's|^\./||' | LC_ALL=C sort)
 [ "${#files[@]}" -gt 0 ] || { echo "::error::$rel is empty"; exit 1; }
 
-echo "==> verifying ${#files[@]} assets in $rel (mode $mode; windows expected: $EXPECT_WINDOWS, appimage: $EXPECT_APPIMAGE, checksum signature: $EXPECT_SUMS_SIG)"
+echo "==> verifying ${#files[@]} assets in $rel (mode $mode; windows app expected: $EXPECT_WINDOWS_APP, windows cores/tools: $EXPECT_WINDOWS, appimage: $EXPECT_APPIMAGE, checksum signature: $EXPECT_SUMS_SIG)"
 
 # Checksum list consistency first: everything else is keyed by it.
 sums_ok=yes
@@ -220,16 +222,28 @@ for f in "${files[@]}"; do
       fi ;;
     ios)
       signed="n/a (signed by the app that embeds it)" ;;
-    windows-pe|windows-installer)
-      signed=$(pe_signature "$p"); res=$(want_windows "$signed") ;;
+    windows-pe)
+      signed=$(pe_signature "$p"); res=$(want_windows "$signed" "$EXPECT_WINDOWS") ;;
+    windows-installer)
+      signed=$(pe_signature "$p"); res=$(want_windows "$signed" "$EXPECT_WINDOWS_APP") ;;
     windows-app-zip|windows-tools-zip)
+      # Every PE file in the zip, not just the executables: the app zip ships librashader.dll,
+      # a software-opengl/ copy of the app and the bundled Mesa DLLs, and app-package.yml signs
+      # them all (#1150).  One cell summarises the states; the first offender names the failure.
+      exp=$EXPECT_WINDOWS; [ "$cls" != windows-app-zip ] || exp=$EXPECT_WINDOWS_APP
       d="$tmp/$f.d"; extract_zip "$p" "$d"
-      signed=""; res=ok
+      signed=""; res=ok; n=0; bad=0; first=""; states="|"
       while IFS= read -r x; do
-        b=$(basename "$x"); s=$(pe_signature "$x"); signed="${signed:+$signed; }$b: $s"
-        r=$(want_windows "$s"); [ "$r" = ok ] || res="$b: $r"
-      done < <(find "$d" -type f \( -name '*.exe' -o -name 'virtualjaguar.exe' \) | LC_ALL=C sort)
-      [ -n "$signed" ] || { signed="no .exe in the zip"; res="no .exe in the zip"; } ;;
+        b=${x#"$d/"}; s=$(pe_signature "$x"); n=$((n + 1))
+        case "$states" in *"|$s|"*) ;; *) states="$states$s|" ;; esac
+        r=$(want_windows "$s" "$exp")
+        if [ "$r" != ok ]; then bad=$((bad + 1)); [ -n "$first" ] || first="$b: $r"; fi
+      done < <(find "$d" -type f \( -iname '*.exe' -o -iname '*.dll' \) | LC_ALL=C sort)
+      if [ "$n" -eq 0 ]; then signed="no PE files in the zip"; res="no PE files in the zip"
+      else
+        signed="$(printf '%s' "$states" | sed 's/^|//; s/|$//; s/|/; /g') ($n PE files)"
+        [ "$bad" -eq 0 ] || res="$bad of $n PE files unsigned: $first"
+      fi ;;
     appimage)
       signed=$(appimage_signature "$p")
       if [ "$EXPECT_APPIMAGE" = signed ]; then
@@ -263,7 +277,7 @@ done
   if [ "$bad" -eq 0 ]; then echo "All $n assets meet their expected signing state."
   else echo "**$bad of $n assets do not meet their expected signing state** (mode: $mode)."; fi
   echo
-  echo "Expectations: macOS \`$EXPECT_MACOS\`, Windows \`$EXPECT_WINDOWS\`, iOS/tvOS \`$EXPECT_IOS\`, AppImage \`$EXPECT_APPIMAGE\`, checksum signature \`$EXPECT_SUMS_SIG\`, attestation \`$EXPECT_ATTEST\` (scripts/release/verify.sh)."
+  echo "Expectations: macOS \`$EXPECT_MACOS\`, Windows app \`$EXPECT_WINDOWS_APP\`, Windows cores/tools \`$EXPECT_WINDOWS\`, iOS/tvOS \`$EXPECT_IOS\`, AppImage \`$EXPECT_APPIMAGE\`, checksum signature \`$EXPECT_SUMS_SIG\`, attestation \`$EXPECT_ATTEST\` (scripts/release/verify.sh)."
 } > "$table"
 cat "$table"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo "## Release signing gate ($mode)"; echo; cat "$table"; } >> "$GITHUB_STEP_SUMMARY"; fi

@@ -301,18 +301,23 @@ jobs:
     if: github.event_name != 'push' && needs.package-plan.outputs.reuse != 'true'
     permissions:
       contents: read
+      id-token: write   # Windows signing logs in to Azure with OIDC (#1150); never granted to fork PRs
     uses: ./.github/workflows/app-package.yml
     with:
       release_tag: ${{ github.event_name == 'pull_request' && format('pr{0}', github.event.number) || 'dev' }}
       sign: true
-    # Only the five macOS signing secrets, not `inherit`: SIGNPATH_API_TOKEN (Windows, `sign` turns it on)
-    # and the unrelated repository secrets must not reach PR runs.
+    # Only the signing secrets, not `inherit`: the unrelated repository secrets must not reach PR
+    # runs.  The three AZURE_* ones are the OIDC identity (no client secret); same-repo PR packages
+    # are Authenticode-signed like a release so the path is exercised before a tag (#1150).
     secrets:
       APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
       APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
       APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
       APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
       APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   # One sticky comment per PR, found and updated by a hidden marker.  Skipped on fork PRs:
   # their GITHUB_TOKEN is read-only.  (The step summary lists the same links for them.)
@@ -346,6 +351,7 @@ jobs:
               'app-package-windows-x64': 'Windows x64: portable .zip + -setup.exe',
               'app-package-windows-arm64': 'Windows ARM64: portable .zip + -setup.exe',
               'app-package-flatpak': 'Linux x86_64: Flatpak bundle (.flatpak)',
+              'app-package-flatpak-aarch64': 'Linux aarch64: Flatpak bundle (.flatpak)',
               'app-package-linux-x86_64': 'Linux x86_64: .AppImage + .deb',
               'app-package-linux-aarch64': 'Linux aarch64: .AppImage + .deb',
             };

@@ -6,10 +6,11 @@
 #
 #   artifacts-dir  what actions/download-artifact put there (one directory per
 #                  artifact).  librashader-* and ci-core-* are build
-#                  intermediates, gl-qualification-* are the GL qualification's
-#                  screenshots and logs (#1155) and signing-status-* are the
-#                  signing sidecars (see signing-status.sh): none of them is a
-#                  release asset.
+#                  intermediates, windows-stage-* the unsigned Windows install
+#                  trees app-package.yml signs and packages, gl-qualification-*
+#                  the GL qualification's screenshots and logs (#1155), and
+#                  signing-status-* are the signing sidecars
+#                  (see signing-status.sh): none of them is a release asset.
 #   release-dir    every shipped file, flat; plus SHA256SUMS.txt
 #   status-dir     the signing sidecars, for the verify-signatures gate
 #
@@ -42,7 +43,7 @@ while IFS= read -r f; do
   cp "$f" "$rel/$n"
 done < <(find "$art" -mindepth 2 -type f \
            -not -path "$art/librashader-*" -not -path "$art/ci-core-*" \
-           -not -path "$art/gl-qualification-*" \
+           -not -path "$art/windows-stage-*" -not -path "$art/gl-qualification-*" \
            -not -path "$art/signing-status-*" | LC_ALL=C sort)
 
 find "$art" -mindepth 2 -type f -path "$art/signing-status-*" -exec cp {} "$st/" \;
