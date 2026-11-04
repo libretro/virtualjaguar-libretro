@@ -359,7 +359,7 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   `threaded_branch_allowlist.txt` counts, `tsan.supp` size; raise a count only together with the new line's reason),
   `emu_thread_default_unit`, `emu_thread_default_smoke_{unset,false,true,flag}` (four because a headless run is inline, so the
   stored-choice line pins the rule; `_flag` is the threaded one; expectations derive from the configured channel), the
-  `Linux x86_64 (nightly channel)` row in app.yml, and `emu_thread_gate_check.sh` (Studio only, `VJ_WINDOWED_OK=1`,
+  `Linux x86_64 (nightly channel, Neuro off)` row in app.yml, and `emu_thread_gate_check.sh` (Studio only, `VJ_WINDOWED_OK=1`,
   `--show-window tools`, `--perf-halt`, ports from the OS). Runs: A every tool open + F9 halt (rows 130-410 parked, the window
   presents; Continue; a Neuro client answers presses), B a gdb halt at boot held 6 s (a parked run >= 200 rows, window presents,
   frames resume), C the plain path (>= 250 of 600 UI frames show an emulated frame). Each run wakes the display first; a still-asleep

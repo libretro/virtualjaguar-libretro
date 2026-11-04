@@ -3277,7 +3277,7 @@ int App::runHeadless(const CliArgs& a) {
         double hlCpu0 = Perf::cpuSeconds();
         if (threaded()) {
             retroTicks_.store(0);
-            if (ach.mockMode() || !neuroCliUrl.empty()) {
+            if (ach.mockMode() || neuroCliOn()) {
                 // RetroAchievements steps and pokes are frame-numbered and Neuro plays in real time: one frame at a
                 // time, in the inline loop's order (the steps, Neuro's tick and wait, then the frame --
                 // rc_client_do_frame runs after it, on the emulation thread, and the replica runs in the core's poll
