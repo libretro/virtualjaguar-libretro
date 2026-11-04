@@ -17,18 +17,31 @@ tool computes it from the files alone and writes the same stamp format:
 
 Only rows without a stamp are touched (`--force` re-stamps all), the build
 stamp and every cell stay byte-identical, and `--check` compares the stamps
-already there against the files (exit 1 on a mismatch) so a probe-stamped
-matrix can be audited against this independent computation.
+already there against the files, field by field, so a probe-stamped matrix
+can be audited against this independent computation.  Both modes exit 1 when
+any row's file is missing or empty, and `--check` also when it verified
+nothing or found a mismatch: an audit that could not look at the files must
+never read as a pass.
 
 What is replicated from the core, and where it can differ from the probe:
   * the prepended copier header rule (DetectPrependedHeaderSize in
     src/core/file.c): N MiB + 512 (or a sub-1-MiB image whose $400 marker
     sits 512 bytes in) is stripped before the CRC, as the core does;
-  * byte 0 as mapped at $800000: the payload's first byte, except an
-    Alpine-shaped image (size + 8192 is a whole MiB, no $400 marker) which
-    the loader maps at $802000 behind $FF fill.  A RAM-loaded executable
-    (ABS/COF/JAGR, BJL binaries) never runs the boot ROM, so its byte 0 is
-    cosmetic here; the probe prints whatever the cart slot holds ($00).
+  * byte 0 as the loader maps it, following ParseFileType's order: an
+    ABS/COF/JAGR/DRI header is a RAM-loaded program and the cart slot stays
+    untouched ($00); an image with the $400 universal marker is a cartridge
+    (its own byte 0); an Alpine image (size + 8192 a whole MiB, or the
+    "$802000 header stub" shape) sits behind the loader's $FF fill.  Two
+    shapes depend on the loader's raw-binary scorer, which is not ported:
+    an exact-MiB image without the marker (cartridge, or Alpine when the
+    scorer places it at $802000: Rayman Demo, #973) and a headerless image
+    that is neither (RAM binary / BJL image, or the sub-1-MiB cartridge
+    fallback).  For those the row's own BIOS column decides: a run in which
+    the boot ROM ran (BIOS_REJECT, bios_trap, a handoff in the notes) was a
+    cartridge mapping, one that scored without a boot phase (bios_ran=0)
+    was not; when the column says neither, the field is left out and the
+    site falls back to the stage-only wording.  `--check` skips a field the
+    backfill left out.
 The filedb table itself is parsed from src/core/filedb.c, never copied.
 
 Title -> file: the sweep names a row after the file's stem, so twins
@@ -64,9 +77,11 @@ CART_HEADER_SKIP_SIZE = 512
 CART_UNIVERSAL_MARKER_OFFSET = 0x400
 CART_UNIVERSAL_MARKER = b"\x04\x04\x04\x04"
 MIB = 1048576
+MEMTRACK_SIZE = 131072
 
 ID_STAMP_RE = re.compile(r"<!--\s*id:\s*(.*?)\s*-->")
-BUILD_STAMP_RE = re.compile(r"<!--\s*build:[^>]*-->")
+ID_FIELD_RE = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S+)')
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->")
 PIPE_SPLIT = re.compile(r"(?<!\\)\|")
 
 
@@ -107,6 +122,11 @@ def marker_at(data, off):
     return data[off:off + 4] == CART_UNIVERSAL_MARKER
 
 
+def has_marker(data):
+    return (len(data) >= CART_UNIVERSAL_MARKER_OFFSET + 8
+            and marker_at(data, CART_UNIVERSAL_MARKER_OFFSET))
+
+
 def prepended_header_size(data):
     """Port of DetectPrependedHeaderSize (src/core/file.c)."""
     size = len(data)
@@ -124,42 +144,133 @@ def prepended_header_size(data):
     return 0
 
 
-def alpine_shaped(data):
-    """The loader fills $800000-$801FFF with $FF and maps the image at
-    $802000 for these (JST_ALPINE); the boot ROM then sees byte 0 = $FF."""
+def alpine_header_stub(data):
+    """Port of LooksLikeAlpineHeaderStub: two or more MOVE.L/MOVEA.L abs.L
+    reads of $802000..$8020FF in the first $40 bytes."""
     size = len(data)
-    has_marker = size >= CART_UNIVERSAL_MARKER_OFFSET + 8 and \
-        marker_at(data, CART_UNIVERSAL_MARKER_OFFSET)
-    if has_marker:
+    window = size if size < 0x100 else 0x100
+    hits = 0
+    for off in range(0, 0x40, 2):
+        if off + 6 > size:
+            break
+        op = (data[off] << 8) | data[off + 1]
+        if (op & 0xF1FF) != 0x2039 and (op & 0xF1FF) != 0x2079:
+            continue
+        target = int.from_bytes(data[off + 2:off + 6], "big")
+        if 0x802000 <= target < 0x802000 + window:
+            hits += 1
+    return hits >= 2
+
+
+def ram_program_header(data):
+    """ParseFileType's header checks: ABS/COF type 1 (601B), type 2 (0150),
+    and the 601A family (Jaguar Server, DRI, the legacy layout)."""
+    if len(data) < 2:
         return False
-    return (size + 8192) % MIB == 0
+    return ((data[0] == 0x60 and data[1] in (0x1B, 0x1A))
+            or (data[0] == 0x01 and data[1] == 0x50))
 
 
-def identify(path, db):
-    """-> dict(size, crc32, hdr_byte0, entry=(name, flags)|None, sibling)."""
+def boot_rom_ran(bios_stage, bios_notes):
+    """What the row's BIOS column says about the boot phase: True when the
+    boot ROM ran (so the image was mapped as a cartridge), False when the
+    run had none (bios_ran=0, cart_classify.sh), None when it says nothing
+    (LOAD_FAIL, timeouts, infrastructure verdicts)."""
+    s = bios_stage.strip()
+    if s == "BIOS_REJECT" or s.startswith("? (bios_trap"):
+        return True
+    if "handoff" in bios_notes:
+        return True
+    if s == "GAME_CODE" or s.startswith("? (trap_loop"):
+        return False
+    return None
+
+
+def mapped_byte0(data, ran):
+    """Byte 0 at $800000 after the loader mapped `data` (the stripped
+    payload), or None when the mapping cannot be told from the bytes and
+    the row (see the module docstring)."""
+    size = len(data)
+    if ram_program_header(data):
+        return 0x00
+    marker = has_marker(data)
+    if size % MIB == 0 or size == MEMTRACK_SIZE:
+        if marker:
+            return data[0]
+        # JST_ROM, or JST_ALPINE ($FF fill) when the raw scorer places the
+        # image at $802000 (Rayman Demo, #973).
+        if data[0] == 0xFF:
+            return 0xFF
+        if ran is True:
+            return data[0]
+        if ran is False:
+            return 0xFF
+        return None
+    if marker:
+        return data[0]
+    if (size + 8192) % MIB == 0 or alpine_header_stub(data):
+        return 0xFF
+    # Raw binary / BJL image (slot untouched) or the sub-1-MiB cartridge
+    # fallback (its own byte 0).
+    if ran is True:
+        return data[0]
+    if ran is False:
+        return 0x00
+    return None
+
+
+def identify(path, db, bios_cell=("", "")):
+    """-> dict(size, crc32, hdr_byte0 (int or None), entry, sibling), or
+    None for an empty file."""
     with open(path, "rb") as fh:
         data = fh.read()
     data = data[prepended_header_size(data):]
     if not data:
         return None
     crc = zlib.crc32(data) & 0xFFFFFFFF
-    byte0 = 0xFF if alpine_shaped(data) else data[0]
     entry = db.get(crc)
-    return {"size": len(data), "crc32": crc, "hdr_byte0": byte0,
+    return {"size": len(data), "crc32": crc,
+            "hdr_byte0": mapped_byte0(data, boot_rom_ran(*bios_cell)),
             "entry": entry,
             "sibling": verified_sibling(db, crc) if entry else 0}
 
 
-def format_stamp(ident):
-    """Byte-for-byte the probe's identity tail inside the comment."""
-    s = " size=%d crc32=$%08X hdr_byte0=$%02X filedb=%d" % (
-        ident["size"], ident["crc32"], ident["hdr_byte0"],
-        1 if ident["entry"] else 0)
+def format_fields(ident):
+    """The probe's identity tail, byte for byte; hdr_byte0 left out when
+    the backfill could not tell the mapping."""
+    s = " size=%d crc32=$%08X" % (ident["size"], ident["crc32"])
+    if ident["hdr_byte0"] is not None:
+        s += " hdr_byte0=$%02X" % ident["hdr_byte0"]
+    s += " filedb=%d" % (1 if ident["entry"] else 0)
     if ident["entry"]:
         name, flags = ident["entry"]
         s += ' filedb_flags=$%03X filedb_name="%s" filedb_verified_sibling=$%08X' % (
             flags, name, ident["sibling"])
-    return "<!-- id:%s -->" % s
+    return s
+
+
+def format_stamp(ident):
+    return "<!-- id:%s -->" % format_fields(ident)
+
+
+def parse_fields(text):
+    return dict(ID_FIELD_RE.findall(text))
+
+
+def compare_stamp(row_stamp, computed_fields):
+    """-> list of 'key: row=... file=...' differences.  Every field the
+    backfill computed must match; a field it left out (hdr_byte0 for an
+    undecidable mapping) is skipped."""
+    have = parse_fields(row_stamp)
+    want = parse_fields(computed_fields)
+    diffs = []
+    for key, val in want.items():
+        if have.get(key) != val:
+            diffs.append("%s: row=%s file=%s" % (key, have.get(key, "(absent)"), val))
+    for key in have:
+        if key not in want and key != "hdr_byte0":
+            diffs.append("%s: row=%s file=(absent)" % (key, have[key]))
+    return diffs
 
 
 def rom_files_by_stem(roms_root):
@@ -174,12 +285,11 @@ def rom_files_by_stem(roms_root):
     return stems
 
 
-def row_title(line):
-    body = BUILD_STAMP_RE.sub("", ID_STAMP_RE.sub("", line)).strip()
+def row_cells(line):
+    body = HTML_COMMENT_RE.sub("", line).strip()
     if not (body.startswith("|") and body.endswith("|")):
         return None
-    cells = [c.strip() for c in PIPE_SPLIT.split(body[1:-1])]
-    return cells[0] if cells else None
+    return [c.strip() for c in PIPE_SPLIT.split(body[1:-1])]
 
 
 def main(argv=None):
@@ -194,7 +304,7 @@ def main(argv=None):
                     help="re-stamp rows that already carry an id stamp")
     ap.add_argument("--check", action="store_true",
                     help="compare existing stamps with the files; write nothing; "
-                         "exit 1 on any mismatch")
+                         "exit 1 on a mismatch, a missing file, or nothing checked")
     args = ap.parse_args(argv)
 
     if not os.path.isdir(args.roms):
@@ -208,7 +318,7 @@ def main(argv=None):
     in_table = False
     seen_header = False
     taken = {}
-    stamped = checked = mismatched = missing = 0
+    stamped = checked = mismatched = missing = undecided = 0
     out = []
     for line in lines:
         if not line.startswith("|"):
@@ -223,7 +333,9 @@ def main(argv=None):
         if not in_table or re.fullmatch(r"\|[\s:|-]+\|", line.strip()):
             out.append(line)
             continue
-        title = row_title(line)
+        cells = row_cells(line)
+        title = cells[0] if cells else ""
+        bios_cell = (cells[3], cells[4]) if cells and len(cells) >= 5 else ("", "")
         files = stems.get(title, [])
         idx = taken.get(title, 0)
         taken[title] = idx + 1
@@ -233,39 +345,47 @@ def main(argv=None):
             missing += 1
             out.append(line)
             continue
-        ident = identify(files[idx], db)
+        ident = identify(files[idx], db, bios_cell)
         if ident is None:
             sys.stderr.write("empty file for row %r\n" % title)
             missing += 1
             out.append(line)
             continue
-        stamp = format_stamp(ident)
+        if ident["hdr_byte0"] is None:
+            undecided += 1
+        fields = format_fields(ident)
         have = ID_STAMP_RE.search(line)
         if args.check:
             if have:
                 checked += 1
-                if have.group(0) != stamp:
+                diffs = compare_stamp(have.group(1), fields)
+                if diffs:
                     mismatched += 1
-                    print("MISMATCH %s\n  row:  %s\n  file: %s"
-                          % (title, have.group(0), stamp))
+                    print("MISMATCH %s\n  %s" % (title, "\n  ".join(diffs)))
             out.append(line)
             continue
         if have and not args.force:
             out.append(line)
             continue
-        line = ID_STAMP_RE.sub("", line).rstrip() + stamp
+        line = ID_STAMP_RE.sub("", line).rstrip() + "<!-- id:%s -->" % fields
         stamped += 1
         out.append(line)
 
     if args.check:
-        print("checked %d stamped rows, %d mismatched, %d rows without a file"
-              % (checked, mismatched, missing))
-        return 1 if mismatched else 0
+        print("checked %d stamped rows, %d mismatched, %d rows without a file, "
+              "%d with hdr_byte0 left to the probe"
+              % (checked, mismatched, missing, undecided))
+        if checked == 0:
+            print("FAIL: nothing was checked")
+        return 1 if (mismatched or missing or checked == 0) else 0
     with open(args.matrix, "w", encoding="utf-8") as fh:
         fh.write("\n".join(out))
-    print("stamped %d rows in %s (%d rows without a file left alone)"
-          % (stamped, args.matrix, missing))
-    return 0
+    print("stamped %d rows in %s (%d rows without a file left alone, "
+          "%d with hdr_byte0 left to the probe)"
+          % (stamped, args.matrix, missing, undecided))
+    if missing:
+        print("FAIL: %d rows could not be stamped" % missing)
+    return 1 if missing else 0
 
 
 if __name__ == "__main__":
