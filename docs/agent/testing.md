@@ -387,7 +387,9 @@ it is `-E shaders_gl`; the step is `continue-on-error` and a "shaders_gl verdict
 job, so the screenshots exist even when the test is red, and a test that has to be killed cannot
 wedge the window server before the loop). The loop:
 `app/test/gl-qualification/gl_qualify.py` launches `stage/bin/virtualjaguar --shader <preset>
---screenshot <png> --screenshot-frame 20 test/roms/yarc.j64` for `--shader off` and every preset.
+--screenshot <png> --screenshot-frame 20 --screenshot-emu-frames 60 test/roms/yarc.j64` for `--shader off`
+and every preset (the capture waits for 20 UI frames *and* 60 core frames, so it is the game's picture
+however fast or crowded the host is).
 Per (leg, preset) it asserts: exit 0 before the timeout; the `[gl] version=...; renderer=` line
 matches the leg (`llvmpipe` / `llvmpipe|D3D12` after `automatically retrying with bundled Mesa
 OpenGL` / `Apple`); the PNG decodes and is not black; a `[shader] <preset> built` line
@@ -397,8 +399,10 @@ summary says how many were not run), so a leg with no working runtime fails in m
 `[shader] ... refused` line (macOS OpenGL 4.1 has no
 `GL_ARB_arrays_of_arrays`), or a `... failed` line for a preset the leg's GL cannot compile
 (packHalf2x16 on macOS), passes only for presets in `refused-<os>.txt`, so that set can shrink but
-never grow. The macOS leg runs in a 480x360 window (`small-window.ini`, `--seed-config`): Apple's
-software renderer takes ~75 s a launch at 960x760. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
+never grow. The macOS leg runs in a 640x480 window (`small-window.ini`, `--seed-config`): the hosted
+display is too small for 960x760 (the window came back 960x642, ~45 s a launch), and a seeded 480x360
+window gave uniform white captures (run 41727418224); its "Capture diagnostics" step launches `off`
+once per window configuration and prints each picture's statistics. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
 compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
 candidates into the artifact.
 

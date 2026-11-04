@@ -217,6 +217,8 @@ def launch(args, label, shader_arg, out_dir):
     log = logs / (safe_name(label) + ".log")
     cmd = [str(args.exe), "--data-dir", str(data), "--shader", shader_arg,
            "--screenshot", str(png), "--screenshot-frame", str(args.frame)]
+    if args.emu_frames:
+        cmd += ["--screenshot-emu-frames", str(args.emu_frames)]
     if args.low_dpi:
         cmd.append("--low-dpi")
     cmd += args.extra_arg
@@ -372,6 +374,9 @@ def main():
     ap.add_argument("--os", required=True, choices=["linux", "windows", "macos"], help="leg name, for the summary and the golden layout")
     ap.add_argument("--content", type=pathlib.Path, default=None, help="a ROM to run (the picture the chain filters); default: no content")
     ap.add_argument("--frame", type=int, default=20, help="--screenshot-frame (UI frames before the capture)")
+    ap.add_argument("--emu-frames", type=int, default=0,
+                    help="--screenshot-emu-frames: the capture also waits until the core has shown this many frames "
+                         "(the picture is the game's, however fast or crowded the host)")
     ap.add_argument("--timeout", type=int, default=180, help="seconds per launch")
     ap.add_argument("--jobs", type=int, default=1, help="launches at once (each has its own --data-dir)")
     ap.add_argument("--known-exit-hang", default="", help="this leg's app is known not to exit (cite the issue): a launch with a complete screenshot is killed after --hang-grace seconds and passes with a note")

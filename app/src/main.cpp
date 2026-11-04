@@ -52,7 +52,8 @@ static void usage(const char* argv0) {
         "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-halt] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--screenshot-emu-frames M] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
+        "     (the capture waits for N UI frames and, with M, for the core to have shown M frames: a picture, not the boot)\n"
         "     [--font retro|system|mono[:SIZE]|custom:FILE] [--font-then SPEC]   (this run only; --font-then switches live after 60 frames)\n"
         "     [--show-window settings[-video|-input|-audio|-bios|-storage|-interface]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
         "     [--show-window memory|bitmap|palette|scanner|cpu|objects|blitter|textures|scope|tools]   (Tools windows; needs a game; tools = all)\n"
@@ -274,6 +275,7 @@ int main(int argc, char** argv) {
         }
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--screenshot-emu-frames")) a.screenshotEmuFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
         else if (!std::strcmp(s, "--ui-scale")) a.uiScale = (float)std::strtod(need(s), nullptr);
         else if (!std::strcmp(s, "--low-dpi")) a.lowDpi = true;

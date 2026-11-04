@@ -84,9 +84,10 @@ env:
   REFRESH_GOLDENS: ${{ inputs.refresh_goldens && 'true' || 'false' }}
   # The picture the chains filter: the committed public ROM the smoke tests use.
   CONTENT_ROM: test/roms/yarc.j64
-  # UI frames before the capture.  The emulation thread runs the core meanwhile, so the game
-  # has drawn long before frame 20 even on a slow software renderer.
+  # UI frames before the capture, and core frames the capture also waits for (yarc shows its picture from
+  # core frame 10 on), so the screenshot is the game's picture however fast or crowded the host is.
   SHOT_FRAME: '20'
+  SHOT_EMU_FRAMES: '60'
   QUALIFY: app/test/gl-qualification/gl_qualify.py
   LISTS: app/test/gl-qualification
 
@@ -152,7 +153,7 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11
           xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' \
             python3 -I "$QUALIFY" --os linux --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
-              --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 2 --timeout 240 \
+              --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 2 --timeout 240 \
               --expect-renderer 'llvmpipe' \
               --refused-allowlist "$LISTS/refused-linux.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
               --goldens app/test/golden/gl/linux --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
@@ -415,7 +416,7 @@ jobs:
           fi
           hang=(); [ -z "${{ steps.known.outputs.exit_hang }}" ] || hang=(--known-exit-hang "${{ steps.known.outputs.exit_hang }}")
           python -I "$QUALIFY" --os windows --exe stage/bin/virtualjaguar.exe --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 1 --timeout 150 ${hang[@]+"${hang[@]}"} \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 1 --timeout 240 ${hang[@]+"${hang[@]}"} \
             --expect-renderer 'llvmpipe|D3D12' ${expect_log[@]+"${expect_log[@]}"} \
             --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
@@ -436,8 +437,9 @@ jobs:
           timeout 600 build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
           code=${PIPESTATUS[0]}
           set -e
-          # The tracked exit hang: the test's verdict line comes after SDL_Quit, which never
-          # returns there, so the evidence is "nothing failed or skipped and the last check ran".
+          # The tracked exit hang: the test's final verdict line comes after SDL_Quit, which never
+          # returns there, so the evidence is "nothing failed or skipped and the last check ran"
+          # (the test writes stdout unbuffered, so a killed run still has every line before it).
           if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] \
              && ! grep -q 'shader_tests: FAIL\|shader_tests gl: SKIP' glq/shaders_gl.txt \
              && grep -q '^broken shader -> chain build failed' glq/shaders_gl.txt; then
@@ -512,15 +514,64 @@ jobs:
           perl -e 'alarm shift; exec @ARGV' 120 build/vj_gl_context_integration 2>&1 | tee glq/gl-context-integration.txt
           test "${PIPESTATUS[0]}" -eq 0
 
+      # Run 41727418224: in a seeded 480x360 window every capture (--shader off included) came back a uniform
+      # white, 1.9 s a launch, while 960x642 windows (run 3) and the other legs' 960x760 windows show the game.
+      # The same `off` capture under several window configurations, side by side, so the artifact says which
+      # of the size, the seeded config.ini, ImGui's extra OS windows or vsync is the variable.
+      - name: Capture diagnostics (one `off` launch per window configuration)
+        run: |
+          set -u
+          D="$PWD/glq/capture-diag"; mkdir -p "$D"
+          system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'Resolution|UI Looks like' | sed 's/^ *//' | tee "$D/display.txt" || true
+          run_one() {   # name, extra app args..., with CFG holding the config.ini text ("" = none)
+            local name=$1; shift
+            local data="$D/$name"; mkdir -p "$data"
+            [ -n "$CFG" ] && printf '%s\n' "$CFG" > "$data/config.ini"
+            local t0=$SECONDS
+            perl -e 'alarm shift; exec @ARGV' 90 stage/bin/virtualjaguar --data-dir "$data" --shader off \
+              --screenshot "$D/$name.png" --screenshot-frame "$SHOT_FRAME" --low-dpi "$@" "$CONTENT_ROM" \
+              > "$D/$name.log" 2>&1
+            local rc=$? dt=$((SECONDS - t0))
+            python3 -I - "$D/$name.png" "$name" "$rc" "$dt" <<'PY' | tee -a "$D/summary.txt"
+          import sys, os
+          sys.path.insert(0, os.path.join(os.environ["GITHUB_WORKSPACE"], "app", "test", "gl-qualification"))
+          png, name, rc, dt = sys.argv[1:5]
+          try:
+              import gl_qualify as g
+              p = g.Png.read(png)
+              seen = {}
+              for row in p.rows:
+                  for x in range(p.width):
+                      c = tuple(row[x * p.channels:x * p.channels + 3]); seen[c] = seen.get(c, 0) + 1
+              top = sorted(seen.items(), key=lambda kv: -kv[1])[:3]
+              lit, mean = p.rgb_stats()
+              print("%-22s exit %-3s %3ss  %dx%d  lit %.3f mean %6.1f  colours %d  top %s" % (name, rc, dt, p.width, p.height, lit, mean, len(seen), top))
+          except Exception as e:
+              print("%-22s exit %-3s %3ss  no picture (%s)" % (name, rc, dt, e))
+          PY
+          }
+          CFG=""                                   run_one default-960x760
+          CFG=$'window.w=480\nwindow.h=360'       run_one seeded-480x360
+          CFG=$'window.w=480\nwindow.h=360'       run_one seeded-480x360-f120 --screenshot-frame 120
+          CFG=$'window.w=480\nwindow.h=360'       run_one seeded-480x360-emu60 --screenshot-emu-frames 60
+          CFG=$'window.w=480\nwindow.h=360\nui.viewports=0' run_one seeded-480x360-novp
+          CFG=$'window.w=480\nwindow.h=360\nvideo.vsync=0'  run_one seeded-480x360-novsync
+          CFG=$'window.w=480\nwindow.h=362'       run_one seeded-480x362
+          CFG=$'window.w=640\nwindow.h=480'       run_one seeded-640x480
+          CFG=$'window.w=960\nwindow.h=760'       run_one seeded-960x760
+          echo; echo "## macOS capture diagnostics" >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; cat "$D/display.txt" "$D/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "${D:?}"/*/   # the data folders (lock files, saves) are noise in the artifact
+
       - name: Render every bundled preset
         run: |
           set -eu
           # (${arr[@]+"${arr[@]}"}: an empty array under set -u is an error on macOS's bash 3.2)
           refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
-          # Apple's software renderer: ~75 s a launch at 960x760 (run 41571727219 managed 205 of 500 in
-          # 150 min at 2 jobs), so this leg runs 3 launches at once in a 480x360 window.
+          # The hosted display is too small for the default 960x760 window (it came back 960x642 and ~45 s a
+          # launch; run 41571727219 managed 205 of 500 in 150 min at 2 jobs): 640x480 (small-window.ini), 3 at once.
           python3 -I "$QUALIFY" --os macos --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
-            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --jobs 3 --timeout 240 --low-dpi \
+            --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 3 --timeout 240 --low-dpi \
             --seed-config "$LISTS/small-window.ini" --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}

@@ -74,6 +74,7 @@ struct CliArgs {
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
+    unsigned screenshotEmuFrames = 0;   // dev: ... and not before the core has shown this many frames (--screenshot-emu-frames; 0 = UI frames only)
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage|-interface][:FILTER], states, about, cheats, library, login, achievements, keypad
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     std::string shader;             // --shader NAME|FILE|off: the shader preset for this run (not saved); "" = the setting (#1154)

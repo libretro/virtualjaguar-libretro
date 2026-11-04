@@ -2808,9 +2808,19 @@ int App::runInteractive(const CliArgs& a) {
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Ui);
         tvScriptFrameEnd();   // the script's `shot`: this frame's TV drawing is in the buffer, not yet swapped
-        if (!a.screenshot.empty() && ++uiFrames == a.screenshotFrame) {
-            saveWindowScreenshot(a.screenshot);
-            quit = true;
+        // --screenshot: after N UI frames and (--screenshot-emu-frames M) once the core has shown M frames, so the
+        // capture is the game's picture whatever the host's speed.  A core that never gets there (no content, a
+        // halt) is captured 600 UI frames later anyway, with a line saying so.
+        if (!a.screenshot.empty() && ++uiFrames >= a.screenshotFrame) {
+            const bool emuReady = video.emuFrames() >= a.screenshotEmuFrames;
+            const bool gaveUp = !emuReady && uiFrames >= a.screenshotFrame + 600;
+            if (emuReady || gaveUp) {
+                if (gaveUp)
+                    std::fprintf(stderr, "[shot] the core showed %llu frame(s) in %u UI frames, wanted %u: capturing anyway\n",
+                                 (unsigned long long)video.emuFrames(), uiFrames, a.screenshotEmuFrames);
+                saveWindowScreenshot(a.screenshot);
+                quit = true;
+            }
         }
         presentViewports();
         guardSwap();   // before the timestamps: the latch must not see it as swap time

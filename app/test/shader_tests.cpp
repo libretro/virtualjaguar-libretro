@@ -885,6 +885,9 @@ static int runProbe(const char* dir) {
 }
 
 int main(int argc, char** argv) {
+    // Unbuffered: a run that is killed (the x64 bundled Mesa never returns from SDL_Quit, #1167) must still have
+    // every verdict line in its log; the stderr [shader] lines already are.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::string mode = argc > 1 ? argv[1] : "unit";
     if (mode == "probe") return runProbe(argc > 2 ? argv[2] : nullptr);
     if (mode == "unit") return runUnit();
