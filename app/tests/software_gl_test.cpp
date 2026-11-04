@@ -18,11 +18,14 @@ int main() {
     if (parsed) LocalFree(parsed);
     if (!ok) { std::puts("FAIL Windows argument roundtrip"); return 1; }
     int exitCode = 123;
+    if (vj::softwareGLChild()) { std::puts("FAIL not the Mesa child without VJ_SOFTWARE_OPENGL_RETRY"); return 1; }
     SetEnvironmentVariableW(L"VJ_SOFTWARE_OPENGL_RETRY", L"1");
+    if (!vj::softwareGLChild()) { std::puts("FAIL the Mesa child is recognised by VJ_SOFTWARE_OPENGL_RETRY (#1167)"); return 1; }
     if (vj::retrySoftwareOpenGL(0, nullptr, "", exitCode) || exitCode != 123) {
         std::puts("FAIL software retry loop guard"); return 1;
     }
     SetEnvironmentVariableW(L"VJ_SOFTWARE_OPENGL_RETRY", nullptr);
+    if (vj::softwareGLChild()) { std::puts("FAIL still the Mesa child after the variable is cleared"); return 1; }
     // This unit binary's build directory has no staged software-opengl app.
     if (vj::retrySoftwareOpenGL(0, nullptr, "", exitCode) || exitCode != 123) {
         std::puts("FAIL missing runtime should not launch a child"); return 1;

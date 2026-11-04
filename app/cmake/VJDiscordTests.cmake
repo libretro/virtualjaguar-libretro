@@ -8,7 +8,7 @@
 #                     and the clear on stop.  Skipped (77) on Windows (named pipes).
 add_executable(vj_discord_test tests/discord_test.cpp src/discord_ipc.cpp src/discord_presence.cpp)
 target_include_directories(vj_discord_test PRIVATE src)
-target_link_libraries(vj_discord_test PRIVATE vj_library ${VJ_SDL3_TARGET} Threads::Threads)
+target_link_libraries(vj_discord_test PRIVATE vj_library vj_file_access ${VJ_SDL3_TARGET} Threads::Threads)   # discord_presence.cpp: the edition's status text (#1147)
 if(MSVC)
     target_compile_options(vj_discord_test PRIVATE /W3 /utf-8)
     target_compile_definitions(vj_discord_test PRIVATE _CRT_SECURE_NO_WARNINGS)

@@ -6,7 +6,8 @@
 //   * OS/2 weight + italic, post.isFixedPitch, .ttc collections, truncated / bitmap-only files refused
 //   * the folder walk: recursive, de-duplicated by name, sorted, non-fonts ignored
 //   * the folders worth scanning on macOS / Windows / Linux against fake environments
-//   * the machine's own fonts (a smoke check; a slow host is reported, not failed)
+//   * the worker-thread plumbing (FontIndex) over an injected folder: start, idempotence, ready, the published list
+//   * the machine's own fonts (a smoke check; a slow host is reported as SKIP, not failed)
 //
 //   vj_fonts_system_test
 #include "fonts.h"
@@ -14,6 +15,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -28,7 +30,7 @@ namespace fs = std::filesystem;
 using namespace vj;
 using namespace vj::fonts;
 
-static int g_checks = 0, g_fail = 0;
+static int g_checks = 0, g_fail = 0, g_skip = 0;
 #define CHECK(c) do { g_checks++; if (!(c)) { g_fail++; std::fprintf(stderr, "FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); } } while (0)
 
 typedef std::vector<unsigned char> Bytes;
@@ -247,12 +249,55 @@ static void testDirs() {
     CHECK(shareCount == 1);   // no duplicates
 }
 
-// The machine's own fonts: a smoke check of the worker-thread plumbing (start, idempotence, ready, list).  The
-// correctness of the scan (names, weights, dedupe, sorting) is asserted above on synthesised fonts, so this never
-// needs a fast host: the full scan takes ~2 s on a normal machine but 32-53 s on GitHub's hosted Windows runners (#1078).
-// When the scan has not finished within the wait bound it is reported as slow, not failed -- the picker never blocks on
-// it either (fonts_ui.cpp draws what it has) -- and the process still waits for the worker at exit.  FONTS_STRICT=1
-// (a developer machine) restores the hard check.
+// The worker-thread plumbing itself, deterministic on every host (#1148): a FontIndex over a folder of two
+// synthesised fonts must start, publish within seconds and be idempotent.  This is the hard check the host scan
+// below cannot be (it is non-fatal on a slow host), so a worker that never starts or never sets ready fails here.
+static void testWorker(const fs::path& tmp) {
+    const fs::path root = tmp / "worker";
+    spit(root / "Beta.ttf", buildFont({simple("Beta")}));
+    FaceSpec it = simple("Alpha", "Italic");
+    it.italicBit = true;
+    spit(root / "sub" / "AlphaItalic.otf", buildFont({it}));
+    spit(root / "notes.txt", Bytes(500, 'x'));
+
+    FontIndex never;   // never started: nothing to join at destruction
+    CHECK(!never.ready() && never.list() == nullptr);
+
+    FontIndex ix;
+    CHECK(!ix.ready() && ix.list() == nullptr);
+    const auto t0 = std::chrono::steady_clock::now();
+    ix.start([root]() { return std::vector<std::string>{root.string()}; });
+    std::atomic<bool> secondRan{false};
+    ix.start([&secondRan, tmp]() {   // idempotent: the second call starts nothing, and its folders are never asked for
+        secondRan = true;
+        return std::vector<std::string>{(tmp / "scan").string()};
+    });
+    // 10 s: generous for three files, even on a loaded CI runner; a healthy worker publishes in tens of milliseconds.
+    for (int i = 0; i < 10000 / 20 && !ix.ready(); i++) SDL_Delay(20);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    CHECK(ix.ready());
+    CHECK(!secondRan);
+    const auto list = ix.list();
+    CHECK(list != nullptr);
+    if (!list) {
+        std::fprintf(stderr, "worker: no list published after %.0f ms\n", ms);
+        return;
+    }
+    std::vector<std::string> names;
+    for (const SystemFont& f : *list) names.push_back(f.name);
+    const std::vector<std::string> want = {"Alpha Italic", "Beta"};
+    CHECK(names == want);
+    CHECK(list->size() == 2 && (*list)[0].italic && !(*list)[1].italic);
+    CHECK(ix.list() == list);   // stays published; the same list every time
+    std::printf("worker: %zu faces from the injected folder in %.0f ms\n", list->size(), ms);
+}
+
+// The machine's own fonts through the process-wide index (systemFontsStart / Ready / systemFonts): a smoke check.
+// The correctness of the scan (names, weights, dedupe, sorting) is asserted above on synthesised fonts and the worker
+// plumbing in testWorker, so this never needs a fast host: the full scan takes ~2 s on a normal machine but 32-53 s on
+// GitHub's hosted Windows runners (#1078).  When the scan has not finished within the wait bound the check is reported
+// as SKIP, not as a pass (#1148) -- the picker never blocks on it either (fonts_ui.cpp draws what it has) -- and the
+// process still waits for the worker at exit.  FONTS_STRICT=1 (a developer machine) restores the hard check.
 static void testMachine() {
     const bool strict = std::getenv("FONTS_STRICT") != nullptr;
     const int boundMs = strict ? 120000 : 30000;
@@ -263,8 +308,14 @@ static void testMachine() {
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     auto list = systemFonts();
     if (!list) {
-        std::printf("this machine: font scan still running after %.0f ms (slow host) -- not a failure, see #1078\n", ms);
-        CHECK(!strict);
+        if (strict) {
+            std::fprintf(stderr, "FONTS_STRICT: the host font scan did not finish within %d ms\n", boundMs);
+            CHECK(list != nullptr);
+            return;
+        }
+        g_skip++;
+        std::printf("SKIP this machine: font scan still running after %.0f ms (slow host, see #1078); the worker "
+                    "plumbing was checked on the injected folder\n", ms);
         return;
     }
     int mono = 0;
@@ -284,9 +335,10 @@ int main() {
     testScan(tmp);
     testIds();
     testDirs();
+    testWorker(tmp);
     testMachine();
     std::error_code ec;
     fs::remove_all(tmp, ec);
-    std::printf("fonts_system: %d checks, %d failed\n", g_checks, g_fail);
+    std::printf("fonts_system: %d checks, %d failed, %d skipped\n", g_checks, g_fail, g_skip);
     return g_fail ? 1 : 0;
 }

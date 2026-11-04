@@ -1570,6 +1570,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Matrix-diff release gate (#749): stage ordering, crash-signature and
 	@# asymmetry detection, exit codes. Synthetic fixtures -- no corpus needed.
 	bash test/test_matrix_diff.sh
+	@# Site generator + check_site unit tests (stdlib Python): the cart
+	@# matrix labels are derived from row data (#976), the cheat-pack
+	@# checks from fixtures. No ROMs, no core, no network.
+	python3 -m unittest discover -s scripts -p 'test_*.py'
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate

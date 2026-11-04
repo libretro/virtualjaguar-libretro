@@ -23,6 +23,8 @@
       riscClockScalePct;
       jaguarMainROM;
       jagMemSpace;
+      FindRomIdentifier;
+      FindVerifiedRomVariant;
       busArbiter;
       riscClockScalePct;
       gpuPCSample;

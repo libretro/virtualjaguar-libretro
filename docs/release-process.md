@@ -207,12 +207,13 @@ in place with `--clobber`, as before.
   app, the macOS core dylibs, `cue2cdi-macos-universal` and the macOS chdman/jagcd tools (composite
   action `.github/actions/macos-sign`); same-repo PR app packages are too. Without the secrets (fork
   PRs) the macOS app is ad-hoc signed, everything else unsigned, and the log warns. A notarization
-  failure fails a tag build and only warns on other refs. Every exe and dll in the Windows app
-  packages and both installers are Authenticode-signed with Azure Artifact Signing (#1150, composite
-  action `.github/actions/windows-sign`, OpenID Connect, no certificate material anywhere) in one
-  x64 job for both architectures, then smoke-tested from the uploaded artifacts on each
-  architecture's runner; the Windows core DLLs and tools are the follow-up. Without the six Azure
-  values the Windows packages ship unsigned with a notice. The secrets and variables, the
+  failure fails a tag build and only warns on other refs. Every Windows file is Authenticode-signed
+  with Azure Artifact Signing (#1150, composite action `.github/actions/windows-sign`, OpenID
+  Connect, no certificate material anywhere): every exe and dll in the app packages and both
+  installers in one x64 job for both architectures, then smoke-tested from the uploaded artifacts
+  on each architecture's runner; the core DLLs and `cue2cdi` in `release.yml`'s Windows rows; the
+  jagcd tools in `chdman-tools.yml`. Without the six Azure values the Windows files ship unsigned
+  with a notice. The secrets and variables, the
   hardened-runtime reasoning, the Azure setup and the manual steps are in
   [`app/packaging/README.md`](../app/packaging/README.md).
 - **Provenance and checksums (#1151).** After the builds, `release.yml`'s `stage` job flattens every
@@ -227,10 +228,9 @@ in place with `--clobber`, as before.
   [`app/packaging/README.md`](../app/packaging/README.md), "Signed checksums" / "Signed AppImages".
 - **The signing gate (#1152).** `verify-signatures` runs between staging and publication and checks
   every asset against the state its class is expected to have (`scripts/release/verify.sh`: macOS
-  Developer ID + notarized, the Windows app zips and installers `signed` whenever the Azure Artifact
-  Signing secrets and variables exist and the Windows cores and tools `unsigned` until their jobs sign
-  too, AppImage and checksum signatures once their public keys are committed, attestation on
-  everything). On a tag and on
+  Developer ID + notarized, every Windows file `signed` whenever the Azure Artifact Signing secrets
+  and variables exist, AppImage and checksum signatures once their public keys are committed,
+  attestation on everything). On a tag and on
   `release/**` a miss fails the run and nothing is published; on `develop` it warns, so an outage
   cannot withhold the core nightly. The per-artifact table (signed, notarized, attested) lands in the
   job summary and in the release body, replacing hand-written signing prose: do not describe the

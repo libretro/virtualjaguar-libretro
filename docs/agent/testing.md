@@ -124,6 +124,11 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   `GAME_CODE`/`BIOS_REJECT` (boot ROM halted on `BRA.S *`, never handed off: red "Jaguar" screen,
   an authentic reject)/`? (bios_trap)` (cart ran, PC fell back into `$E00000`)/`? (...)`/`LOAD_FAIL`.
   `bios_ran=0` (headerless RAM-loaded `.jag`, e.g. Music Demo) has no boot phase: whole run scored.
+  Every row ends in an `<!-- id: size= crc32= hdr_byte0= filedb= ... -->` identity stamp (#976:
+  the probe's `jaguarMainROMCRC32`, byte 0 of the image at `$800000`, the filedb row) that the
+  site reads to say WHY the boot ROM rejected a file and to fold same-byte twins into one row;
+  `test/tools/cart_matrix_identify.py docs/cart-boot-matrix.md` backfills or `--check`s the
+  stamps from the files alone (no core), `scripts/test_build_site_cart.py` pins the labels.
   Crash-watchdog signatures are never handoff-relative (an early escape is a real bug, #853).
 - `test/tools/matrix_diff.py OLD.md NEW.md` — never-backward gate (#749) between two copies of the
   same matrix (cart or CD): prints regressed / still-asymmetric / improved, exit 1 on any backward
@@ -354,7 +359,7 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   `threaded_branch_allowlist.txt` counts, `tsan.supp` size; raise a count only together with the new line's reason),
   `emu_thread_default_unit`, `emu_thread_default_smoke_{unset,false,true,flag}` (four because a headless run is inline, so the
   stored-choice line pins the rule; `_flag` is the threaded one; expectations derive from the configured channel), the
-  `Linux x86_64 (nightly channel)` row in app.yml, and `emu_thread_gate_check.sh` (Studio only, `VJ_WINDOWED_OK=1`,
+  `Linux x86_64 (nightly channel, Neuro off)` row in app.yml, and `emu_thread_gate_check.sh` (Studio only, `VJ_WINDOWED_OK=1`,
   `--show-window tools`, `--perf-halt`, ports from the OS). Runs: A every tool open + F9 halt (rows 130-410 parked, the window
   presents; Continue; a Neuro client answers presses), B a gdb halt at boot held 6 s (a parked run >= 200 rows, window presents,
   frames resume), C the plain path (>= 250 of 600 UI frames show an emulated frame). Each run wakes the display first; a still-asleep

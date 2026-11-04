@@ -10,6 +10,7 @@
 #include "software_gl.h"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cwchar>
 #include <vector>
 
@@ -69,6 +70,16 @@ bool fileExists(const std::wstring& path) {
     DWORD attr = GetFileAttributesW(path.c_str());
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
+}
+
+bool softwareGLChild() { return GetEnvironmentVariableW(L"VJ_SOFTWARE_OPENGL_RETRY", nullptr, 0) != 0; }
+
+void exitSoftwareGLChild(int exitCode) {
+    std::fflush(nullptr);   // the diagnostics on the parent's (possibly redirected) pipes, before the kernel closes them
+    // TerminateProcess, not ExitProcess / exit(): those still run every DLL's DLL_PROCESS_DETACH on this thread, and
+    // Mesa's is the code that never returns.  TerminateProcess runs none of it.
+    TerminateProcess(GetCurrentProcess(), (UINT)exitCode);
+    std::_Exit(exitCode);   // not reached (TerminateProcess returns only on failure)
 }
 
 bool retrySoftwareOpenGL(int argc, char** argv, const std::string& dataDir, int& exitCode) {
