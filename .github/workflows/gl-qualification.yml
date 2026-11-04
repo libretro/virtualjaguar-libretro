@@ -441,8 +441,8 @@ jobs:
           # returns there, so the evidence is "nothing failed or skipped and the last check ran"
           # (the test writes stdout unbuffered, so a killed run still has every line before it).
           if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.exit_hang }}" ] \
-             && ! grep -q 'shader_tests: FAIL\|shader_tests gl: SKIP' glq/shaders_gl.txt \
-             && grep -q '^broken shader -> chain build failed' glq/shaders_gl.txt; then
+            && ! grep -q 'shader_tests: FAIL\|shader_tests gl: SKIP' glq/shaders_gl.txt \
+            && grep -q '^broken shader -> chain build failed' glq/shaders_gl.txt; then
             echo "shader_tests gl: every check passed, then the process did not exit: the tracked known failure (${{ steps.known.outputs.exit_hang }})" | tee -a glq/shaders_gl.txt
             code=0
           fi
