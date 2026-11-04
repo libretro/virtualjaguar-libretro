@@ -645,6 +645,19 @@ jobs:
           echo "host: $(uname -m), $(nproc) CPUs, $(sed -n 's/^PRETTY_NAME=//p' /etc/os-release)"
           test "$(uname -m)" = "$ARCH" || { echo "::error::runner is $(uname -m), expected a native $ARCH host"; exit 1; }
 
+      - name: Look up the flatpak-builder cache (for the job summary only)
+        # The same lookup the action makes inside the build step (its primary key is <cache-key>-<arch>,
+        # its fallback the prefix flatpak-builder-<arch>), without restoring anything: the summary can
+        # then say whether the wall time below is a cold or a warm figure.  File mtimes cannot tell
+        # (extracted sources keep their archive dates, so a cold aarch64 run once read "warm").
+        id: cachelookup
+        uses: actions/cache/restore@v6
+        with:
+          path: .flatpak-builder
+          key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}-${{ matrix.arch }}
+          restore-keys: flatpak-builder-${{ matrix.arch }}
+          lookup-only: true
+
       - name: Build the bundle
         # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
         # own artifact would be named app-<arch>.flatpak and not app-package-*, and the release
@@ -659,19 +672,22 @@ jobs:
           upload-artifact: false
 
       - name: Record the build time in the job summary (#1156)
-        # Per leg, success or failure.  The action restores its .flatpak-builder cache inside the
-        # build step, so "warm" means files older than the step were restored (tar keeps mtimes)
-        # and the time is not a from-scratch figure; a changed cache key gives the cold number.
+        # Per leg, success or failure.  "cold" = no flatpak-builder cache existed for this leg (the
+        # from-scratch figure the issue asks for); "warm" = the action restored the exact key, so the
+        # app module and much of the Rust build came from cache; "partial" = an older key matched.
         if: always() && steps.t0.outcome == 'success'
         env:
           START: ${{ steps.t0.outputs.start }}
           OUTCOME: ${{ steps.build.outcome }}
           RUNNER: ${{ matrix.os }}
+          CACHE_HIT: ${{ steps.cachelookup.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.cachelookup.outputs.cache-matched-key }}
         run: |
           set -eu
           secs=$(( $(date +%s) - START ))
-          cache=cold
-          if [ -d .flatpak-builder ] && [ -n "$(find .flatpak-builder -type f ! -newermt "@$START" -print -quit 2>/dev/null)" ]; then cache=warm; fi
+          if [ "$CACHE_HIT" = true ]; then cache="warm (\`$CACHE_KEY\`)"
+          elif [ -n "$CACHE_KEY" ]; then cache="partial (\`$CACHE_KEY\`)"
+          else cache=cold; fi
           {
             echo "### Flatpak $ARCH"
             echo
