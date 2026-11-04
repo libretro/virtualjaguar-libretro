@@ -46,6 +46,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD_REQUIRED OFF)   # the core is built with the toolchain default
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# compile_commands.json beside the build: file_access_define_sync (VJPlatformTests.cmake, #1147) reads it to
+# check that every translation unit agrees on the edition; editors and clangd use it too.  project() has
+# already created the cache entry, EMPTY unless -DCMAKE_EXPORT_COMPILE_COMMANDS=... or the environment variable
+# of that name said otherwise, so "empty" means "nobody chose" and turns it on; an explicit OFF is kept.
+if("${CMAKE_EXPORT_COMPILE_COMMANDS}" STREQUAL "")
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+endif()
 
 # Packaging (#839): install layout, Windows resources/subsystem, Linux desktop files.
 # Deferred to the end of this file, so it sees every target and every feature's install().
@@ -239,10 +246,34 @@ include(VJCore)
 # dependency).  Neither found: the feature degrades to "no downloads".
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
+
+# ---------------------------------------------------------------------------
+# Edition-dependent file access (#1147).  platform/file_access.h is a header
+# switch: with VJ_MAC_APP_STORE it declares the security-scoped-bookmark
+# implementation in file_access_macos.mm, without it inline SDL pass-throughs
+# (remember() and forget() are no-ops).  Every translation unit that includes
+# it must see the same answer: the 3.10.0 Store build defined it on the
+# executable only, so vj_library's LibraryService called the no-ops and library
+# folders lost their sandbox grant after a relaunch.  The define therefore lives
+# on ONE target, vj_file_access, which also compiles the .mm exactly once;
+# vj_library carries it PUBLIC, and every other target that includes the header
+# or tests VJ_MAC_APP_STORE links it.  file_access_define_sync
+# (cmake/VJFileAccessDefineCheck.cmake) fails when a translation unit drifts.
+# ---------------------------------------------------------------------------
+if(VJ_MAC_APP_STORE)
+    add_library(vj_file_access STATIC src/platform/file_access_macos.mm)
+    set_source_files_properties(src/platform/file_access_macos.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
+    target_compile_definitions(vj_file_access PUBLIC VJ_MAC_APP_STORE=1)
+    target_include_directories(vj_file_access PRIVATE src)   # config.h (restore() rewrites moved paths)
+    target_link_libraries(vj_file_access PUBLIC ${VJ_SDL3_TARGET} "-framework Cocoa")
+else()
+    add_library(vj_file_access INTERFACE)
+endif()
+
 add_library(vj_library STATIC src/library.cpp src/library_lists.cpp src/library_service.cpp src/bios.cpp src/disc_hash.cpp src/http.cpp)
 target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
-target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
+target_link_libraries(vj_library PUBLIC vj_file_access ${VJ_SDL3_TARGET} Threads::Threads)   # library_service.cpp: files::openFolder/forget
 # .chd track-1 checksums for disc identification (the same libchdr the core reads CHDs with)
 target_include_directories(vj_library PRIVATE "${VJ_ROOT}/deps/libchdr/include")
 target_link_libraries(vj_library PRIVATE vj_libchdr)
@@ -496,17 +527,12 @@ endif()
 include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
 add_executable(virtualjaguar ${VJ_APP_SOURCES})
-if(VJ_MAC_APP_STORE)
-    target_sources(virtualjaguar PRIVATE src/platform/file_access_macos.mm)
-    set_source_files_properties(src/platform/file_access_macos.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
-    target_compile_definitions(virtualjaguar PRIVATE VJ_MAC_APP_STORE=1)
-endif()
 vj_app_shaders(virtualjaguar)
 vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src src/debug "${VJ_ROOT}/src/debug")
-target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
+target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_file_access vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
 target_link_libraries(virtualjaguar PRIVATE vj_build_channel)
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 if(VJ_APP_NEURO)

@@ -42,6 +42,13 @@ bash app/packaging/macos/store/package.sh '/absolute/new/Virtual Jaguar.app' --t
   'Developer ID Application: Joseph Mattiello (S32Z3HMYVQ)'
 ```
 
+`ctest` includes `file_access_define_sync`: it reads the build's `compile_commands.json` and
+fails if any translation unit that includes `platform/file_access.h` was compiled without
+`VJ_MAC_APP_STORE` (3.10.0 shipped with the define on the executable but not on `vj_library`,
+so library folders lost their sandbox grant after a relaunch, #1147). The define and
+`file_access_macos.mm` live on the `vj_file_access` target; link it from any new target that
+includes the header.
+
 A test signature is for sandbox qualification only. It is not an App Store upload.
 Build both architectures (or use the normal per-architecture build/merge helper)
 with the Store option enabled before distribution signing. Inspect `otool -L` for

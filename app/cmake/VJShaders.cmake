@@ -347,7 +347,7 @@ if(VJ_APP_BUILD_TESTS)
         src/paths.cpp
         src/config.cpp)
     target_include_directories(vj_shader_tests PRIVATE src ${VJ_CORE_INCLUDES})
-    target_link_libraries(vj_shader_tests PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+    target_link_libraries(vj_shader_tests PRIVATE vj_file_access vj_imgui ${VJ_SDL3_TARGET})   # shaders.cpp: the edition's search path (#1147)
     vj_app_shaders(vj_shader_tests)
     target_compile_definitions(vj_shader_tests PRIVATE
         VJ_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders")
