@@ -25,7 +25,7 @@ Same-repository `release/**` PRs share the Release push workflow's package build
 synthetic merge tree is identical to its head tree. Ordinary PRs, forks, manual app builds, and
 release PRs whose merge adds different content keep their own package builds. Native app test
 matrices and ThreadSanitizer still run on the PR; Release still builds and tests every package.
-The PR's **Verify shared Release packages** check requires all twelve package/runtime jobs and
+The PR's **Verify shared Release packages** check requires all fifteen package/runtime jobs and
 all six nonempty, unexpired `app-package-*` artifact groups from the latest Release push run for
 that exact head, branch and repository. Pending, failed, cancelled, skipped or missing package
 checks cannot pass the shared gate. A changed PR head or merge tree also fails it.
@@ -85,12 +85,24 @@ macOS (Developer ID + notarization, existing Apple Developer account):
 | `APPLE_NOTARY_ISSUER_ID` | the issuer UUID shown on that page |
 | `APPLE_NOTARY_KEY_P8_BASE64` | `base64 -i AuthKey_XXXX.p8` |
 
-Windows: Authenticode is [issue #1150](https://github.com/libretro/virtualjaguar-libretro/issues/1150)
-(Azure Artifact Signing). Until it lands the Windows app, installer, core DLLs and tools ship unsigned,
-the release gate expects exactly that (`EXPECT_WINDOWS=unsigned` in
-[`scripts/release/verify.sh`](../../scripts/release/verify.sh); flip it to `signed` in the same change
-that adds the signing step) and SmartScreen may warn. The `SIGNPATH_*` steps still in `app-package.yml`
-are an earlier stub that is not used.
+Windows (Authenticode through **Azure Artifact Signing**, [issue #1150](https://github.com/libretro/virtualjaguar-libretro/issues/1150);
+the one-time Azure setup is under "Every Windows binary is signed" below). Nothing certificate-shaped is
+stored anywhere: CI obtains a short-lived certificate from Microsoft's HSM at signing time, authenticated
+with OpenID Connect, so there is no client secret either.
+
+| Name | Kind | What |
+|---|---|---|
+| `AZURE_CLIENT_ID` | secret | application (client) id of the Entra app registration CI signs as |
+| `AZURE_TENANT_ID` | secret | the Entra tenant (directory) id |
+| `AZURE_SUBSCRIPTION_ID` | secret | the subscription that holds the Artifact Signing account |
+| `AZURE_SIGNING_ENDPOINT` | variable | the account's regional endpoint, e.g. `https://eus.codesigning.azure.net` |
+| `AZURE_SIGNING_ACCOUNT` | variable | the Artifact Signing account name |
+| `AZURE_SIGNING_PROFILE` | variable | the certificate profile name (Public Trust) |
+
+All six must exist for signing to run; a partial set skips with a `::notice::` naming what is missing,
+and the packages ship unsigned (SmartScreen then warns on first run). Variables, not secrets, for the
+last three: they are names, they appear in the job log anyway, and `release.yml`'s gate reads them to
+decide whether to expect a signature.
 
 Release key material (issue #1151; one-time setup, commands below):
 
@@ -169,8 +181,9 @@ After staging and before anything is published, `release.yml`'s `verify-signatur
 ([`scripts/release/verify.sh`](../../scripts/release/verify.sh), on a macOS runner) checks every asset
 against the state its class is expected to have: macOS files Developer ID signed and notarized
 (`codesign`, `spctl`, `stapler`, plus the sidecar the signing job wrote for bare Mach-O files, which
-cannot be stapled); Windows files as the one-line `EXPECT_WINDOWS` says; AppImages GPG-signed by the
-committed key once that key exists; `SHA256SUMS.txt` signed once its key exists; everything attested.
+cannot be stapled); the Windows app zips and installers Authenticode-signed whenever the six Azure values
+exist (`WINDOWS_APP_EXPECT`, passed by `release.yml`), the Windows core DLLs and tools as the one-line
+`EXPECT_WINDOWS` says; AppImages GPG-signed by the committed key once that key exists; `SHA256SUMS.txt` signed once its key exists; everything attested.
 The result is one table per artifact (signed, notarized, attested) in the job summary and in the
 release body. On tags and `release/**` a failed expectation fails the run and nothing is published;
 on `develop` it only warns, so a signing-service outage cannot withhold the core nightly. A
@@ -197,6 +210,109 @@ Each of these signing steps also records what it did in a `signing-status-*` art
 ([`scripts/release/signing-status.sh`](../../scripts/release/signing-status.sh)): the release gate
 re-checks the signature on the file itself, and reads the sidecar only for whether Apple issued the
 notarization ticket, which a bare Mach-O file cannot carry.
+
+### Every Windows binary is signed (#1150)
+
+Every exe and dll in the Windows app packages carries an Authenticode signature (SHA-256 digest,
+RFC 3161 timestamp from `http://timestamp.acs.microsoft.com`) made with **Azure Artifact Signing**
+(formerly Trusted Signing, Basic tier). Microsoft issues a short-lived Public Trust certificate from its
+HSM for each signing session, so no certificate file or password exists in the repository or in the
+secrets, and CI authenticates with OpenID Connect. The composite action
+[`.github/actions/windows-sign`](../../.github/actions/windows-sign/action.yml) wraps `azure/login` and
+`azure/artifact-signing-action` (both pinned by commit) and then re-reads every file with
+[`windows/verify-signatures.ps1`](windows/verify-signatures.ps1) (`Get-AuthenticodeSignature`, the
+`signtool verify /pa` verdict): a file that is not `Valid` and timestamped fails the job before anything
+is packaged. SmartScreen reputation is per file hash and accrues on its own; the signature buys the named
+publisher and removes the "unknown publisher" dialog, nothing more, and an EV certificate would not either.
+
+| What | Where | Signed |
+|---|---|---|
+| `virtualjaguar.exe`, `librashader.dll`, the `software-opengl/` copy of both and the bundled Mesa DLLs, x64 and arm64 | `app-package.yml` job `windows-package`, before packaging | yes |
+| `VirtualJaguar-X.Y.Z-windows-{x64,arm64}-setup.exe` | the same job, after Inno Setup built them | yes |
+| `unins000.exe`, the uninstaller Inno embeds | no: Inno's `SignTool` hook needs a command-line signer and the action is a PowerShell module; it runs per-user, so no UAC prompt names it | no |
+| the Store MSIX (`windows-store.yml`) | Microsoft signs it during certification | not by us |
+| `virtualjaguar_libretro-windows-*.dll`, `cue2cdi-windows-x86_64.exe` (`release.yml`), `jagcd-tools-windows-x64.zip` (`chdman-tools.yml`) | not yet: those jobs already run on x64 Windows runners, so the follow-up is the same composite action dropped in; the gate keeps `EXPECT_WINDOWS=unsigned` for them until then | not yet |
+
+How the Windows leg of `app-package.yml` is laid out, and why:
+
+* **Build on each architecture's own runner** (`windows`, x64 on `windows-latest`, arm64 on
+  `windows-11-arm`), ending in the install tree, uploaded as the intermediate `windows-stage-<arch>`
+  (never a release asset: `scripts/release/stage.sh` skips it).
+* **Sign and package both architectures in one x64 job** (`windows-package`): the signing action does
+  not run on Windows ARM runners (its signing dlib ships x64 and x86 only; "we currently do not support
+  Windows Arm runners"), and Authenticode does not care which CPU an image is for. It signs every PE file
+  in both trees, builds the portable zips and the Inno installers from the signed trees, signs the
+  installers, checks every PE inside the final zips and installers, writes the gate sidecars and uploads
+  `app-package-windows-<arch>`.
+* **Smoke-test the final packages on each architecture's native runner** (`windows-smoke`), from the
+  uploaded artifact: Authenticode re-checked on the downloaded files, the portable zip run, the installer
+  silently installed, run and uninstalled.
+* **The Mesa DLLs are signed too.** They are MSYS2's MIT-licensed build, unsigned upstream, and nothing in
+  them checks its own signature. We are the publisher of the package they ship in, the gate scans every PE
+  file inside the zip, and a tree with a mix of signed and unsigned DLLs is exactly what heuristics flag.
+  Cost: about ten extra signatures per architecture per run.
+* **Where it runs:** same-repo pull requests (`app.yml` passes the three secrets and `id-token: write`),
+  nightlies, `release/**` and tags (`release.yml`), and a dispatch with `sign` ticked. Fork pull requests
+  receive no secrets and build unsigned, with the notice. **Quota:** the Basic tier includes 5,000
+  signatures a month; one `app-package.yml` run spends about 30 (two trees of roughly 14 PE files plus two
+  installers). If pull-request traffic ever threatens the quota, the lever is `sign: false` in `app.yml`'s
+  `package` job; the release lanes keep signing.
+* **The gate:** `release.yml`'s `verify-signatures` passes `WINDOWS_APP_EXPECT=signed` when all six
+  Azure values exist, so a tag or `release/**` build whose Windows app files lost their signature fails
+  before publication; without the values the gate expects `unsigned` and only the notice says so (the
+  v3.11.0 state).
+
+#### One-time Azure setup (the maintainer)
+
+1. **Resource provider.** On the subscription, register `Microsoft.CodeSigning`
+   (`az provider register --namespace Microsoft.CodeSigning`; `az extension add --name artifact-signing`).
+2. **Account.** Create an Artifact Signing account, SKU Basic, in a supported region; the region fixes
+   the endpoint (East US = `https://eus.codesigning.azure.net`, West US 2 = `https://wus2.codesigning.azure.net`,
+   North Europe = `https://neu.codesigning.azure.net`, ...):
+   `az artifact-signing create -n <account> -l eastus -g <resource-group> --sku Basic`.
+3. **Identity validation.** Assign yourself **Artifact Signing Identity Verifier** on the account (IAM),
+   then Objects > Identity validations > New identity > Public, type Individual (US or Canada), which reads
+   the name and address from the subscription's billing account; the validated name becomes the
+   certificate's CN. Portal only; 1 to 20 business days. This is the long pole: start it first.
+4. **Certificate profile.** Objects > Certificate profiles > Create > Public Trust, bound to that
+   validation (`az artifact-signing certificate-profile create -g <rg> --account-name <account>
+   -n <profile> --profile-type PublicTrust --identity-validation-id <id>`).
+5. **App registration** (Entra ID > App registrations > New), no client secret. Note the Application
+   (client) ID and the Directory (tenant) ID.
+6. **Role.** On the account's IAM, add the role assignment **Artifact Signing Certificate Profile
+   Signer** to the app registration's service principal (search "User, group, or service principal";
+   only users are listed by default).
+7. **Federated credentials** on the app registration (Certificates & secrets > Federated credentials >
+   Add > GitHub Actions deploying Azure resources; issuer `https://token.actions.githubusercontent.com`,
+   audience `api://AzureADTokenExchange`). The subjects CI presents, one credential each:
+   * `repo:libretro/virtualjaguar-libretro:pull_request` -- every same-repo pull request (`app.yml`);
+   * `repo:libretro/virtualjaguar-libretro:ref:refs/heads/develop` -- the nightly;
+   * `repo:libretro/virtualjaguar-libretro:ref:refs/heads/release/vX.Y.Z` and
+     `repo:libretro/virtualjaguar-libretro:ref:refs/tags/vX.Y.Z` -- the release lane and the tag. Either
+     one pair per release, added with the release branch (a missing one makes `azure/login` fail, so a
+     release can never slip out unsigned by accident), or once and for all with two *flexible* federated
+     credentials (portal or Graph only, still preview): `claims['sub'] matches
+     'repo:libretro/virtualjaguar-libretro:ref:refs/heads/release/*'` and the same for
+     `refs/tags/v*`;
+   * a `workflow_dispatch` of `app-package.yml` with `sign` presents `ref:refs/heads/<that branch>`.
+   An alternative that needs one credential for everything is `environment: windows-signing` on the
+   `windows-package` job (subject `repo:libretro/virtualjaguar-libretro:environment:windows-signing`); not
+   used because every pull-request run would then record a "deployment" on the PR.
+8. **Secrets and variables:** `gh secret set AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`;
+   `gh variable set AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`.
+9. **Prove it:** dispatch `app-package.yml` on `develop` with `sign` ticked (or open a PR that touches
+   `app/`). The `Windows sign and package` job summary carries the Authenticode table with the validated
+   name as signer and Microsoft's timestamp authority; both `Windows smoke` jobs re-check the downloaded
+   files. Then dispatch `release.yml` with **Dry run**: the gate's table must show every Windows app row
+   signed. From a downloaded asset: `signtool verify /pa /v <file>` or
+   `(Get-AuthenticodeSignature <file>).Status`. The first signed tag closes #1150.
+
+What goes wrong, and how it shows: no federated credential for this run's subject -> `azure/login`
+fails and the job is red (never an unsigned release); the role is missing -> the signing action fails
+with a 403 naming the profile; a runner whose certificate store has not yet fetched Microsoft's
+"Microsoft Identity Verification Root Certificate Authority 2020" -> the verification step reports
+`UnknownError` ("terminated in a root certificate which is not trusted"); Windows fetches that root on
+demand through the automatic root update, so a rerun normally clears it.
 
 A bare Mach-O file cannot hold a stapled ticket: it is notarized inside a zip and Gatekeeper looks the
 ticket up online the first time. iOS and tvOS dylibs are not signed here (a Developer ID does not apply

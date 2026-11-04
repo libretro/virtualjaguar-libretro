@@ -22,12 +22,14 @@ name: App packages
 #   macOS    APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD,
 #            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64
 #            (same-repo PRs, nightlies and tags all pass them; fork PRs get none, see macos-sign)
-#   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub; Windows
-#            Authenticode is issue #1150 (Azure Artifact Signing)
+#   Windows  AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC, no client secret) plus the
+#            repository variables AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE:
+#            Azure Artifact Signing of every exe/dll and both installers (#1150, composite action
+#            .github/actions/windows-sign; same-repo PRs, nightlies and tags; fork PRs get none)
 #   Linux    APPIMAGE_GPG_PRIVATE_KEY (+ APPIMAGE_GPG_PASSPHRASE): embedded GPG signature in both
 #            AppImages (#1151), verifiable with app/packaging/linux/verify-appimage.py
-# Every macOS and Linux signing step also writes a sidecar (scripts/release/signing-status.sh,
-# artifact signing-status-app-*) that release.yml's verify-signatures gate reads (#1152).
+# Every signing step also writes a sidecar (scripts/release/signing-status.sh, artifact
+# signing-status-app-*) that release.yml's verify-signatures gate reads (#1152).
 # Details: app/packaging/README.md.
 
 on:
@@ -52,7 +54,11 @@ on:
         required: false
       APPLE_NOTARY_KEY_P8_BASE64:
         required: false
-      SIGNPATH_API_TOKEN:
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_SUBSCRIPTION_ID:
         required: false
       APPIMAGE_GPG_PRIVATE_KEY:
         required: false
@@ -344,7 +350,19 @@ jobs:
   # ------------------------------------------------------------------------------------------
   # Windows x64 (MinGW-w64, the core's own Windows toolchain) and Windows ARM64 (the same MinGW-w64
   # environment in its CLANGARM64 flavour: clang + libc++ + lld on a native windows-11-arm runner):
-  # portable zip + Inno Setup installer each.
+  # portable zip + Inno Setup installer each, every PE file Authenticode-signed (#1150).  Three
+  # stages per architecture:
+  #
+  #   windows          build, test, install tree -> intermediate artifact windows-stage-<arch>
+  #   windows-package  ONE x64 job for both architectures: sign every exe/dll in both trees with
+  #                    Azure Artifact Signing (.github/actions/windows-sign), build the portable
+  #                    zips and the Inno Setup installers, sign the installers, verify, upload
+  #                    app-package-windows-<arch>.  Not done in the build job because the signing
+  #                    action runs on x64 runners only ("We currently do not support Windows Arm
+  #                    runners", Azure/artifact-signing-action; its signing dlib ships x64/x86).
+  #   windows-smoke    the FINAL packages on each architecture's native runner: Authenticode
+  #                    re-checked on the DOWNLOADED artifact, portable zip run, silent
+  #                    install / run / uninstall.
   # ------------------------------------------------------------------------------------------
   windows:
     name: Windows ${{ matrix.arch }}
@@ -388,7 +406,6 @@ jobs:
       LABEL: ${{ needs.meta.outputs.label }}
       SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
       ARCH: ${{ matrix.arch }}
-      SIGNPATH_ENABLED: ${{ inputs.sign && secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -462,41 +479,104 @@ jobs:
           "$OBJDUMP" -f build/virtualjaguar.exe | tee machine.txt
           if [ "$ARCH" = arm64 ]; then grep -qiE 'aarch64|arm64' machine.txt; else grep -qiE 'x86-64|i386:x86-64' machine.txt; fi
 
+      # The install sweep must carry every data directory the build staged (the smoke job later
+      # checks the PACKAGES against this tree).  stage-tests/ carries the shader test binary the
+      # smoke job runs against the packaged DLL; it is not part of the install prefix.
       - name: Install tree
         run: |
+          set -eu
           cmake --install build --prefix "$PWD/stage"
           python app/packaging/windows/stage-software-gl.py stage
+          bash app/packaging/check-payload.sh build stage/bin virtualjaguar.exe
+          mkdir -p stage-tests && cp build/vj_shader_tests.exe stage-tests/
+          find stage -type f \( -iname '*.exe' -o -iname '*.dll' \) | LC_ALL=C sort | sed 's/^/PE: /'
 
-      # ---- SignPath (stub): runs only with the `sign` input and SIGNPATH_API_TOKEN; the SignPath
-      # Foundation application is not approved yet, so this is dormant. -----------------------
-      - name: SignPath - upload the unsigned exe
-        id: sp_up_exe
-        if: env.SIGNPATH_ENABLED == 'true'
+      # Intermediate (never a release asset: scripts/release/stage.sh skips windows-stage-*).
+      - name: Upload the unsigned install tree
         uses: actions/upload-artifact@v7
         with:
-          name: signpath-unsigned-exe-${{ matrix.arch }}
-          path: stage/bin/virtualjaguar.exe
-          retention-days: 1
-      - name: SignPath - sign the exe
-        if: env.SIGNPATH_ENABLED == 'true'
-        uses: signpath/github-action-submit-signing-request@v3
+          name: windows-stage-${{ matrix.arch }}
+          path: |
+            stage
+            stage-tests
+          if-no-files-found: error
+          retention-days: 3
+
+  # ------------------------------------------------------------------------------------------
+  # Sign and package both Windows architectures (#1150).  One x64 job: the Azure signing action
+  # does not run on Windows ARM runners, and Authenticode does not care which CPU a PE image is
+  # for.  Signing runs when the caller asks (`sign`) and the three AZURE_* secrets plus the three
+  # AZURE_SIGNING_* variables exist; otherwise the composite action prints a notice and the
+  # packages are built unsigned, exactly as before (fork PRs, dispatches without `sign`, and every
+  # run until the maintainer finishes the Azure setup in app/packaging/README.md).
+  #
+  # What gets signed, in order: every exe and dll in both install trees -- virtualjaguar.exe,
+  # librashader.dll, the software-opengl/ fallback copy of the app and the bundled Mesa DLLs
+  # (MSYS2's MIT-licensed build, unsigned upstream: we are the publisher of the package they ship
+  # in, nothing in them checks its own signature, and the release gate scans every PE file in
+  # the zip; roughly ten signatures per architecture of the Basic tier's 5,000/month) -- then,
+  # once Inno Setup has packed the signed tree, the two installers.  The uninstaller Inno embeds
+  # (unins000.exe) is not signed: Inno's SignTool hook needs a command-line signer, which the
+  # action's PowerShell module is not.
+  # ------------------------------------------------------------------------------------------
+  windows-package:
+    name: Windows sign and package
+    needs: [meta, windows]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write   # azure/login OIDC (no client secret); harmless when signing is skipped
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      SIGN: ${{ inputs.sign }}
+    outputs:
+      signed: ${{ steps.sign-tree.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up MSYS2 (zip for the portable packages)
+        uses: msys2/setup-msys2@v2
         with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'virtualjaguar' }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
-          github-artifact-id: ${{ steps.sp_up_exe.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed-exe
-      - name: SignPath - put the signed exe in the install tree
-        if: env.SIGNPATH_ENABLED == 'true'
+          msystem: MINGW64
+          update: false
+          install: zip
+
+      - name: Get both install trees
+        uses: actions/download-artifact@v8
+        with:
+          pattern: windows-stage-*
+          path: pkg
+
+      - name: Check the trees
         run: |
           set -eu
-          cp signed-exe/virtualjaguar.exe stage/bin/virtualjaguar.exe
-          # The intermediate artifact must not reach a release (the release job flattens every artifact).
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ steps.sp_up_exe.outputs.artifact-id }}" || true
-        env:
-          GH_TOKEN: ${{ github.token }}
+          rm -rf pkg/*/stage-tests   # the smoke jobs fetch their own copy; nothing to sign there
+          for a in x64 arm64; do
+            test -f "pkg/windows-stage-$a/stage/bin/virtualjaguar.exe"
+            test -f "pkg/windows-stage-$a/stage/bin/librashader.dll"
+            test -f "pkg/windows-stage-$a/stage/bin/software-opengl/opengl32.dll"
+          done
+          find pkg -type f \( -iname '*.exe' -o -iname '*.dll' \) | LC_ALL=C sort | sed 's/^/to sign: /'
+
+      - name: Sign every PE file in both install trees (Azure Artifact Signing)
+        id: sign-tree
+        uses: ./.github/actions/windows-sign
+        with:
+          files-folder: ${{ github.workspace }}\pkg
+          files-folder-recurse: 'true'
+          description: Virtual Jaguar ${{ needs.meta.outputs.label }}
+          enabled: ${{ inputs.sign }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
 
       - name: Install Inno Setup (pinned, digest-verified)
         shell: pwsh
@@ -512,58 +592,160 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
           "Inno Setup: $iscc"
 
-      - name: Package (portable zip + installer)
+      # The same package.sh and virtualjaguar.iss serve both architectures (--arch, /DArm64); the
+      # arm64 installer only needs ISCC, which is an x86 program wherever it runs.
+      - name: Package (portable zip + installer), both architectures
         run: |
           set -eu
-          bash app/packaging/windows/package.sh stage "$LABEL" out --arch "$ARCH" \
-            --installer "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          for a in x64 arm64; do
+            bash app/packaging/windows/package.sh "pkg/windows-stage-$a/stage" "$LABEL" out --arch "$a" \
+              --installer "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          done
+          ls -l out/ | sed 's/^/package: /'
 
-      - name: SignPath - upload the unsigned installer
-        id: sp_up_setup
-        if: env.SIGNPATH_ENABLED == 'true'
-        uses: actions/upload-artifact@v7
+      - name: Sign the installers (Azure Artifact Signing)
+        id: sign-setup
+        uses: ./.github/actions/windows-sign
         with:
-          name: signpath-unsigned-setup-${{ matrix.arch }}
-          path: out/VirtualJaguar-${{ needs.meta.outputs.label }}-windows-${{ matrix.arch }}-setup.exe
-          retention-days: 1
-      - name: SignPath - sign the installer (request)
-        if: env.SIGNPATH_ENABLED == 'true'
-        uses: signpath/github-action-submit-signing-request@v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'virtualjaguar' }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
-          github-artifact-id: ${{ steps.sp_up_setup.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed-setup
-      - name: SignPath - replace the installer
-        if: env.SIGNPATH_ENABLED == 'true'
-        run: |
-          set -eu
-          cp signed-setup/*.exe "out/VirtualJaguar-${LABEL}-windows-${ARCH}-setup.exe"
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ steps.sp_up_setup.outputs.artifact-id }}" || true
+          files: |
+            ${{ github.workspace }}\out\VirtualJaguar-${{ needs.meta.outputs.label }}-windows-x64-setup.exe
+            ${{ github.workspace }}\out\VirtualJaguar-${{ needs.meta.outputs.label }}-windows-arm64-setup.exe
+          description: Virtual Jaguar ${{ needs.meta.outputs.label }} Setup
+          enabled: ${{ inputs.sign }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+
+      # The shipped files, as shipped: every PE file inside both zips and both installers must be
+      # validly signed and timestamped when signing ran (the job fails otherwise); a report only
+      # when it did not.
+      - name: Authenticode on the final packages
+        shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.sign-tree.outputs.signed == 'true' && steps.sign-setup.outputs.signed == 'true' }}
+        run: |
+          $expect = if ($env:SIGNED -eq 'true') { 'signed' } else { 'report' }
+          $files = @(Get-ChildItem out -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*-setup.exe' } | ForEach-Object { $_.FullName })
+          & app/packaging/windows/verify-signatures.ps1 -Expect $expect -Path $files -Title "Authenticode on the final Windows packages ($expect)"
+          exit $LASTEXITCODE
 
       - name: Warn when unsigned
-        if: env.SIGNPATH_ENABLED != 'true'
-        run: echo "::warning::Windows binaries are NOT code signed (SignPath not configured or not requested). SmartScreen will warn on first run."
+        if: steps.sign-tree.outputs.signed != 'true'
+        run: echo "::warning::Windows binaries are NOT code signed (Azure Artifact Signing not configured or sign not requested). SmartScreen will warn on first run."
+
+      # The gate re-derives Authenticode from the files; the sidecar records what this job did.
+      - name: Record the signing outcome for the release gate
+        env:
+          SIGNED: ${{ steps.sign-tree.outputs.signed == 'true' && steps.sign-setup.outputs.signed == 'true' }}
+          ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          set -eu
+          method=none; detail="AZURE_* secrets/variables not configured or sign not requested"
+          if [ "$SIGNED" = true ]; then method=azure-artifact-signing; detail="Azure Artifact Signing, account $ACCOUNT, profile $PROFILE"; fi
+          for a in x64 arm64; do
+            for f in "VirtualJaguar-${LABEL}-windows-${a}.zip" "VirtualJaguar-${LABEL}-windows-${a}-setup.exe"; do
+              test -f "out/$f"
+              bash scripts/release/signing-status.sh "$f" "$SIGNED" false "$method" signing-status "$detail"
+            done
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-windows
+          path: signing-status/
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-windows-x64
+          path: out/*-windows-x64*
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-windows-arm64
+          path: out/*-windows-arm64*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------
+  # Smoke-test the FINAL Windows packages on each architecture's own runner, from the uploaded
+  # artifacts: the signature check from the downloaded files (an in-job check proves nothing
+  # about what was uploaded), the portable zip, and the installer (silent install, run, silent
+  # uninstall).  The reference install tree is only used for the payload comparison and the
+  # shader test binary.
+  # ------------------------------------------------------------------------------------------
+  windows-smoke:
+    name: Windows smoke ${{ matrix.arch }}
+    needs: [meta, windows-package]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+            msystem: MINGW64
+            pkgs: unzip mingw-w64-x86_64-python
+          - arch: arm64
+            os: windows-11-arm
+            msystem: CLANGARM64
+            pkgs: unzip mingw-w64-clang-aarch64-python
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      ARCH: ${{ matrix.arch }}
+      SIGNED: ${{ needs.windows-package.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: false
+          install: ${{ matrix.pkgs }}
+
+      - name: Get the packages
+        uses: actions/download-artifact@v8
+        with:
+          name: app-package-windows-${{ matrix.arch }}
+          path: out
+
+      - name: Get the reference install tree
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-stage-${{ matrix.arch }}
+          path: ref
+
+      - name: Authenticode on the downloaded packages
+        shell: pwsh
+        run: |
+          $expect = if ($env:SIGNED -eq 'true') { 'signed' } else { 'report' }
+          $files = @(Get-ChildItem out -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*-setup.exe' } | ForEach-Object { $_.FullName })
+          & app/packaging/windows/verify-signatures.ps1 -Expect $expect -Path $files -Title "Authenticode on the downloaded windows-$env:ARCH packages ($expect)"
+          exit $LASTEXITCODE
 
       - name: Smoke-test the PORTABLE zip
         run: |
           set -eu
+          ls -l out/ | sed 's/^/package: /'
           t="$RUNNER_TEMP/portable"; rm -rf "$t"; mkdir -p "$t"
           unzip -q "out/VirtualJaguar-${LABEL}-windows-${ARCH}.zip" -d "$t"
           cd "$t/VirtualJaguar"
           ./virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
           test -f portable.txt   # --headless uses a temp data dir, so portable mode itself cannot be observed here
           cd "$GITHUB_WORKSPACE"
-          bash app/packaging/check-payload.sh build "$t/VirtualJaguar" virtualjaguar.exe
+          bash app/packaging/check-payload.sh ref/stage/bin "$t/VirtualJaguar" virtualjaguar.exe
           # The shader runtime in the zip: right CPU, Windows-only imports, loads with ABI 2, and the
           # app's own lookup (beside the executable, VJ_LIBRASHADER unset) finds it (#1153).
-          bash app/packaging/windows/check-librashader.sh "$t/VirtualJaguar" "$ARCH" build/vj_shader_tests.exe
-          ls -l out/ | sed 's/^/package: /'
+          bash app/packaging/windows/check-librashader.sh "$t/VirtualJaguar" "$ARCH" ref/stage-tests/vj_shader_tests.exe
 
       - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
         run: |
@@ -575,19 +757,12 @@ jobs:
           test -f /c/vjtest/virtualjaguar.exe
           test ! -f /c/vjtest/portable.txt || { echo "::error::installer must not ship portable.txt"; exit 1; }
           /c/vjtest/virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
-          bash app/packaging/check-payload.sh build /c/vjtest virtualjaguar.exe
+          bash app/packaging/check-payload.sh ref/stage/bin /c/vjtest virtualjaguar.exe
           du -sk /c/vjtest | sed 's/^/installed tree KiB: /'
-          bash app/packaging/windows/check-librashader.sh /c/vjtest "$ARCH" build/vj_shader_tests.exe
+          bash app/packaging/windows/check-librashader.sh /c/vjtest "$ARCH" ref/stage-tests/vj_shader_tests.exe
           /c/vjtest/unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           sleep 5
           test ! -f /c/vjtest/virtualjaguar.exe || { echo "::error::uninstall left the program behind"; exit 1; }
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: app-package-windows-${{ matrix.arch }}
-          path: out/*
-          if-no-files-found: error
-          retention-days: 14
 
   # ------------------------------------------------------------------------------------------
   # Flatpak (x86_64): one self-contained .flatpak bundle (the runtime comes from Flathub when the
