@@ -378,12 +378,12 @@ FontIndex::~FontIndex() {
     if (th_.joinable()) th_.join();   // the scan is short; wait rather than race the process teardown
 }
 
-void FontIndex::start(std::vector<std::string> dirs) {
+void FontIndex::start(std::function<std::vector<std::string>()> dirs) {
     std::lock_guard<std::mutex> lk(mu_);
     if (started_) return;
     started_ = true;
     th_ = std::thread([this, dirs = std::move(dirs)]() {
-        auto list = std::make_shared<const std::vector<SystemFont>>(scanFontDirs(dirs));
+        auto list = std::make_shared<const std::vector<SystemFont>>(scanFontDirs(dirs()));
         std::lock_guard<std::mutex> lk2(mu_);
         list_ = std::move(list);
     });
@@ -408,7 +408,9 @@ FontIndex& index() {
 
 }  // namespace
 
-void systemFontsStart() { index().start(systemFontDirs(hostOs(), systemProbe())); }
+void systemFontsStart() {
+    index().start([]() { return systemFontDirs(hostOs(), systemProbe()); });
+}
 
 bool systemFontsReady() { return index().ready(); }
 

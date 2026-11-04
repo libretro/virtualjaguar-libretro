@@ -13,6 +13,7 @@
 //            (the folders fontconfig itself indexes by default, found without needing fontconfig installed)
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -51,16 +52,17 @@ bool readFaceInfo(const std::string& path, int faceIndex, SystemFont& out, int* 
 std::vector<SystemFont> scanFontDirs(const std::vector<std::string>& dirs, size_t maxFiles = 8000);
 
 // ---- the machine's list, scanned once on a worker thread --------------------------------------------------------
-// One scan of `dirs` on a worker thread, published as a whole when it finishes.  systemFontsStart() runs a single
-// process-wide FontIndex over the host's folders; fonts_system_test runs one over an injected folder (#1148), so
-// the worker plumbing (start, idempotence, ready, publish, join at exit) is checked without a host scan.
+// One scan on a worker thread, published as a whole when it finishes.  systemFontsStart() runs a single process-wide
+// FontIndex over the host's folders; fonts_system_test runs one over an injected folder (#1148), so the worker
+// plumbing (start, idempotence, ready, publish, join at exit) is checked without a host scan.  The folders come from
+// a function run on the worker, so a repeated start() (the picker calls it every frame) costs a lock and a bool.
 class FontIndex {
 public:
     FontIndex() = default;
     ~FontIndex();                                             // waits for the worker: the scan is short
     FontIndex(const FontIndex&) = delete;
     FontIndex& operator=(const FontIndex&) = delete;
-    void start(std::vector<std::string> dirs);                // idempotent; returns at once
+    void start(std::function<std::vector<std::string>()> dirs);   // idempotent; returns at once
     bool ready() const;                                       // the list has been published
     std::shared_ptr<const std::vector<SystemFont>> list() const;   // null until the scan finished
 

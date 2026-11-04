@@ -15,6 +15,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -265,12 +266,17 @@ static void testWorker(const fs::path& tmp) {
     FontIndex ix;
     CHECK(!ix.ready() && ix.list() == nullptr);
     const auto t0 = std::chrono::steady_clock::now();
-    ix.start({root.string()});
-    ix.start({(tmp / "scan").string()});   // idempotent: the second call starts nothing and changes nothing
+    ix.start([root]() { return std::vector<std::string>{root.string()}; });
+    std::atomic<bool> secondRan{false};
+    ix.start([&secondRan, tmp]() {   // idempotent: the second call starts nothing, and its folders are never asked for
+        secondRan = true;
+        return std::vector<std::string>{(tmp / "scan").string()};
+    });
     // 10 s: generous for three files, even on a loaded CI runner; a healthy worker publishes in tens of milliseconds.
     for (int i = 0; i < 10000 / 20 && !ix.ready(); i++) SDL_Delay(20);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     CHECK(ix.ready());
+    CHECK(!secondRan);
     const auto list = ix.list();
     CHECK(list != nullptr);
     if (!list) {
