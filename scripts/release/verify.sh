@@ -35,8 +35,8 @@ set -euo pipefail
 # a class gains a signature; the gate then enforces it on tags and release/**.
 # ---------------------------------------------------------------------------
 EXPECT_MACOS="signed-notarized"                # Developer ID Application + Apple notarization ticket (#989)
-EXPECT_WINDOWS=${WINDOWS_EXPECT:-unsigned}    # core DLLs, cue2cdi, jagcd tools: "signed" once release.yml / chdman-tools.yml sign them (#1150 follow-up)
-EXPECT_WINDOWS_APP=${WINDOWS_APP_EXPECT:-unsigned}  # app zips + installers: release.yml passes "signed" when the Azure Artifact Signing secrets exist (#1150)
+EXPECT_WINDOWS=${WINDOWS_EXPECT:-unsigned}    # core DLLs, cue2cdi, jagcd tools: release.yml passes "signed" when the Azure Artifact Signing secrets exist (#1150)
+EXPECT_WINDOWS_APP=${WINDOWS_APP_EXPECT:-unsigned}  # app zips + installers: same; a separate flag so the two classes can be gated apart
 EXPECT_IOS=unsigned                           # Developer ID does not apply; Provenance signs them when it embeds them
 EXPECT_APPIMAGE=auto                          # "signed" once docs/release-signing-appimage.asc is committed (#1151)
 EXPECT_SUMS_SIG=auto                          # required once docs/release-signing.pub is committed (#1151)

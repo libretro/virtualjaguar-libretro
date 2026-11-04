@@ -105,6 +105,9 @@ jobs:
   # ----------------------------------------------------------------
   build:
     needs: [guard]
+    permissions:
+      contents: read
+      id-token: write   # Windows rows: Azure Artifact Signing logs in with OIDC (#1150)
     strategy:
       fail-fast: false
       matrix:
@@ -555,6 +558,30 @@ jobs:
           apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
 
+      # ----------------------------------------------------------------
+      # Windows core DLLs and cue2cdi: Authenticode through Azure Artifact
+      # Signing (#1150), the same composite action app-package.yml uses.
+      # After strip (it would invalidate the signature) and before the
+      # upload; dist/ holds the DLL, the -debug.tar.gz (not a PE file, not
+      # signed) and, on the MINGW64 row, cue2cdi-windows-x86_64.exe.  Both
+      # rows run on windows-latest (x64), which the action requires.
+      # Without the three AZURE_* secrets and three AZURE_SIGNING_*
+      # variables the action prints a notice and the files stay unsigned.
+      # ----------------------------------------------------------------
+      - name: Authenticode sign (Windows core${{ matrix.config.platform == 'windows-x86_64' && ' + cue2cdi' || '' }})
+        id: winsign
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/windows-sign
+        with:
+          files-folder: ${{ github.workspace }}\dist
+          description: Virtual Jaguar libretro core (${{ matrix.config.platform }})
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+
       # For the verify-signatures gate (#1152): it re-checks the Developer ID signature on the
       # file, but a bare dylib carries no stapled ticket, so "notarized" comes from here.
       - name: Record the signing outcome for the release gate
@@ -564,8 +591,20 @@ jobs:
           for f in dist/virtualjaguar_libretro-${{ matrix.config.platform }}.dylib ${{ matrix.config.platform == 'macos-arm64' && 'dist/cue2cdi-macos-universal' || '' }}; do
             bash scripts/release/signing-status.sh "$(basename "$f")" "${{ steps.macsign.outputs.signed || 'false' }}" "${{ steps.macsign.outputs.notarized || 'false' }}" developer-id signing-status
           done
+      # The gate re-derives Authenticode from the files; the sidecar records what this job did.
+      - name: Record the signing outcome for the release gate (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        env:
+          SIGNED: ${{ steps.winsign.outputs.signed || 'false' }}
+        run: |
+          set -e
+          method=none; [ "$SIGNED" != true ] || method=azure-artifact-signing
+          for f in dist/*.dll dist/*.exe; do
+            [ -f "$f" ] || continue
+            bash scripts/release/signing-status.sh "$(basename "$f")" "$SIGNED" false "$method" signing-status
+          done
       - name: Upload signing status
-        if: ${{ matrix.config.platform == 'macos-arm64' || matrix.config.platform == 'macos-x86_64' }}
+        if: ${{ matrix.config.platform == 'macos-arm64' || matrix.config.platform == 'macos-x86_64' || runner.os == 'Windows' }}
         uses: actions/upload-artifact@v7
         with:
           name: signing-status-core-${{ matrix.config.platform }}
@@ -796,10 +835,9 @@ jobs:
   # ----------------------------------------------------------------
   # The release signing gate (#1152): every staged asset's ACTUAL signing
   # state against the state its class is EXPECTED to have (the table at the
-  # top of scripts/release/verify.sh; the Windows APP packages are expected
-  # `signed` whenever the Azure Artifact Signing secrets and variables exist,
-  # #1150, the Windows cores and tools stay `unsigned` until their jobs sign
-  # too), as a per-artifact table in the job summary and, through the
+  # top of scripts/release/verify.sh; every Windows file is expected
+  # `signed` whenever the Azure Artifact Signing secrets and variables
+  # exist, #1150), as a per-artifact table in the job summary and, through the
   # signing-table artifact, in the release body.  Strict on tags and
   # release/**: a missing signature or attestation stops the publish.
   # Warn-only everywhere else, so a signing-service outage can never withhold
@@ -818,9 +856,12 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       MODE: ${{ (github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/')) && 'strict' || 'warn' }}
-      # The same six values app-package.yml's windows-package job signs with: when they all exist
-      # the app zips and installers MUST carry Authenticode (strict on tags and release/**).
+      # The same six values the Windows signing steps use (app-package.yml windows-package, the
+      # Windows rows of `build` above, chdman-tools.yml): when they all exist every Windows file
+      # MUST carry Authenticode (strict on tags and release/**).  Two flags because verify.sh keeps
+      # the app packages and the cores/tools as separate classes.
       WINDOWS_APP_EXPECT: ${{ (secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' && vars.AZURE_SIGNING_PROFILE != '') && 'signed' || 'unsigned' }}
+      WINDOWS_EXPECT: ${{ (secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' && vars.AZURE_SIGNING_PROFILE != '') && 'signed' || 'unsigned' }}
     steps:
       - uses: actions/checkout@v7
 
