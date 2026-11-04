@@ -35,6 +35,8 @@ mk virtualjaguar_libretro-ios-arm64 virtualjaguar_libretro-ios-arm64.dylib
 mk virtualjaguar_libretro-windows-x86_64 virtualjaguar_libretro-windows-x86_64.dll
 mk app-package-windows-x64 VirtualJaguar-dev-windows-x64-setup.exe
 mk app-package-linux-x86_64 virtualjaguar_dev_amd64.deb
+mk app-package-flatpak VirtualJaguar-dev-linux-x86_64.flatpak
+mk app-package-flatpak-aarch64 VirtualJaguar-dev-linux-aarch64.flatpak
 mk librashader-x86_64-unknown-linux-gnu librashader.so
 mk ci-core-vita BUILD.json 100
 if [ "$OS" = Darwin ]; then
@@ -112,6 +114,9 @@ check_has "table header" "$OUT" "| Asset | Class | Platform signature | Notarize
 check_has "attestation column skipped in tests" "$OUT" "| skipped |"
 check_has "ios row is n/a" "$OUT" "| \`virtualjaguar_libretro-ios-arm64.dylib\` | ios | n/a (signed by the app that embeds it)"
 check_has "windows unsigned is expected today" "$OUT" "| \`virtualjaguar_libretro-windows-x86_64.dll\` | windows-pe |"
+# Both Flatpak bundles (#1156) are release assets of one class: no platform signature exists, attestation only.
+check_has "x86_64 flatpak row" "$OUT" "| \`VirtualJaguar-dev-linux-x86_64.flatpak\` | flatpak | n/a | n/a | skipped | ✅ |"
+check_has "aarch64 flatpak row" "$OUT" "| \`VirtualJaguar-dev-linux-aarch64.flatpak\` | flatpak | n/a | n/a | skipped | ✅ |"
 check_lacks "windows row does not fail while expected unsigned" "$OUT" "no Authenticode signature"
 # shellcheck disable=SC2086
 gate strict $NOPUB WINDOWS_EXPECT=signed

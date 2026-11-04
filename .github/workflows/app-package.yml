@@ -14,7 +14,7 @@ name: App packages
 #   VirtualJaguar-X.Y.Z-macos-universal.zip
 #   VirtualJaguar-X.Y.Z-windows-x64.zip              VirtualJaguar-X.Y.Z-windows-x64-setup.exe
 #   VirtualJaguar-X.Y.Z-windows-arm64.zip            VirtualJaguar-X.Y.Z-windows-arm64-setup.exe
-#   VirtualJaguar-X.Y.Z-linux-x86_64.flatpak         (single-file Flatpak bundle)
+#   VirtualJaguar-X.Y.Z-linux-x86_64.flatpak         VirtualJaguar-X.Y.Z-linux-aarch64.flatpak   (single-file Flatpak bundles)
 #   VirtualJaguar-X.Y.Z-linux-x86_64.AppImage        VirtualJaguar-X.Y.Z-linux-aarch64.AppImage
 #   virtualjaguar_X.Y.Z_amd64.deb                    virtualjaguar_X.Y.Z_arm64.deb
 #
@@ -590,23 +590,38 @@ jobs:
           retention-days: 14
 
   # ------------------------------------------------------------------------------------------
-  # Flatpak (x86_64): one self-contained .flatpak bundle (the runtime comes from Flathub when the
-  # user installs it).  Built OFFLINE from app/packaging/flatpak/*.yml, whose every dependency is a
-  # hash-pinned manifest source, inside the Flathub CI image for the manifest's runtime.  Never
-  # submitted to Flathub from here.  aarch64 is not built yet (see app/packaging/README.md).
+  # Flatpak (x86_64 and aarch64, #1156): one self-contained .flatpak bundle per CPU (the runtime
+  # comes from Flathub when the user installs it).  Built OFFLINE from app/packaging/flatpak/*.yml,
+  # whose every dependency is a hash-pinned manifest source, inside the Flathub CI image for the
+  # manifest's runtime.  Both legs build NATIVELY: the image is multi-arch (amd64 + arm64) and the
+  # aarch64 leg runs on GitHub's hosted ubuntu-24.04-arm runner, so the Rust librashader module is
+  # compiled by the aarch64 Rust SDK extension, not under QEMU user-mode emulation.  Never
+  # submitted to Flathub from here.
   # ------------------------------------------------------------------------------------------
   flatpak:
-    name: Flatpak x86_64
+    name: Flatpak ${{ matrix.arch }}
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
-    runs-on: ubuntu-24.04
-    # New in v3.8.1: non-blocking (the arm64 Windows leg used to be too, until #1153).
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-24.04
+            artifact: app-package-flatpak
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+            artifact: app-package-flatpak-aarch64
+    # Non-blocking since v3.8.1 (the Windows arm64 leg lost its continue-on-error with #1153; both
+    # Flatpak legs keep it: the Flathub image and the hosted arm runner are outside our control).
     continue-on-error: true
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
     env:
       LABEL: ${{ needs.meta.outputs.label }}
+      ARCH: ${{ matrix.arch }}
       APP_ID: io.github.libretro.VirtualJaguar
     steps:
       - uses: actions/checkout@v7
@@ -621,25 +636,77 @@ jobs:
           sed -i "s|^\(      - -DVJ_BUILD_CHANNEL=\)release$|\1$CHANNEL|" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
           grep -qx "      - -DVJ_BUILD_CHANNEL=$CHANNEL" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
 
+      - name: Note the start time and the host
+        id: t0
+        run: |
+          set -eu
+          echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+          # The leg must be native: an emulated build would be a silent order-of-magnitude slowdown.
+          echo "host: $(uname -m), $(nproc) CPUs, $(sed -n 's/^PRETTY_NAME=//p' /etc/os-release)"
+          test "$(uname -m)" = "$ARCH" || { echo "::error::runner is $(uname -m), expected a native $ARCH host"; exit 1; }
+
+      - name: Look up the flatpak-builder cache (for the job summary only)
+        # The same lookup the action makes inside the build step (its primary key is <cache-key>-<arch>,
+        # its fallback the prefix flatpak-builder-<arch>), without restoring anything: the summary can
+        # then say whether the wall time below is a cold or a warm figure.  File mtimes cannot tell
+        # (extracted sources keep their archive dates, so a cold aarch64 run once read "warm").
+        id: cachelookup
+        uses: actions/cache/restore@v6
+        with:
+          path: .flatpak-builder
+          key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}-${{ matrix.arch }}
+          restore-keys: flatpak-builder-${{ matrix.arch }}
+          lookup-only: true
+
       - name: Build the bundle
         # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
         # own artifact would be named app-<arch>.flatpak and not app-package-*, and the release
         # jobs attach every artifact they find; the final file is uploaded below.
+        id: build
         uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3
         with:
-          bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
+          bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
           manifest-path: app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
-          arch: x86_64
-          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}
           upload-artifact: false
+
+      - name: Record the build time in the job summary (#1156)
+        # Per leg, success or failure.  "cold" = no flatpak-builder cache existed for this leg (the
+        # from-scratch figure the issue asks for); "warm" = the action restored the exact key, so the
+        # app module and much of the Rust build came from cache; "partial" = an older key matched.
+        if: always() && steps.t0.outcome == 'success'
+        env:
+          START: ${{ steps.t0.outputs.start }}
+          OUTCOME: ${{ steps.build.outcome }}
+          RUNNER: ${{ matrix.os }}
+          CACHE_HIT: ${{ steps.cachelookup.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.cachelookup.outputs.cache-matched-key }}
+        run: |
+          set -eu
+          secs=$(( $(date +%s) - START ))
+          if [ "$CACHE_HIT" = true ]; then cache="warm (\`$CACHE_KEY\`)"
+          elif [ -n "$CACHE_KEY" ]; then cache="partial (\`$CACHE_KEY\`)"
+          else cache=cold; fi
+          {
+            echo "### Flatpak $ARCH"
+            echo
+            echo "| Leg | Runner | flatpak-builder cache | Build | Wall time |"
+            echo "|---|---|---|---|---|"
+            echo "| \`$ARCH\` | \`$RUNNER\` (native $(uname -m), $(nproc) CPUs) | $cache | $OUTCOME | $((secs / 60)) min $((secs % 60)) s |"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "flatpak $ARCH: build $OUTCOME in ${secs}s (cache $cache)"
 
       - name: Smoke-test the bundle (install, run headless against the public ROM)
         run: |
           set -eu
-          f="VirtualJaguar-${LABEL}-linux-x86_64.flatpak"
+          f="VirtualJaguar-${LABEL}-linux-${ARCH}.flatpak"
           ls -la "$f"
           flatpak install --user -y --noninteractive "./$f"
           flatpak info --user "$APP_ID"
+          # The bundle must be for this leg's CPU (a cross-labelled bundle would still install here).
+          flatpak info --user "$APP_ID" | grep -E "^[[:space:]]*Arch:[[:space:]]+$ARCH\$"
           # The sandbox only sees the repository because it is passed in here, read-only.
           flatpak run --user --filesystem="$GITHUB_WORKSPACE:ro" "$APP_ID" \
             --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
@@ -648,16 +715,18 @@ jobs:
             'ls /app/bin/cheats | head -3 && ls "/app/bin/libretro-db" && test -d /app/bin/shaders/slang-shaders && ls /app/share/metainfo'
           # The shader runtime (#951): librashader.so must be in /app/lib, resolve all its libraries and
           # speak the ABI the app was built against (LIBRASHADER_CURRENT_ABI 2).  The app finds it through
-          # LD_LIBRARY_PATH=/app/lib, so load it by bare name exactly as src/shaders.cpp does.
+          # LD_LIBRARY_PATH=/app/lib, so load it by bare name exactly as src/shaders.cpp does.  Same check
+          # on both legs: on aarch64 it proves the Rust module cross-built nothing and loads natively.
           flatpak run --user --command=sh "$APP_ID" -c \
             'ls -l /app/lib/librashader.so && ls /app/share/licenses/io.github.libretro.VirtualJaguar && ! ldd /app/lib/librashader.so | grep "not found"'
-          flatpak run --user --command=python3 "$APP_ID" -c \
-            'import ctypes; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2'
+          flatpak run --user --env=VJ_EXPECT_ARCH="$ARCH" --command=python3 "$APP_ID" -c \
+            'import ctypes, os, platform; m = platform.machine(); print("sandbox", m); assert m == os.environ["VJ_EXPECT_ARCH"], m; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2, a' \
+            || { echo "::error::librashader ABI check failed on $ARCH"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         with:
-          name: app-package-flatpak
-          path: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
+          name: ${{ matrix.artifact }}
+          path: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
           if-no-files-found: error
           retention-days: 14
 

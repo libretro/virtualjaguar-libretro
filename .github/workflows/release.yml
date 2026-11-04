@@ -1174,6 +1174,7 @@ jobs:
               echo "| Linux x86_64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-x86_64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_amd64.deb) |"
               echo "| Linux aarch64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-aarch64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_arm64.deb) |"
               echo "| Linux x86_64 (Flatpak) | [.flatpak](${DL}/VirtualJaguar-nightly-linux-x86_64.flatpak) |"
+              echo "| Linux aarch64 (Flatpak) | [.flatpak](${DL}/VirtualJaguar-nightly-linux-aarch64.flatpak) |"
               echo
               echo "Or install / update it with one line (pass \`--what both\` for the app and the RetroArch core):"
               echo

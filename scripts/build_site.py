@@ -640,6 +640,7 @@ APP_KINDS = [
     (r"-linux-x86_64\.flatpak$", "linux", "x86_64", "Flatpak"),
     (r"-linux-aarch64\.AppImage$", "linux", "aarch64", "AppImage"),
     (r"_arm64\.deb$", "linux", "aarch64", ".deb"),
+    (r"-linux-aarch64\.flatpak$", "linux", "aarch64", "Flatpak"),
 ]
 
 TOOL_BLURB = {

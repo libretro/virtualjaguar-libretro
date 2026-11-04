@@ -190,6 +190,7 @@ in place with `--clobber`, as before.
 | `VirtualJaguar-X.Y.Z-windows-x64-setup.exe` | Inno Setup installer |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | AppImages |
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | Debian packages |
+| `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`, `...-linux-aarch64.flatpak` | Flatpak bundles (runtime from Flathub at install time) |
 
 `X.Y.Z` is the tag without its `v` (`v3.8.1-rc1` gives `3.8.1-rc1`). Nightlies use `nightly`
 (`VirtualJaguar-nightly-windows-x64.zip`) and the `release/**` lane uses `prerelease`.
