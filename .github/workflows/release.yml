@@ -734,6 +734,9 @@ jobs:
   jagcd-tools:
     name: jagcd tools (chdman)
     needs: [guard]
+    permissions:
+      contents: read
+      id-token: write   # Windows tools signing logs in to Azure with OIDC (#1150)
     uses: ./.github/workflows/chdman-tools.yml
     secrets: inherit
 
