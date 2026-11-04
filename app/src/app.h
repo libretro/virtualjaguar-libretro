@@ -249,6 +249,9 @@ public:
     neuro::AgentPlayer agentPlayer_;   // the replica of Neuro's queue: emulation thread only (the input poll)
     neuro::WatchFeed neuroWatch;     // the profile's RAM watches as one DebugViews request (UI thread)
     double neuroCfgAt = -1e9;
+    bool neuroCliOn() const { return !neuroCliUrl.empty(); }
+#else
+    bool neuroCliOn() const { return false; }   // a VJ_APP_NEURO=OFF build has no --neuro
 #endif
 
     // ---- state ----------------------------------------------------------------

@@ -75,10 +75,12 @@ jobs:
             os: ubuntu-latest
 
           # The nightly channel's On default is built and tested here, so it is exercised on every PR without waiting for a
-          # nightly (emu_thread_default_smoke_* derive their expectations from this configure; #967 3d).
-          - name: 'Linux x86_64 (nightly channel)'
+          # nightly (emu_thread_default_smoke_* derive their expectations from this configure; #967 3d).  Neuro is off on
+          # this row only, so a VJ_APP_NEURO=OFF build keeps compiling (an unguarded neuroCliUrl once broke it unnoticed, #1177);
+          # the Neuro tests, threaded twins included, still run on every other row.
+          - name: 'Linux x86_64 (nightly channel, Neuro off)'
             os: ubuntu-latest
-            cmake_extra: '-DVJ_BUILD_CHANNEL=nightly'
+            cmake_extra: '-DVJ_BUILD_CHANNEL=nightly -DVJ_APP_NEURO=OFF'
 
           - name: 'Linux aarch64'
             os: ubuntu-24.04-arm
