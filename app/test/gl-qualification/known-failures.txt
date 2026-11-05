@@ -21,9 +21,12 @@
 #                           summary; it is NOT a rendered, checked picture.  An unlisted preset
 #                           over the limit fails the leg and the summary prints its line; a listed
 #                           one that renders in time gets a note to drop its line.  ">240s" = it
-#                           timed out at 240 s without a picture.  Measured at 640x480, 3 launches
-#                           at once (runs 41760278887 and 41776934638): slow in every run that
-#                           measured it.  Not a product bug: real Macs render these on the GPU.
+#                           timed out at 240 s without a picture.  Measured at 640x480: runs
+#                           41760278887 and 41776934638 (3 launches at once; slow in every run that
+#                           measured it) and 41891214865 (2 at once, the first sharded run).
+#                           Entries that rendered in under 100 s on 41891214865 were dropped;
+#                           a listed preset that renders within the limit is still checked.
+#                           Not a product bug: real Macs render these on the GPU.
 windows-x64 test-exit-hang #1179
 macos-arm64 slow 122s@41760278887 slang-shaders/anti-aliasing/aa-shader-4.0.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/blurs/gaussian_blur-sharp.slangp
@@ -32,12 +35,10 @@ macos-arm64 slow >240s@41776934638 slang-shaders/crt/advanced_crt_whkrmrgks0.sla
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/crt-effects/analog-service-menu.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/crt-effects/royale-curve-append.slangp
 macos-arm64 slow 153s@41776934638 slang-shaders/crt/crt-guest-advanced-fast.slangp
-macos-arm64 slow 129s@41760278887 slang-shaders/crt/crt-guest-advanced-fastest.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/crt-guest-advanced-hd.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/crt-guest-advanced-ntsc.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/crt-guest-advanced-pal.slangp
 macos-arm64 slow >240s@41776934638 slang-shaders/crt/crt-guest-advanced.slangp
-macos-arm64 slow 154s@41760278887 slang-shaders/crt/crt-lottes.slangp
 macos-arm64 slow 231s@41776934638 slang-shaders/crt/crt-mattias.slangp
 macos-arm64 slow >240s@41776934638 slang-shaders/crt/crt-maximus-royale-fast-mode.slangp
 macos-arm64 slow >240s@41776934638 slang-shaders/crt/crt-maximus-royale-half-res-mode.slangp
@@ -54,13 +55,10 @@ macos-arm64 slow >240s@41760278887 slang-shaders/crt/shaders/crt-yah/presets/bas
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/shaders/crt-yah/presets/base-medium.slangp
 macos-arm64 slow 239s@41760278887 slang-shaders/crt/shaders/crt-yah/presets/base-strong.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/shaders/crt-yah/presets/pure-crt.slangp
-macos-arm64 slow 215s@41760278887 slang-shaders/crt/shaders/crt-yah/presets/pure-lcd.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/shaders/crt-yah/presets/pure-mask.slangp
 macos-arm64 slow >240s@41776934638 slang-shaders/crt/shaders/crt-yah/presets/pure-ntsc.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/crt/shaders/crt-yah/presets/pure-scanlines.slangp
 macos-arm64 slow 159s@41760278887 slang-shaders/crt/shaders/guest/pre-scaler-presets/scalefx-horizontal.slangp
-macos-arm64 slow 151s@41760278887 slang-shaders/crt/shaders/guest/pre-scaler-presets/scalefx.slangp
-macos-arm64 slow 165s@41760278887 slang-shaders/crt/shaders/guest/pre-scaler-presets/super-xbr-sharp.slangp
 macos-arm64 slow 133s@41760278887 slang-shaders/crt/shaders/guest/pre-scaler-presets/xbr-lv2.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/denoisers/slow-bilateral.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/artcnn/artcnn-c4f16-2x-luma.slangp
@@ -77,6 +75,7 @@ macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/cunny/CuNNy-4x24
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/cunny/CuNNy-4x32-nvl-2x-rgb.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/cunny/CuNNy-8x32-nvl-2x-rgb.slangp
 macos-arm64 slow 209s@41760278887 slang-shaders/edge-smoothing/cunny/CuNNy-fast-nvl-2x-luma.slangp
+macos-arm64 slow 240.0s@41891214865 slang-shaders/edge-smoothing/cunny/CuNNy-veryfast-nvl-2x-luma.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nedi/fast-bilateral-nedi.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nedi/nedi-hybrid-sharper.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nedi/nedi-hybrid.slangp
@@ -90,6 +89,34 @@ macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nnedi3/nnedi3-nn
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nnedi3/nnedi3-nns32-4x-rgb.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nnedi3/nnedi3-nns64-2x-nns32-4x-nns16-8x-rgb.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nnedi3/nnedi3-nns64-2x-nns32-4x-rgb.slangp
-macos-arm64 slow 131s@41760278887 slang-shaders/edge-smoothing/sabr/sabr-hybrid-deposterize.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/scalefx/scalefx+rAA.slangp
-macos-arm64 slow 122s@41760278887 slang-shaders/edge-smoothing/scalenx/mmpx-ADV.slangp
+macos-arm64 slow 171.1s@41891214865 slang-shaders/edge-smoothing/scalefx/scalefx-9x.slangp
+macos-arm64 slow 155.4s@41891214865 slang-shaders/edge-smoothing/scalefx/shaders/old/scalefx-9x.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/vectorscale/vectorscale-exact-energy.slangp
+macos-arm64 slow 206.2s@41891214865 slang-shaders/edge-smoothing/vectorscale/vectorscale-single-aa.slangp
+macos-arm64 slow 140.0s@41891214865 slang-shaders/edge-smoothing/xbr/hybrid-jinc2-xbr-lv2.slangp
+macos-arm64 slow 136.8s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/2xBR-lv1-multipass.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/super-4xbr-3d-4p.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/super-4xbr-3d-6p-smoother.slangp
+macos-arm64 slow 124.0s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/super-8xbr-3d-6p.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-hybrid.slangp
+macos-arm64 slow 228.8s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-lv1-standalone.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-lv3-9x-multipass.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-lv3-9x-standalone.slangp
+macos-arm64 slow 198.2s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-lv3-standalone.slangp
+macos-arm64 slow 146.7s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-mlv4-multipass.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/xbr-lv3-sharp.slangp
+macos-arm64 slow 159.2s@41891214865 slang-shaders/edge-smoothing/xbrz/6xbrz-linear.slangp
+macos-arm64 slow 220.7s@41891214865 slang-shaders/misc/glass.slangp
+macos-arm64 slow 131.7s@41891214865 slang-shaders/ntsc/artifact-colors.slangp
+macos-arm64 slow 230.9s@41891214865 slang-shaders/ntsc/blargg.slangp
+macos-arm64 slow 125.7s@41891214865 slang-shaders/ntsc/ntsc-md-rainbows.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/ntsc/ntsc-xot.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/ntsc/patchy-blastem.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/ntsc/patchy-genplusgx.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/ntsc/patchy-snes.slangp
+macos-arm64 slow 162.6s@41891214865 slang-shaders/ntsc/shaders/decoupled-guest/decoupled-guest-advanced-ntsc 1-Composite.slangp
+macos-arm64 slow 126.7s@41891214865 slang-shaders/ntsc/shaders/decoupled-guest/decoupled-guest-advanced-ntsc 3.slangp
+macos-arm64 slow 133.6s@41891214865 slang-shaders/ntsc/shaders/decoupled-guest/decoupled-guest-advanced-ntsc Guest-Defaults.slangp
+macos-arm64 slow >240s@41891214865 slang-shaders/reshade/magicbloom.slangp
+macos-arm64 slow 140.6s@41891214865 slang-shaders/sharpen/adaptive-sharpen-multipass.slangp

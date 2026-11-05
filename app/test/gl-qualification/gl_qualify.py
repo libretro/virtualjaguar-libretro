@@ -275,6 +275,18 @@ def launch(args, label, shader_arg, out_dir):
                 break
             now = time.monotonic()
             if now - t0 > limit:
+                if sys.platform == "darwin" and shutil.which("sample") and "[gl]" not in log.read_text(errors="replace"):
+                    # No window yet: where the app is stuck (twice a run, a hosted Mac stopped giving every
+                    # launch a window for ~15 min; the logs end before the window is created).
+                    sample = log.with_name(log.stem + ".sample.txt")
+                    if sample.exists():   # the retry's sample beside the first launch's
+                        sample = log.with_name(log.stem + ".retry.sample.txt")
+                    try:
+                        subprocess.run(["sample", str(proc.pid), "3", "-file", str(sample)], stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, timeout=60)
+                        res["notes"].append("no `[gl]` line at the timeout: stack sample in logs/%s" % sample.name)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
                 if not kill_tree(proc, args.graceful_kill):
                     res["leftover"] = True
                     res["notes"].append("part of the process group was still alive after the kill")
@@ -476,9 +488,9 @@ def slow_list_statement(listed, leg, limit):
         parts.append("%d rendered in %d-%d s, median %d s" % (n, done[0], done[-1], med))
     if over:
         parts.append("%d timed out at 240 s without a picture" % over)
-    return ("**%d presets are listed `%s slow` in known-failures.txt and were therefore NOT rendered on this leg** "
-            "(each is stopped at %d s; when measured, %s): this leg does not check their pictures, only that the "
-            "other presets build and render." % (len(listed), leg, limit, "; ".join(parts) or "no usable time"))
+    return ("**%d presets are listed `%s slow` in known-failures.txt: each is stopped at %d s, and one stopped there "
+            "is NOT rendered or checked on this leg** (when measured, %s).  A listed preset that renders within the "
+            "limit is checked like any other." % (len(listed), leg, limit, "; ".join(parts) or "no usable time"))
 
 
 def times_tsv(results):
@@ -521,9 +533,8 @@ def write_report(out, meta, results, summary_path):
                "| Slow, no chain in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_nochain))]
     md += ["| **Failed** | **%d** |" % len(failed), ""]
     if meta.get("slow_statement"):
-        md += [meta["slow_statement"] + " This run stopped %d of them at the limit%s." % (
-            len(slow_built) + len(slow_nochain),
-            ("; %d rendered in time (drop their lines)" % len(stale)) if stale else ""), ""]
+        md += [meta["slow_statement"] + " **This run: %d stopped at the limit and not rendered, %d rendered in time.**" % (
+            len(slow_built) + len(slow_nochain), len(stale)), ""]
     if meta.get("settings"):
         md += ["Settings: %s" % meta["settings"], ""]
     if retried or leftover:

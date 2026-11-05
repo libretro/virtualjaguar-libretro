@@ -24,3 +24,7 @@ slang-shaders/scanlines/res-independent-scanlines.slangp
 # packHalf2x16 (GLSL 4.20): the app logs "[shader] <preset> failed: ... undeclared identifier".
 slang-shaders/edge-smoothing/fsr/fsr.slangp
 slang-shaders/edge-smoothing/fsr/smaa+fsr.slangp
+# Interface matching: Apple's GL 4.1 linker rejects the chain ("Input of fragment shader
+# 'LIBRA_VARYING_2' differs in type/qualifiers to that written by vertex shader"); it builds
+# on GL 4.6 (Linux, Windows).  Run 41891214865.
+slang-shaders/ntsc/ntsc-blastem.slangp

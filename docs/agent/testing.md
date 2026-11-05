@@ -420,9 +420,11 @@ a shard is missing or the shards did not run every preset exactly once, and uplo
 (120 s) there is a `macos-arm64 slow <measured>@<run> <preset>` line in `known-failures.txt`: it is
 stopped at the limit and listed as a known failure ("chain built, not rendered" / "no chain"), not
 a checked picture. An unlisted preset over the limit fails and the summary prints its line to paste;
-a listed one that renders in time is noted for removal. A launch with no `[gl]` line is retried once
-(after a run of killed GL processes a hosted Mac stopped giving later launches a window) and never
-counts as slow. Each folder has `times.tsv` (seconds per preset) and the summary a "Slowest
+a listed one that renders in time is checked like any other (the summary counts both; drop entries
+that stay well under the limit). A launch with no `[gl]` line is retried once and never counts as
+slow: twice a hosted Mac stopped giving every launch a window for ~15 minutes (runs 41760278887,
+41891214865), and on macOS such a timeout leaves a stack sample (`logs/<preset>.sample.txt`,
+`sample(1)`) of where the app was stuck. Each folder has `times.tsv` (seconds per preset) and the summary a "Slowest
 launches" table. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
 compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
 candidates into the artifact.
