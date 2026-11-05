@@ -570,11 +570,12 @@ void App::shutdown() {
         SDL_GL_DestroyContext(gl_);
         gl_ = nullptr;
     }
-    // The copy running beside the bundled Mesa (Windows, #1167): SDL_DestroyWindow and SDL_Quit would FreeLibrary that
-    // Mesa, and the x64 build's DllMain never returns from winding down llvmpipe's rasterizer threads.  Everything that
-    // must outlive the process is done above (config, SRAM, the emulation thread); end the process here, before the GL
-    // library is unloaded.  A child whose graphics never started keeps the normal path: main() still shows its error.
-    if (window_ && graphicsStartupError.empty() && softwareGLChild()) exitSoftwareGLChild(exitCode_);
+    // A copy running on the bundled Mesa (Windows, #1167; the fallback child, or a launch with SDL_OPENGL_LIBRARY naming
+    // it, #1179): SDL_DestroyWindow and SDL_Quit would FreeLibrary that Mesa, and the x64 build's DllMain never returns
+    // from winding down llvmpipe's rasterizer threads.  Everything that must outlive the process is done above (config,
+    // SRAM, the emulation thread); end the process here, before the GL library is unloaded.  A copy whose graphics never
+    // started keeps the normal path: main() still shows its error.
+    if (window_ && graphicsStartupError.empty() && usingBundledSoftwareGL()) exitWithoutUnloadingGL(exitCode_);
     if (window_) {
         SDL_DestroyWindow(window_);
         window_ = nullptr;

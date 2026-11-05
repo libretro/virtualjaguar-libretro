@@ -337,6 +337,11 @@ if(VJ_APP_BUILD_TESTS)
     add_executable(vj_gl_context_integration tests/gl_context_integration.cpp src/gl_context.cpp)
     target_include_directories(vj_gl_context_integration PRIVATE src)
     target_link_libraries(vj_gl_context_integration PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+    # Both GL programs end themselves without unloading the bundled Mesa on Windows (#1179): the
+    # detection and the exit route are the app's (src/software_gl.h, Windows implementation below).
+    if(WIN32)
+        target_sources(vj_gl_context_integration PRIVATE src/platform/software_gl_windows.cpp)
+    endif()
     add_test(NAME gl_context_integration COMMAND vj_gl_context_integration)
     set_tests_properties(gl_context_integration PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
     add_executable(vj_shader_tests
@@ -348,6 +353,9 @@ if(VJ_APP_BUILD_TESTS)
         src/config.cpp)
     target_include_directories(vj_shader_tests PRIVATE src ${VJ_CORE_INCLUDES})
     target_link_libraries(vj_shader_tests PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+    if(WIN32)
+        target_sources(vj_shader_tests PRIVATE src/platform/software_gl_windows.cpp)
+    endif()
     vj_app_shaders(vj_shader_tests)
     target_compile_definitions(vj_shader_tests PRIVATE
         VJ_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders")

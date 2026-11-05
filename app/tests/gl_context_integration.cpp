@@ -5,6 +5,7 @@
 #define NOMINMAX
 #endif
 #include "imgui_impl_opengl3_loader.h"
+#include "software_gl.h"
 #include <cstring>
 
 int main(int argc, char** argv) {
@@ -46,9 +47,13 @@ int main(int argc, char** argv) {
         std::printf("GL pixel=%u,%u,%u; version=%s\n", pixel[0], pixel[1], pixel[2], glGetString(GL_VERSION));
     }
     if (loaded) imgl3wShutdown();
+    std::puts(passed ? "PASS GL loader and real framebuffer readback" : "FAIL GL loader or framebuffer readback");
+    // Windows, the bundled Mesa (#1179): SDL_DestroyWindow / SDL_Quit would FreeLibrary it, and the x64 build's DllMain
+    // never returns (the app's #1167 hang).  The verdict is out; end the process without unloading it.  Real drivers
+    // and every other platform take the normal teardown.
+    if (vj::usingBundledSoftwareGL()) vj::exitWithoutUnloadingGL(passed ? 0 : 1);
     SDL_GL_DestroyContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    std::puts(passed ? "PASS GL loader and real framebuffer readback" : "FAIL GL loader or framebuffer readback");
     return passed ? 0 : 1;
 }
