@@ -491,6 +491,45 @@ jobs:
           mkdir -p stage-tests && cp build/vj_shader_tests.exe stage-tests/
           find stage -type f \( -iname '*.exe' -o -iname '*.dll' \) | LC_ALL=C sort | sed 's/^/PE: /'
 
+      # #1179: the two GL test programs on the bundled Mesa must come back on their own.  They load it
+      # in-process through SDL_OPENGL_LIBRARY, and on x64 the FreeLibrary in SDL_Quit never returned
+      # (Mesa's DllMain, the hang of #1167); each now ends itself without unloading it once its verdict
+      # is out.  Run the way gl-qualification.yml (#1160) runs them: the context probe from inside
+      # software-opengl/ (the folder the fallback child runs from), shaders_gl from build/ with that
+      # folder on PATH, llvmpipe pinned so the proof does not depend on the runner's D3D12 adapter.
+      # Bounded: 124 = killed by timeout = the hang is back.  Hosted x64 runners have no OpenGL 3.3
+      # of their own, so this is also the only Windows x64 leg where shaders_gl renders at all.
+      - name: The GL test programs exit on the bundled Mesa (#1179)
+        run: |
+          set -eu
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          export VJ_LIBRASHADER="$(cygpath -m "$PWD/build/librashader.dll")"
+          out="$RUNNER_TEMP/gl-test-exit"; rm -rf "$out"; mkdir -p "$out"
+          run_bounded() {   # name budget-seconds verdict-regex exe [args...]: the program must end by itself, verdict written
+            local name="$1" budget="$2" verdict="$3"; shift 3
+            SECONDS=0
+            set +e
+            timeout "$budget" "$@" >"$out/$name.txt" 2>&1
+            local code=$?
+            set -e
+            echo "$name: exit $code after $SECONDS s"
+            tail -n 40 "$out/$name.txt"
+            [ "$code" -ne 124 ] || { echo "::error::$name did not exit within $budget s: the Mesa unload hang is back (#1179)"; return 1; }
+            grep -q 'renderer=llvmpipe' "$out/$name.txt" || { echo "::error::$name did not render on the bundled Mesa"; return 1; }
+            grep -qE "$verdict" "$out/$name.txt" || { echo "::error::$name ended (exit $code) without its verdict line"; return 1; }
+          }
+          command cp -f build/vj_gl_context_integration.exe stage/bin/software-opengl/
+          run_bounded gl-context-integration 120 '^PASS GL loader' stage/bin/software-opengl/vj_gl_context_integration.exe
+          command rm -f stage/bin/software-opengl/vj_gl_context_integration.exe
+          # shaders_gl's own verdict is reported, not gated: at the 128x64 picture this tree renders the bundled
+          # presets with, crt-royale comes out black on llvmpipe (its mask passes scale by 1/16 of the viewport),
+          # which #1160 fixes by rendering that loop larger.  What this step proves is the exit.
+          run_bounded shaders-gl 600 '^shader_tests gl: (OK|FAIL)$' build/vj_shader_tests.exe gl
+          grep -q '^shader_tests gl: OK' "$out/shaders-gl.txt" \
+            || echo "::warning::shaders_gl FAILED on the bundled Mesa (it did exit, which is what #1179 is about): $(grep -c 'shader_tests: FAIL' "$out/shaders-gl.txt") check(s), see the step log"
+
       # Intermediate (never a release asset: scripts/release/stage.sh skips windows-stage-*).
       - name: Upload the unsigned install tree
         uses: actions/upload-artifact@v7

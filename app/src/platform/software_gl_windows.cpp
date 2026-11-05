@@ -74,7 +74,22 @@ bool fileExists(const std::wstring& path) {
 
 bool softwareGLChild() { return GetEnvironmentVariableW(L"VJ_SOFTWARE_OPENGL_RETRY", nullptr, 0) != 0; }
 
-void exitSoftwareGLChild(int exitCode) {
+bool usingBundledSoftwareGL() {
+    if (softwareGLChild()) return true;
+    // GetEnvironmentVariableW, not getenv(): the CRT's copy of the environment does not follow SetEnvironmentVariable
+    // (the unit test sets the variable that way), and the comparison is on ASCII components, so the conversion to
+    // UTF-8 cannot change its outcome.
+    wchar_t value[32768];
+    DWORD size = GetEnvironmentVariableW(L"SDL_OPENGL_LIBRARY", value, (DWORD)(sizeof value / sizeof value[0]));
+    if (!size || size >= sizeof value / sizeof value[0]) return false;
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, value, (int)size, nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) return false;
+    std::string path((size_t)bytes, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value, (int)size, path.data(), bytes, nullptr, nullptr);
+    return bundledSoftwareGLLibrary(path);
+}
+
+void exitWithoutUnloadingGL(int exitCode) {
     std::fflush(nullptr);   // the diagnostics on the parent's (possibly redirected) pipes, before the kernel closes them
     // TerminateProcess, not ExitProcess / exit(): those still run every DLL's DLL_PROCESS_DETACH on this thread, and
     // Mesa's is the code that never returns.  TerminateProcess runs none of it.

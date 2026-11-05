@@ -25,6 +25,7 @@
 #include "paths.h"
 #include "present_util.h"
 #include "shaders.h"
+#include "software_gl.h"
 
 #ifndef VJ_SHADER_DIR
 #error VJ_SHADER_DIR must point at app/shaders
@@ -624,6 +625,7 @@ static int runGl() {
     SDL_GL_MakeCurrent(win, ctx);
     if (!vj::initOpenGLLoader()) {
         std::printf("shader_tests gl: FAIL cannot load GL entry points\n");
+        if (vj::usingBundledSoftwareGL()) vj::exitWithoutUnloadingGL(1);   // exit() would unload it too (#1179)
         return 1;
     }
     std::printf("GL: %s / %s\n", (const char*)glGetString(GL_VERSION), (const char*)glGetString(GL_RENDERER));
@@ -844,10 +846,14 @@ static int runGl() {
 
     sc.destroyGL();
     bad.destroyGL();
+    std::printf("shader_tests gl: %s\n", g_fail ? "FAIL" : "OK");
+    // Windows, the bundled Mesa (#1179): SDL_DestroyWindow / SDL_Quit would FreeLibrary it, and the x64 build's DllMain
+    // never returns (the app's #1167 hang).  The verdict is out; end the process without unloading it.  Real drivers
+    // and every other platform take the normal teardown.
+    if (vj::usingBundledSoftwareGL()) vj::exitWithoutUnloadingGL(g_fail ? 1 : 0);
     SDL_GL_DestroyContext(ctx);
     SDL_DestroyWindow(win);
     SDL_Quit();
-    std::printf("shader_tests gl: %s\n", g_fail ? "FAIL" : "OK");
     return g_fail ? 1 : 0;
 }
 
