@@ -49,7 +49,8 @@ import zlib
 RENDERER_LINE = re.compile(r"^\[gl\] version=(?P<version>.*?); vendor=(?P<vendor>.*?); renderer=(?P<renderer>.*)$", re.M)
 SHADER_LINE = re.compile(r"^\[shader\] (?P<path>.+?) (?P<what>built|refused|failed): (?P<detail>.*)$", re.M)
 
-# A representative subset for PR runs when the full ~500 is too slow (--preset-set smoke).
+# A representative subset for a quick run (--preset-set smoke): only workflow_dispatch's preset_set=smoke
+# selects it; PR, nightly and release runs render all ~500.
 SMOKE_PRESETS = [
     "vj-sharp-bilinear.slangp",
     "vj-scanlines.slangp",
