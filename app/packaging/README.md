@@ -257,9 +257,10 @@ How the Windows leg of `app-package.yml` is laid out, and why:
   nightlies, `release/**` and tags (`release.yml`), and a dispatch with `sign` ticked. Fork pull requests
   receive no secrets and build unsigned, with the notice. **Quota:** the Basic tier includes 5,000
   signatures a month; one `app-package.yml` run spends about 40 (two trees of 19 PE files plus two
-  installers), a `release.yml` run about 45 more for the cores and tools. If pull-request traffic ever
-  threatens the quota, the lever is `sign: false` in `app.yml`'s `package` job; the release lanes keep
-  signing.
+  installers), and a `release.yml` run about 45 in total: the same 40 for the app packages it builds
+  plus 5 for the two core DLLs, `cue2cdi`, `chdman.exe` and `jagcd-chd-check.exe`. If pull-request
+  traffic ever threatens the quota, the lever is `sign: false` in `app.yml`'s `package` job; the
+  release lanes keep signing.
 * **The gate:** `release.yml`'s `verify-signatures` passes `WINDOWS_APP_EXPECT=signed` (app zips and
   installers) and `WINDOWS_EXPECT=signed` (core DLLs, `cue2cdi`, the tools zip) when all six Azure
   values exist, so a tag or `release/**` build whose Windows files lost their signature fails before
