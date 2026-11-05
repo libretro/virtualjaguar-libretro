@@ -542,6 +542,27 @@ static uint8_t  dsp_pipe_prev_flags = 0;   /* prev instr set the flags */
  * DSPPipeTimingReset, which also runs on every interrupt), not
  * serialized -- same convention as gpu_pipe_stall_total. */
 uint64_t dsp_pipe_stall_total = 0;
+
+/* Stall breakdown by cause (test ABI) -- mirrors the GPU side
+ * (gpu_pipe_stall_*).  Monotonic since the last DSPReset.
+ *   score = pending load/div result (scoreboard)
+ *   raw   = ALU result-use interlock (R2)
+ *   port  = write-back port conflict (R4)
+ *   flags = flags interlock (R3)
+ *   extra = fixed issue extras (MOVEI +2 R16, indexed load +2 R6,
+ *           indexed store +1 R7) -- structural, not a hazard
+ *   issue = instructions issued, ticks = ticks consumed */
+uint64_t dsp_pipe_stall_score = 0;
+uint64_t dsp_pipe_stall_raw   = 0;
+uint64_t dsp_pipe_stall_port  = 0;
+uint64_t dsp_pipe_stall_flags = 0;
+uint64_t dsp_pipe_stall_extra = 0;
+/* The same breakdown per opcode (test ABI), so a schedule author can
+ * see WHICH instruction paid the stall -- mirrors gpu_pipe_*_by_op. */
+uint64_t dsp_pipe_raw_by_op[64];
+uint64_t dsp_pipe_score_by_op[64];
+uint64_t dsp_pipe_issue_total = 0;
+uint64_t dsp_pipe_ticks_total = 0;
 uint64_t dsp_pipe_ext_total   = 0;
 
 /* Operand classification per DSP opcode.  Bit 0: field 1 names a
@@ -615,6 +636,8 @@ static void DSPPipeCheckUse(uint32_t index)
 	uint64_t ready = dsp_pipe_clock;
 	uint32_t wait, extra;
 	int wait_is_ext = 0;
+	/* Which interlock fired, for the per-cause stall counters. */
+	int stall_kind = 0;   /* 0 none, 1 scoreboard, 2 RAW, 3 port, 4 flags */
 	int sb2 = (f & 2) && !(f & 8);     /* field-2 read is score-boarded */
 	int sb1 = (f & 1) || (f & 16);     /* field 1 is score-board compared */
 
@@ -637,19 +660,27 @@ static void DSPPipeCheckUse(uint32_t index)
 		}
 	}
 	wait = (uint32_t)(ready - dsp_pipe_clock);
+	if (wait)
+		stall_kind = 1;                   /* scoreboard: pending result */
 	if (wait < 1 && dsp_pipe_prev_dest != 0xFF)
 	{
 		if ((sb1 && dsp_opcode_first_parameter == dsp_pipe_prev_dest)
 		 || (sb2 && dsp_opcode_second_parameter == dsp_pipe_prev_dest))
+		{
 			wait = 1;                       /* ALU RAW interlock (R2) */
+			stall_kind = 2;
+		}
 		else if ((f & 1) && (f & 2)
 		      && !((f & 8) && dsp_opcode_second_parameter == dsp_pipe_prev_dest))
+		{
 			/* Write-back port conflict (JTRM v8 p.35 "Register
 			 * Write-Back"; Verilator §14): two register reads, neither
 			 * the pending write-back target.  An unscoreboarded read of
 			 * the target still conceals the write-back -- the port rule
 			 * is about addresses, not the scoreboard. */
-			wait = 1;
+			wait = 1;                      /* write-back port conflict */
+			stall_kind = 3;
+		}
 	}
 	if (wait < 1 && dsp_pipe_prev_flags)
 	{
@@ -657,7 +688,10 @@ static void DSPPipeCheckUse(uint32_t index)
 		 * flags only for a real condition (cc field != 0). */
 		if (index == 1 || index == 5
 		   || ((index == 52 || index == 53) && dsp_opcode_second_parameter != 0))
+		{
 			wait = 1;                       /* flags interlock (R3) */
+			stall_kind = 4;
+		}
 	}
 	extra = 0;
 	if (index == 38)                          extra = 2;  /* movei: 3 ticks */
@@ -672,11 +706,24 @@ static void DSPPipeCheckUse(uint32_t index)
 		else
 			dsp_pipe_core_stall += wait;
 		dsp_pipe_stall_total += wait;
+		switch (stall_kind)
+		{
+			case 1: dsp_pipe_stall_score += wait;
+			        if (index < 64) dsp_pipe_score_by_op[index] += wait;
+			        break;
+			case 2: dsp_pipe_stall_raw   += wait;
+			        if (index < 64) dsp_pipe_raw_by_op[index] += wait;
+			        break;
+			case 3: dsp_pipe_stall_port  += wait; break;
+			case 4: dsp_pipe_stall_flags += wait; break;
+			default: break;
+		}
 	}
 	if (extra)
 	{
 		dsp_pipe_core_stall += extra;
 		dsp_pipe_stall_total += extra;
+		dsp_pipe_stall_extra += extra;
 	}
 }
 
@@ -789,6 +836,9 @@ static DSP_NOINLINE int32_t DSPTimedCharge(uint32_t index, uint32_t riscScale)
 		 * DSP's own cycle domain; bus stalls are wall time and are
 		 * rescaled under risc_clock_scale (bus_arbiter.h contract). */
 		dsp_pipe_clock += 1u + (uint64_t)dsp_bus_stall + dsp_pipe_core_stall;
+		/* Diagnostics (test ABI): what the DSP actually spent. */
+		dsp_pipe_issue_total++;
+		dsp_pipe_ticks_total += 1u + (uint64_t)dsp_bus_stall + dsp_pipe_core_stall;
 		dsp_pipe_prev_dest =
 			(dsp_pipe_flags[index] & 4) ? (uint8_t)dsp_opcode_second_parameter
 			                            : (uint8_t)0xFF;
@@ -1610,6 +1660,21 @@ void DSPReset(void)
 	DSPPipeTimingReset();
 	dsp_pipe_stall_total  = 0;
 	dsp_pipe_ext_total    = 0;
+	dsp_pipe_stall_score  = 0;
+	dsp_pipe_stall_raw    = 0;
+	dsp_pipe_stall_port   = 0;
+	dsp_pipe_stall_flags  = 0;
+	dsp_pipe_stall_extra  = 0;
+	dsp_pipe_issue_total  = 0;
+	dsp_pipe_ticks_total  = 0;
+	{
+		unsigned k;
+		for (k = 0; k < 64; k++)
+		{
+			dsp_pipe_raw_by_op[k]   = 0;
+			dsp_pipe_score_by_op[k] = 0;
+		}
+	}
 	dsp_ldx_slot		  = NULL;
 	dsp_acc				  = 0x00000000;
 	dsp_remain			  = 0x00000000;

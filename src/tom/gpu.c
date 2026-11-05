@@ -196,6 +196,43 @@ static uint8_t  gpu_pipe_prev_flags = 0;   /* prev instr set the flags */
 uint64_t gpu_pipe_stall_total = 0;
 uint64_t gpu_pipe_ext_total   = 0;
 
+/* Stall breakdown by cause (test ABI).  Same convention as
+ * gpu_pipe_stall_total: monotonic since the last GPUReset, not cleared
+ * by GPUPipeTimingReset().
+ *
+ *   score = the scoreboard waited for a pending load/div result
+ *           (gpu_reg_ready, R5/R15)
+ *   raw   = ALU result-use interlock (R2: this instruction reads the
+ *           register the previous one wrote)
+ *   port  = write-back port conflict (R4: the register bank is
+ *           dual-ported, so a two-source instruction cannot conceal
+ *           the previous write-back)
+ *   flags = flags interlock (R3: a flag-dependent instruction right
+ *           after a flag-setter)
+ *   issue = instructions issued (the denominator for IPC)
+ *   ticks = ticks the RISC consumed: issue + core stalls + bus stalls
+ *
+ * The split matters for schedule work: a schedule that is
+ * "hazard-free by construction" should show ZERO raw/score stalls, and
+ * any port/flags stall it shows is structural (the port conflict fires
+ * on essentially every back-to-back ALU pair in compiled code, so it
+ * appears in straight-line code too). */
+uint64_t gpu_pipe_stall_score = 0;
+uint64_t gpu_pipe_stall_raw   = 0;
+uint64_t gpu_pipe_stall_port  = 0;
+uint64_t gpu_pipe_stall_flags = 0;
+uint64_t gpu_pipe_stall_extra = 0;   /* MOVEI/indexed issue extras (R16/R6/R7) */
+uint64_t gpu_pipe_issue_total = 0;
+uint64_t gpu_pipe_ticks_total = 0;
+
+/* Per-opcode stall histogram (test ABI): which instruction actually
+ * stalled.  A schedule author needs "which of my instructions is
+ * paying the wait", not just "something paid 40 ticks" -- the
+ * aggregate counters say how much, this says where.  Indexed by the
+ * opcode (0-63). */
+uint64_t gpu_pipe_raw_by_op[64];
+uint64_t gpu_pipe_score_by_op[64];
+
 /* Defined further down with the rest of the decode state; needed here
  * because the pipeline helpers read the current opcode's operand
  * fields. */
@@ -297,6 +334,8 @@ static void GPUPipeCheckUse(uint32_t index)
    uint64_t ready = gpu_pipe_clock;
    uint32_t wait, extra;
    int wait_is_ext = 0;
+   /* Which interlock fired, for the per-cause stall counters. */
+   int stall_kind = 0;   /* 0 none, 1 scoreboard, 2 RAW, 3 port, 4 flags */
    if (f & 1)
    {
       uint64_t r = gpu_reg_ready[gpu_opcode_first_parameter];
@@ -316,12 +355,18 @@ static void GPUPipeCheckUse(uint32_t index)
       }
    }
    wait = (uint32_t)(ready - gpu_pipe_clock);
+   if (wait)
+      stall_kind = 1;                      /* scoreboard: pending result */
    if (wait < 1 && gpu_pipe_prev_dest != 0xFF)
    {
       if (((f & 1) && gpu_opcode_first_parameter == gpu_pipe_prev_dest)
        || ((f & 2) && gpu_opcode_second_parameter == gpu_pipe_prev_dest))
+      {
          wait = 1;                          /* ALU RAW interlock */
+         stall_kind = 2;
+      }
       else if ((f & 1) && (f & 2))
+      {
          /* Write-back port conflict (JTRM "Register Write-Back"): the
           * register bank is dual-port, so the previous instruction's
           * write-back can only be concealed if this instruction reads
@@ -331,7 +376,9 @@ static void GPUPipeCheckUse(uint32_t index)
           * disjoint-register stream retires at 2.00 ticks, NOP streams
           * at 1.00 -- so this fires on essentially every back-to-back
           * ALU pair in compiled code and roughly halves real IPC. */
-         wait = 1;
+         wait = 1;                          /* write-back port conflict */
+         stall_kind = 3;
+      }
    }
    if (wait < 1 && gpu_pipe_prev_flags)
    {
@@ -339,7 +386,10 @@ static void GPUPipeCheckUse(uint32_t index)
        * flags only for a real condition (cc field != 0 == "T"). */
       if (index == 1 || index == 5
          || ((index == 52 || index == 53) && gpu_opcode_second_parameter != 0))
+      {
          wait = 1;                          /* flags interlock */
+         stall_kind = 4;
+      }
    }
    extra = 0;
    if (index == 38)                          extra = 2;  /* movei: 3 ticks */
@@ -356,11 +406,24 @@ static void GPUPipeCheckUse(uint32_t index)
       else
          gpu_pipe_core_stall += wait;
       gpu_pipe_stall_total += wait;
+      switch (stall_kind)
+      {
+         case 1: gpu_pipe_stall_score += wait;
+                  if (index < 64) gpu_pipe_score_by_op[index] += wait;
+                  break;
+         case 2: gpu_pipe_stall_raw   += wait;
+                  if (index < 64) gpu_pipe_raw_by_op[index] += wait;
+                  break;
+         case 3: gpu_pipe_stall_port  += wait; break;
+         case 4: gpu_pipe_stall_flags += wait; break;
+         default: break;
+      }
    }
    if (extra)
    {
       gpu_pipe_core_stall += extra;
       gpu_pipe_stall_total += extra;
+      gpu_pipe_stall_extra += extra;
    }
 }
 
@@ -1683,6 +1746,21 @@ void GPUReset(void)
    /* Machine reset is the diagnostics' epoch (see their declaration). */
    gpu_pipe_stall_total = 0;
    gpu_pipe_ext_total   = 0;
+   gpu_pipe_stall_score = 0;
+   gpu_pipe_stall_raw   = 0;
+   gpu_pipe_stall_port  = 0;
+   gpu_pipe_stall_flags = 0;
+   gpu_pipe_stall_extra = 0;
+   gpu_pipe_issue_total = 0;
+   gpu_pipe_ticks_total = 0;
+   {
+      unsigned k;
+      for (k = 0; k < 64; k++)
+      {
+         gpu_pipe_raw_by_op[k]   = 0;
+         gpu_pipe_score_by_op[k] = 0;
+      }
+   }
    gpu_load_wb_fixups   = 0;
    gpu_ldx_slot         = NULL;
 
@@ -2887,6 +2965,12 @@ void GPUExec(int32_t cycles)
       {
          gpu_pipe_clock += (uint64_t)gpu_opcode_cycles[index] + gpu_bus_stall
                          + gpu_pipe_core_stall;
+         /* Diagnostics (test ABI): what the RISC actually spent.
+          * `issue` counts instructions, `ticks` counts ticks (the
+          * instruction's own cost plus the stalls charged to it). */
+         gpu_pipe_issue_total++;
+         gpu_pipe_ticks_total += (uint64_t)gpu_opcode_cycles[index]
+                               + gpu_bus_stall + gpu_pipe_core_stall;
          gpu_pipe_prev_dest =
             (gpu_pipe_flags[index] & 4) ? (uint8_t)gpu_opcode_second_parameter
                                         : (uint8_t)0xFF;
