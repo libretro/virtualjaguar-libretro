@@ -7,7 +7,7 @@ under `TEST_EXPORTS=1` so a harness can read them.
 
 The model they instrument is the one already in the tree, enabled by the core
 option `virtualjaguar_gpu_pipeline_timing` (both RISC cores).  With the option
-off the counters stay at zero.
+off the counters stop accumulating. A machine reset clears them.
 
 ## Why the total is not enough
 
@@ -23,8 +23,11 @@ that is hazard-free from one that is merely lucky.  The breakdown does:
 | `*_stall_flags` | flags interlock | a flag-dependent instruction follows a flag-setter (R3) |
 | `*_stall_extra` | fixed issue extras | `movei` (+2), indexed load (+2), indexed store (+1): structural, not a hazard |
 
-`*_stall_total` is still the sum the pipeline clock charges; `score + raw +
-port + flags + extra` is the decomposition of it.
+The five counters cover only the classified portion of `*_stall_total`.
+Subtract their sum from the total to get the unclassified remainder, which
+includes memory access stalls and branch delay-slot and refill costs. A
+scoreboard wait on an external load is recorded under `score` even though it
+waits for the bus.
 
 ## Per-opcode histograms
 
@@ -35,9 +38,12 @@ The index is the opcode-table index (0..63), not the PC.
 
 ## Issue and ticks
 
-`*_pipe_issue_total` counts instructions issued; `*_pipe_ticks_total` counts
-the ticks they consumed (issue cost + bus stall + core stall).  Together they
-give instructions per tick and ticks per instruction over an epoch:
+`*_pipe_issue_total` counts instructions issued by the main execution loop.
+`*_pipe_ticks_total` includes issue cost, bus stalls, and core stalls, including
+ticks charged by inline delay slots. A taken branch's delay-slot instruction
+does not increment the issue count. The ratios therefore measure main-loop
+issue rate, and the ticks per issue include any delay-slot cost folded into
+the branch:
 
     ipc     = issue_total / ticks_total
     ticks/i = ticks_total / issue_total
@@ -56,7 +62,9 @@ at the window start, or call the machine reset.
 the core and `dlsym`s the variables above.  `test/test_gpu_interleave.c` is a
 worked example: it turns the model on by writing `vjs.gpuPipelineTiming`
 directly (the option path needs a frontend), resets the pipeline clock, runs
-an assembled program through the real GPU, and asserts the per-cause split.
+assembled programs through the real GPU, checks that each halts, and asserts
+the scoreboard, RAW, port and flags cases. The DSP counters mirror these
+diagnostics. A dedicated DSP counter test is follow-up work.
 
 ## What a good schedule looks like
 
@@ -82,8 +90,8 @@ conflict.
 
 ## Limits
 
-- Counters exist only while the pipeline model is on; they are not a
-  substitute for wall-clock measurement.
+- Counters accumulate while the pipeline model is on. Wall-clock performance
+  requires a separate measurement.
 - 64-bit, reset at machine reset, not saved in save states.
 - `port` and `flags` are aggregate only; use `score`/`raw` per-op histograms
   to locate a hazard.

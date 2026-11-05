@@ -214,7 +214,12 @@ static void prep(void)
    prog_n = 0;
 }
 
-/* Run the built program and return the measured ticks. */
+static int passes = 0, fails = 0;
+#define CHECK(cond, msg, ...) do { \
+   if (cond) { printf("  PASS: " msg "\n", ##__VA_ARGS__); passes++; } \
+   else      { printf("  FAIL: " msg "\n", ##__VA_ARGS__); fails++; } } while (0)
+
+/* Run the program and verify it cleared its own GO bit. */
 static void run(void)
 {
    int i;
@@ -223,7 +228,12 @@ static void run(void)
    p_GPUWriteLong(GPU_PC_ADDR, GPU_RAM_BASE + 0x100, 1);
    p_GPUWriteLong(GPU_CTRL_ADDR, GPUGO, 1);
    p_GPUExec(20000);
-   p_GPUWriteLong(GPU_CTRL_ADDR, 0, 1);
+   CHECK(!(p_GPUReadLong(GPU_CTRL_ADDR, 1) & GPUGO),
+         "GPU program halted within the slice budget");
+   CHECK(*p_gpu_pipe_stall_score + *p_gpu_pipe_stall_raw +
+         *p_gpu_pipe_stall_port + *p_gpu_pipe_stall_flags +
+         *p_gpu_pipe_stall_extra <= *p_gpu_pipe_stall_total,
+         "classified stalls do not exceed the total");
 }
 
 /* --- reporting ------------------------------------------------------ */
@@ -257,11 +267,6 @@ static void print_meas(const char *name, const meas *m, const meas *base)
       printf("   %.2f ticks/instr", (double)t / (double)i);
    printf("\n");
 }
-
-static int passes = 0, fails = 0;
-#define CHECK(cond, msg, ...) do { \
-   if (cond) { printf("  PASS: " msg "\n", ##__VA_ARGS__); passes++; } \
-   else      { printf("  FAIL: " msg "\n", ##__VA_ARGS__); fails++; } } while (0)
 
 /* --- the 3D vertex pipeline ---------------------------------------- */
 /* Vertex buffer in GPU local RAM; each vertex is x,y,z (+1 spare word).
@@ -351,6 +356,10 @@ static void build_vertex_pipeline(int shadow_ops)
 
 int main(void)
 {
+   static const meas zero = {0};
+   static const uint8_t odd [6][3] = {{1,3,5},{10,12,14},{3,5,7},{12,14,0},{5,7,9},{0,2,3}};
+   static const uint8_t res [6][3] = {{6,7,8},{15,0,1},{8,9,10},{1,2,3},{10,11,12},{4,5,6}};
+   static const uint8_t nw  [6][3] = {{9,11,13},{2,4,6},{11,13,15},{4,6,8},{13,14,15},{7,8,9}};
    void *handle;
    uint8_t *dummy_rom;
    struct retro_game_info game;
@@ -394,7 +403,7 @@ int main(void)
    p_GPUPipeTimingReset   = dlsym(handle, "GPUPipeTimingReset");
    p_vjs                  = dlsym(handle, "vjs");
    if (!p_gpu_reg_bank_0 || !p_gpu_pipe_ticks_total || !p_gpu_pipe_issue_total
-       || !p_gpu_pipe_stall_score || !p_gpu_pipe_stall_raw
+       || !p_gpu_pipe_stall_total || !p_gpu_pipe_stall_score || !p_gpu_pipe_stall_raw
        || !p_gpu_pipe_stall_port || !p_gpu_pipe_stall_flags
        || !p_gpu_pipe_stall_extra) {
       fprintf(stderr, "Missing GPU diagnostics symbols (build with TEST_EXPORTS=1)\n");
@@ -436,7 +445,7 @@ int main(void)
    run();
    snapshot(&base);
    printf("\n-- baseline (halt only) ------------------------------------\n");
-   print_meas("baseline", &base, &(meas){0,0,0,0,0,0,0});
+   print_meas("baseline", &base, &zero);
 
    /* ---- 1. the divide and its dependent consumer ------------------ */
    printf("\n-- 1. the divide's background window (R15) ------------------\n");
@@ -454,7 +463,7 @@ int main(void)
          (unsigned long long)(m.score - base.score));
    CHECK(p_gpu_reg_bank_0[1] == 14, "quotient = 100/7 = 14 (got %u)", p_gpu_reg_bank_0[1]);
 
-   /* ---- 2. the same program with 16 shadow instructions ----------- */
+   /* ---- 2. the same program with 16 shadow instructions (R15) ----------- */
    printf("\n-- 2. 16 shadow instructions dropped into the window --------\n");
    prep();
    emit_movei(1, 100);
@@ -485,6 +494,7 @@ int main(void)
    run();
    snapshot(&m);
    print_meas("16 ADDQT, DISJOINT registers", &m, &base);
+   CHECK(m.raw == base.raw, "disjoint writes avoid the RAW interlock");
 
    prep();
    {
@@ -495,6 +505,7 @@ int main(void)
    run();
    snapshot(&m);
    print_meas("16 ADDQT, SAME register (dependent)", &m, &base);
+   CHECK(m.raw > base.raw && m.port == base.port, "dependent writes pay RAW without a port conflict");
 
    /* ---- 4. the two-source ALU stream (R4 port conflict) ----------- */
    printf("\n-- 4. the two-source ALU stream (write-back port conflict) --\n");
@@ -507,6 +518,7 @@ int main(void)
    run();
    snapshot(&m);
    print_meas("16 ADD (2 sources), disjoint dests", &m, &base);
+   CHECK(m.port > base.port, "independent two-source ADDs pay the port conflict");
 
    /* ---- 5. the RAW and flags interlocks ---------------------------- */
    printf("\n-- 5. RAW interlock (R2) and flags interlock (R3) -----------\n");
@@ -518,6 +530,7 @@ int main(void)
    run();
    snapshot(&m);
    print_meas("3-deep dependent ADD chain", &m, &base);
+   CHECK(m.raw > base.raw && m.port == base.port, "dependent ADDs pay RAW without a port conflict");
 
    prep();
    emit(OP_MOVEQ(1, 4));
@@ -528,6 +541,7 @@ int main(void)
    run();
    snapshot(&m);
    print_meas("CMP ; JR cc (flags interlock)", &m, &base);
+   CHECK(m.flags > base.flags, "adjacent CMP and conditional JR pay the flags interlock");
 
    prep();
    emit(OP_MOVEQ(1, 4));
@@ -539,6 +553,7 @@ int main(void)
    run();
    snapshot(&m);
    print_meas("CMP ; NOP ; JR cc", &m, &base);
+   CHECK(m.flags == base.flags, "a NOP between CMP and JR avoids the flags interlock");
 
    /* ---- 6. the note's rotation, as written and as fixed ------------ */
    printf("\n-- 6. the note's EVEN/ODD/RESULT/NEW rotation --------------\n");
@@ -549,9 +564,6 @@ int main(void)
     * row 4: EVEN {11,13,15} ODD {12,14,0} RESULT {1,2,3} NEW {4,6,8};
     * row 5: EVEN {4,6,8} ODD {5,7,9} RESULT {10,11,12} NEW {13,14,15};
     * row 6: EVEN {13,14,15} ODD {0,2,3} RESULT {4,5,6} NEW {7,8,9}. */
-   static const uint8_t odd [6][3] = {{1,3,5},{10,12,14},{3,5,7},{12,14,0},{5,7,9},{0,2,3}};
-   static const uint8_t res [6][3] = {{6,7,8},{15,0,1},{8,9,10},{1,2,3},{10,11,12},{4,5,6}};
-   static const uint8_t nw  [6][3] = {{9,11,13},{2,4,6},{11,13,15},{4,6,8},{13,14,15},{7,8,9}};
    prep();
    {
       int row, k;
@@ -611,6 +623,9 @@ int main(void)
       double best = 1e9;
       int best_k = 0;
       double naive_per = 0.0;
+      uint64_t naive_issue = 0;
+      /* Nominal NTSC GPU clock divided by 60 frames per second. */
+      const double ticks_per_frame = 26590906.0 / 60.0;
 
       printf("   %-6s %-12s %-12s %-10s %-8s %-8s %-8s\n",
              "shadow", "ticks/vertex", "vertices/frm", "score", "raw", "port", "flags");
@@ -621,27 +636,31 @@ int main(void)
          run();
          snapshot(&m);
          per = (double)(m.ticks - base.ticks) / 32.0;
-         if (k == 0) naive_per = per;
+         if (k == 0) {
+            naive_per = per;
+            naive_issue = m.issue;
+         } else {
+            CHECK(m.issue > naive_issue, "the %d shadow instructions increase issue count", K[k]);
+         }
          printf("   %-6d %-12.2f %-12.0f %-10llu %-8llu %-8llu %-8llu",
-                K[k], per, 443182.0 / per,
+                K[k], per, ticks_per_frame / per,
                 (unsigned long long)(m.score - base.score),
                 (unsigned long long)(m.raw   - base.raw),
                 (unsigned long long)(m.port  - base.port),
                 (unsigned long long)(m.flags - base.flags));
          if (k == 0) printf("   <- naive");
          printf("\n");
-         if (per < best) { best = per; best_k = K[k]; }
+         if (k > 0 && per < best) { best = per; best_k = K[k]; }
       }
       printf("   best: %d shadow instructions -> %.2f ticks/vertex"
              " (naive %.2f) -> %.0f vertices/frame at 60 fps\n",
-             best_k, best, naive_per, 443182.0 / best);
+             best_k, best, naive_per, ticks_per_frame / best);
       printf("   ticks/vertex is the VERTEX rate; the shadow's instructions\n"
              "   ride along inside the divide's window, so the vertex rate\n"
              "   should not improve -- the shadow is free CAPACITY.\n");
       CHECK(best <= naive_per + 0.01,
             "the shadow does not slow the vertex pipeline: %.2f vs %.2f",
             best, naive_per);
-      CHECK(m.issue - base.issue > 0, "the shadow issued instructions");
    }
    printf("\n=== %d passed, %d failed ===\n", passes, fails);
    p_retro_unload_game();
