@@ -182,8 +182,8 @@ After staging and before anything is published, `release.yml`'s `verify-signatur
 against the state its class is expected to have: macOS files Developer ID signed and notarized
 (`codesign`, `spctl`, `stapler`, plus the sidecar the signing job wrote for bare Mach-O files, which
 cannot be stapled); the Windows app zips and installers Authenticode-signed whenever the six Azure values
-exist (`WINDOWS_APP_EXPECT`, passed by `release.yml`), the Windows core DLLs and tools as the one-line
-`EXPECT_WINDOWS` says; AppImages GPG-signed by the committed key once that key exists; `SHA256SUMS.txt` signed once its key exists; everything attested.
+exist (`WINDOWS_APP_EXPECT` and `WINDOWS_EXPECT`, passed by `release.yml`), the Windows core DLLs and
+tools likewise; AppImages GPG-signed by the committed key once that key exists; `SHA256SUMS.txt` signed once its key exists; everything attested.
 The result is one table per artifact (signed, notarized, attested) in the job summary and in the
 release body. On tags and `release/**` a failed expectation fails the run and nothing is published;
 on `develop` it only warns, so a signing-service outage cannot withhold the core nightly. A
@@ -213,7 +213,8 @@ notarization ticket, which a bare Mach-O file cannot carry.
 
 ### Every Windows binary is signed (#1150)
 
-Every exe and dll in the Windows app packages carries an Authenticode signature (SHA-256 digest,
+Every Windows file we ship, the app packages, the core DLLs, `cue2cdi` and the jagcd tools, carries an
+Authenticode signature (SHA-256 digest,
 RFC 3161 timestamp from `http://timestamp.acs.microsoft.com`) made with **Azure Artifact Signing**
 (formerly Trusted Signing, Basic tier). Microsoft issues a short-lived Public Trust certificate from its
 HSM for each signing session, so no certificate file or password exists in the repository or in the
@@ -231,7 +232,8 @@ publisher and removes the "unknown publisher" dialog, nothing more, and an EV ce
 | `VirtualJaguar-X.Y.Z-windows-{x64,arm64}-setup.exe` | the same job, after Inno Setup built them | yes |
 | `unins000.exe`, the uninstaller Inno embeds | no: Inno's `SignTool` hook needs a command-line signer and the action is a PowerShell module; it runs per-user, so no UAC prompt names it | no |
 | the Store MSIX (`windows-store.yml`) | Microsoft signs it during certification | not by us |
-| `virtualjaguar_libretro-windows-*.dll`, `cue2cdi-windows-x86_64.exe` (`release.yml`), `jagcd-tools-windows-x64.zip` (`chdman-tools.yml`) | not yet: those jobs already run on x64 Windows runners, so the follow-up is the same composite action dropped in; the gate keeps `EXPECT_WINDOWS=unsigned` for them until then | not yet |
+| `virtualjaguar_libretro-windows-{x86_64,i686}.dll`, `cue2cdi-windows-x86_64.exe` | `release.yml` job `build`, Windows rows, after strip and before the upload | yes |
+| `chdman.exe`, `jagcd-chd-check.exe` in `jagcd-tools-windows-x64.zip` | `chdman-tools.yml`, before the zip | yes |
 
 How the Windows leg of `app-package.yml` is laid out, and why:
 
@@ -254,12 +256,15 @@ How the Windows leg of `app-package.yml` is laid out, and why:
 * **Where it runs:** same-repo pull requests (`app.yml` passes the three secrets and `id-token: write`),
   nightlies, `release/**` and tags (`release.yml`), and a dispatch with `sign` ticked. Fork pull requests
   receive no secrets and build unsigned, with the notice. **Quota:** the Basic tier includes 5,000
-  signatures a month; one `app-package.yml` run spends about 30 (two trees of roughly 14 PE files plus two
-  installers). If pull-request traffic ever threatens the quota, the lever is `sign: false` in `app.yml`'s
-  `package` job; the release lanes keep signing.
-* **The gate:** `release.yml`'s `verify-signatures` passes `WINDOWS_APP_EXPECT=signed` when all six
-  Azure values exist, so a tag or `release/**` build whose Windows app files lost their signature fails
-  before publication; without the values the gate expects `unsigned` and only the notice says so (the
+  signatures a month; one `app-package.yml` run spends about 40 (two trees of 19 PE files plus two
+  installers), and a `release.yml` run about 45 in total: the same 40 for the app packages it builds
+  plus 5 for the two core DLLs, `cue2cdi`, `chdman.exe` and `jagcd-chd-check.exe`. If pull-request
+  traffic ever threatens the quota, the lever is `sign: false` in `app.yml`'s `package` job; the
+  release lanes keep signing.
+* **The gate:** `release.yml`'s `verify-signatures` passes `WINDOWS_APP_EXPECT=signed` (app zips and
+  installers) and `WINDOWS_EXPECT=signed` (core DLLs, `cue2cdi`, the tools zip) when all six Azure
+  values exist, so a tag or `release/**` build whose Windows files lost their signature fails before
+  publication; without the values the gate expects `unsigned` and only the notice says so (the
   v3.11.0 state).
 
 #### One-time Azure setup (the maintainer)

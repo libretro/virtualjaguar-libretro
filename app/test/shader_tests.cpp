@@ -194,6 +194,8 @@ static void testPresetParsing() {
     fs::remove_all(d, ec);
 }
 
+// The Mac App Store edition ignores VJ_LIBRASHADER (code comes only from the signed bundle) and a fresh
+// chain has no search list, so steps 1 and 2 both read as "not found" there; the garbage file is never opened.
 static void testFallback() {
     STEP("fallback");
     fs::path d = makeTemp("fallback");
@@ -237,8 +239,12 @@ static void testFallback() {
         ShaderChain sc;
         CHECK(!sc.probeLibrary(), "a text file must not load as a library");
         CHECK(!sc.libraryError().empty(), "and says why: %s", sc.libraryError().c_str());
+#ifdef VJ_MAC_APP_STORE
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::NotFound, "the Store edition never consults VJ_LIBRASHADER");
+#else
         CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed, "a file that exists but cannot be used reads as a failed load");
         CHECK(!ShaderChain::builtWithHeaders() || sc.libraryError().find(ShaderChain::libraryFileName()) != std::string::npos, "and names the file");
+#endif
     }
 
     STEP("fallback-settings");
@@ -340,6 +346,10 @@ static void testFallback() {
         ShaderChain f8;
         f8.setBuildDefault("dflt.slangp");
         f8.loadSettings(fresh, "");
+        // "Without a runtime" must not depend on VJ_LIBRASHADER alone: the Mac App Store edition ignores it and
+        // would load the runtime the build put beside this executable, then draw with no GL context.
+        f8.setLibrarySearchDirs({});
+        f3.setLibrarySearchDirs({});
         CHECK(f8.render(fr) == 0 && !f8.takeNotice(note), "the default without a runtime: plain picture, no notice");
         CHECK(f8.enabled, "and not switched off");
         f8.enabled = false;
