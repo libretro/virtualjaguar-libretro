@@ -3,15 +3,9 @@
 # a note, nothing else on that leg is forgiven.  Remove the line when the fix lands: the leg
 # then fails again if the failure comes back.
 #
-#   windows-x64 test-exit-hang   the TEST programs vj_gl_context_integration and `vj_shader_tests
-#                           gl` load the x64 bundled MSYS2 MINGW64 Mesa in-process and unload it at
-#                           SDL_Quit; Mesa's DllMain then waits for llvmpipe threads that never
-#                           finish, so they never exit (#1179).  The loader probe passes when its
-#                           `PASS GL loader` line is there before the timeout; shaders_gl passes
-#                           when nothing failed or skipped and its last check (the broken shader)
-#                           ran.  App launches have NO allowance: the app's own hang (#1167) is
-#                           fixed by #1172, which ends the bundled-Mesa child without unloading
-#                           Mesa, so an app launch that does not exit fails the leg.
+#   (windows-x64 exit hangs: the app's (#1167, fixed by #1172) and the two GL test programs'
+#   (#1179, fixed by #1181) are gone from this list, so a Windows process that does not exit
+#   on its own fails the leg.)
 #
 #   macos-arm64 slow        <measured>@<run id> <preset path, as gl_qualify.py names it>: a preset
 #                           that alone takes over the leg's SLOW_LIMIT (120 s) to render its first
@@ -19,15 +13,16 @@
 #                           GPU).  The launch is stopped at the limit and counted as a known
 #                           failure ("chain built, not rendered" or "no chain"), listed in the
 #                           summary; it is NOT a rendered, checked picture.  An unlisted preset
-#                           over the limit fails the leg and the summary prints its line; a listed
-#                           one that renders in time gets a note to drop its line.  ">240s" = it
+#                           fails the leg only if it does not render within the 240 s timeout; one
+#                           that renders but takes over the limit is a notice with its line, counted
+#                           in the summary (times swing ~2x between hosted-Mac runs).  A listed one
+#                           that renders in time is checked like any other.  ">240s" = it
 #                           timed out at 240 s without a picture.  Measured at 640x480: runs
 #                           41760278887 and 41776934638 (3 launches at once; slow in every run that
-#                           measured it) and 41891214865 (2 at once, the first sharded run).
+#                           measured it), 41891214865 and 41957577821 (2 at once, sharded).
 #                           Entries that rendered in under 100 s on 41891214865 were dropped;
 #                           a listed preset that renders within the limit is still checked.
 #                           Not a product bug: real Macs render these on the GPU.
-windows-x64 test-exit-hang #1179
 macos-arm64 slow 122s@41760278887 slang-shaders/anti-aliasing/aa-shader-4.0.slangp
 macos-arm64 slow >240s@41760278887 slang-shaders/blurs/gaussian_blur-sharp.slangp
 macos-arm64 slow 211s@41760278887 slang-shaders/blurs/gaussian_blur.slangp
@@ -92,6 +87,7 @@ macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/nnedi3/nnedi3-nn
 macos-arm64 slow >240s@41760278887 slang-shaders/edge-smoothing/scalefx/scalefx+rAA.slangp
 macos-arm64 slow 171.1s@41891214865 slang-shaders/edge-smoothing/scalefx/scalefx-9x.slangp
 macos-arm64 slow 155.4s@41891214865 slang-shaders/edge-smoothing/scalefx/shaders/old/scalefx-9x.slangp
+macos-arm64 slow >240s@41957577821 slang-shaders/edge-smoothing/vectorscale/vectorscale-exact-energy-single-aa.slangp
 macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/vectorscale/vectorscale-exact-energy.slangp
 macos-arm64 slow 206.2s@41891214865 slang-shaders/edge-smoothing/vectorscale/vectorscale-single-aa.slangp
 macos-arm64 slow 140.0s@41891214865 slang-shaders/edge-smoothing/xbr/hybrid-jinc2-xbr-lv2.slangp
@@ -105,6 +101,7 @@ macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/other preset
 macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-lv3-9x-standalone.slangp
 macos-arm64 slow 198.2s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-lv3-standalone.slangp
 macos-arm64 slow 146.7s@41891214865 slang-shaders/edge-smoothing/xbr/other presets/xbr-mlv4-multipass.slangp
+macos-arm64 slow >240s@41957577821 slang-shaders/edge-smoothing/xbr/xbr-lv2-sharp.slangp
 macos-arm64 slow >240s@41891214865 slang-shaders/edge-smoothing/xbr/xbr-lv3-sharp.slangp
 macos-arm64 slow 159.2s@41891214865 slang-shaders/edge-smoothing/xbrz/6xbrz-linear.slangp
 macos-arm64 slow 220.7s@41891214865 slang-shaders/misc/glass.slangp

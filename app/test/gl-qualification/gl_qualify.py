@@ -29,8 +29,9 @@ A slow leg (hosted macOS, Apple's software renderer) splits the list with --shar
 index modulo N; every shard also captures `off`, its own baseline) and a later job joins the
 shards with --merge DIR... into one summary.  --known-failures FILE --leg NAME reads the leg's
 `<leg> slow <measured> <preset>` lines: a listed preset is stopped at --slow-threshold seconds and
-counted as a tracked known failure; an unlisted one that takes longer fails and is printed as a
-line to paste into that file.
+counted as a tracked known failure; an unlisted one fails only if it does not render within
+--timeout, and one that renders but takes longer than --slow-threshold is a notice (with the line
+to paste into that file) counted in the summary.
 """
 import argparse
 import concurrent.futures
@@ -237,6 +238,25 @@ def kill_tree(proc, grace=0):
     return not group_alive()
 
 
+# macOS: Apple's GL compiles shaders in a launchd service (CVMServer, com.apple.cvmsServ, with CVMCompiler
+# workers).  Run 41957577821's stack samples of every launch that never got a window end in
+# CGLChoosePixelFormat -> cvms_connection_create -> xpc_connection_send_message_with_reply_sync: the service
+# did not answer, apparently still busy with a heavy chain's compile for a launch killed at the time limit
+# (three runs stalled ~15 min in the vectorscale/xbr stretch of the list).  --reset-cvms kills it before the
+# retry; launchd starts a fresh one on the next connection.  VJ_GLQ_CVMS_RESET overrides the command (tests).
+CVMS_RESET = ["sudo", "-n", "/usr/bin/killall", "-9", "CVMCompiler", "CVMServer"]
+
+
+def reset_cvms():
+    cmd = os.environ.get("VJ_GLQ_CVMS_RESET", "").split() or CVMS_RESET
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+        return "restarted Apple's GL compile service before the retry (`%s`: exit %d%s)" % (
+            " ".join(cmd), p.returncode, (", " + p.stdout.decode(errors="replace").strip()[:120]) if p.stdout.strip() else "")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "could not restart Apple's GL compile service (%s)" % e
+
+
 def launch(args, label, shader_arg, out_dir):
     """Run the app once.  Returns a result dict (no picture analysis yet)."""
     shots = out_dir / "shots"
@@ -422,9 +442,10 @@ def judge_slow(res, args):
 
     Listed and stopped at the limit: a tracked known failure, `slow-built` when the chain was built
     (it compiled on this GL, it just did not finish a frame in time) or `slow-nochain` when it was
-    not.  Listed but finished in time: a note to drop the entry.  Unlisted and over the limit (or
-    timed out): a failure, flagged `slow_unlisted` so --fail-fast does not count it and the summary
-    prints the line to paste.  No `[gl]` line at all is never "slow": the window did not come up."""
+    not.  Listed but finished in time: checked like any other preset, noted.  Unlisted and timed out
+    (no picture within --timeout): a failure, flagged `slow_unlisted` so --fail-fast does not count
+    it.  Unlisted, rendered, but over the limit: `slow_drift`, a notice and a summary count, not a
+    failure.  No `[gl]` line at all is never "slow": the window did not come up."""
     if res["preset"] == "off" or not args.slow_threshold:
         return
     listed = args.slow_listed.get(res["preset"])
@@ -446,11 +467,16 @@ def judge_slow(res, args):
                             % (listed, res["seconds"]))
         res["stale_slow"] = True
         return
-    if listed is None and has_gl and (res.get("timed_out") or (built and res["seconds"] > args.slow_threshold)):
+    # The gate (option b, PR #1160): an unlisted preset FAILS only when it does not render within --timeout.
+    # One that renders but takes longer than --slow-threshold is drift, not a failure: hosted-Mac times swing
+    # ~2x between runs (sabr-hybrid-deposterize: 131 s, 91 s, 229 s), so a hard 120 s line would turn up new
+    # failures every run.  Drift is a GitHub notice with the line to paste and a count in the summary.
+    if listed is None and has_gl and res.get("timed_out"):
         res["slow_unlisted"] = True
-        if not res.get("timed_out"):
-            res["errors"].append("took %s s, over this leg's %d s limit: list it in known-failures.txt as slow"
-                                 % (res["seconds"], args.slow_threshold))
+    elif listed is None and built and not res["errors"] and res["seconds"] > args.slow_threshold:
+        res["slow_drift"] = True
+        res["notes"].append("rendered, but took %s s, over this leg's %d s slow limit: consider listing it"
+                            % (res["seconds"], args.slow_threshold))
 
 
 def read_known_slow(path, leg):
@@ -490,7 +516,15 @@ def slow_list_statement(listed, leg, limit):
         parts.append("%d timed out at 240 s without a picture" % over)
     return ("**%d presets are listed `%s slow` in known-failures.txt: each is stopped at %d s, and one stopped there "
             "is NOT rendered or checked on this leg** (when measured, %s).  A listed preset that renders within the "
-            "limit is checked like any other." % (len(listed), leg, limit, "; ".join(parts) or "no usable time"))
+            "limit is checked like any other.  An unlisted preset fails only when it does not render within the "
+            "timeout; one that renders but takes over %d s is a notice, counted below." % (
+                len(listed), leg, limit, "; ".join(parts) or "no usable time", limit))
+
+
+def slow_line(leg, r):
+    """The known-failures.txt line for a slow preset, measured in this run."""
+    return "%s slow %s@%s %s" % (leg, (">%ds" % r["timed_out"]) if r.get("timed_out") else ("%ss" % r["seconds"]),
+                                 os.environ.get("GITHUB_RUN_ID", "local"), r["preset"])
 
 
 def times_tsv(results):
@@ -515,8 +549,10 @@ def write_report(out, meta, results, summary_path):
     slow_built = [r for r in results if r.get("verdict") == "slow-built" and not r["errors"]]
     slow_nochain = [r for r in results if r.get("verdict") == "slow-nochain" and not r["errors"]]
     unlisted = [r for r in results if r.get("slow_unlisted")]
+    drift = [r for r in results if r.get("slow_drift")]
     stale = [r for r in results if r.get("stale_slow")]
     retried = [r for r in results if r.get("retried")]
+    cvms = [r for r in results if r.get("cvms_reset")]
     leftover = [r for r in results if r.get("leftover")]
     (out / "times.tsv").write_text(times_tsv(results), encoding="utf-8")
     md = ["## GL qualification: %s" % meta["title"], "",
@@ -530,7 +566,8 @@ def write_report(out, meta, results, summary_path):
           "| Did not exit (known failure%s) | %d |" % ((": " + meta["known_exit_hang"]) if meta.get("known_exit_hang") else "", len(hung))]
     if meta.get("slow_threshold"):
         md += ["| Slow, chain built, not rendered in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_built)),
-               "| Slow, no chain in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_nochain))]
+               "| Slow, no chain in %d s (known failure) | %d |" % (meta["slow_threshold"], len(slow_nochain)),
+               "| Unlisted, rendered but over %d s (notice, not a failure) | %d |" % (meta["slow_threshold"], len(drift))]
     md += ["| **Failed** | **%d** |" % len(failed), ""]
     if meta.get("slow_statement"):
         md += [meta["slow_statement"] + " **This run: %d stopped at the limit and not rendered, %d rendered in time.**" % (
@@ -538,7 +575,9 @@ def write_report(out, meta, results, summary_path):
     if meta.get("settings"):
         md += ["Settings: %s" % meta["settings"], ""]
     if retried or leftover:
-        md += ["Retried after no `[gl]` line: %d; process group alive after a kill: %d" % (len(retried), len(leftover)), ""]
+        md += ["Retried after no `[gl]` line: %d (%d of them after restarting Apple's GL compile service, %d of those "
+               "then got a window); process group alive after a kill: %d"
+               % (len(retried), len(cvms), sum(1 for r in cvms if r.get("gl_lines", 0) > 0), len(leftover)), ""]
     if refused:
         md += ["<details><summary>Refused presets (allowlisted)</summary>", ""]
         md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in refused]
@@ -552,13 +591,18 @@ def write_report(out, meta, results, summary_path):
         md += ["- `%s` — %s" % (r["preset"], r["notes"][0] if r["notes"] else "") for r in slow_built + slow_nochain]
         md += ["", "</details>", ""]
     if unlisted:
-        run = os.environ.get("GITHUB_RUN_ID", "local")
-        md += ["### Unlisted slow presets", "",
-               "Over this leg's %d s limit with the chain built; to track them, paste into "
-               "`app/test/gl-qualification/known-failures.txt`:" % meta["slow_threshold"], "", "```"]
-        md += ["%s slow %s@%s %s" % (meta["leg"], (">%ds" % r["timed_out"]) if r.get("timed_out") else ("%ss" % r["seconds"]),
-                                     run, r["preset"]) for r in unlisted]
+        md += ["### Unlisted presets that did not render", "",
+               "The chain was built but no picture came within the timeout: a failure.  If this leg simply cannot "
+               "render them in time, list them in `app/test/gl-qualification/known-failures.txt`:", "", "```"]
+        md += [slow_line(meta["leg"], r) for r in unlisted]
         md += ["```", ""]
+    if drift:
+        md += ["<details><summary>Unlisted presets that rendered but took over %d s (%d, notices)</summary>"
+               % (meta["slow_threshold"], len(drift)), "",
+               "Not failures (the gate fails only a preset that does not render within the timeout); lines to "
+               "paste if they keep drifting:", "", "```"]
+        md += [slow_line(meta["leg"], r) for r in drift]
+        md += ["```", "", "</details>", ""]
     if stale:
         md += ["<details><summary>Listed as slow but rendered in time (%d): drop these entries</summary>" % len(stale), ""]
         md += ["- `%s` — %s s" % (r["preset"], r["seconds"]) for r in stale]
@@ -702,9 +746,13 @@ def main():
     ap.add_argument("--leg", default="", help="this leg's name in known-failures.txt (macos-arm64, ...)")
     ap.add_argument("--slow-threshold", type=int, default=0,
                     help="seconds: a listed `slow` preset is stopped here and counted as a known failure; an unlisted one "
-                         "that takes longer fails (0 = no limit beyond --timeout)")
+                         "that renders but takes longer is a notice, and fails only if it does not render within "
+                         "--timeout (0 = no limit beyond --timeout)")
     ap.add_argument("--graceful-kill", type=int, default=0, help="POSIX: SIGTERM and this many seconds before SIGKILL")
     ap.add_argument("--retry-no-gl", action="store_true", help="launch again (once) a preset whose log has no `[gl]` line")
+    ap.add_argument("--reset-cvms", action="store_true",
+                    help="macOS hosted runners: before that retry, kill Apple's GL compile service (CVMServer/CVMCompiler, "
+                         "sudo -n) so the next launch gets a fresh one")
     ap.add_argument("--merge", nargs="+", default=[], help="join these shard output folders into --out (no launches)")
     ap.add_argument("--expect-shards", type=int, default=0, help="with --merge: how many shards there must be")
     args = ap.parse_args()
@@ -768,9 +816,13 @@ def main():
                     os.replace(r["log"], r["log"] + ".first")
                 except OSError:
                     pass
+                reset_note = reset_cvms() if args.reset_cvms else ""
                 time.sleep(10)
                 r = launch(args, rel, str(args.shaders / rel), args.out)
                 r["retried"] = first
+                if reset_note:
+                    r["cvms_reset"] = True
+                    r["notes"].append(reset_note)
                 r["notes"].append("retried: the first launch had no `[gl]` line (%s)" % "; ".join(first["errors"]))
             judge_shader(r, refused_ok, known_broken)
             judge_slow(r, args)
@@ -784,6 +836,10 @@ def main():
                 tag = "FAIL" if r["errors"] else r["verdict"]
                 print("  %-60s %-8s %5s s%s" % (r["preset"], tag, r["seconds"],
                       ("  " + "; ".join(r["errors"])) if r["errors"] else ""), flush=True)
+                if r.get("slow_drift") and os.environ.get("GITHUB_ACTIONS"):
+                    print("::notice title=slow preset (%s)::%s rendered in %s s, over the %d s slow limit; to list it: %s"
+                          % (args.leg or args.os, r["preset"], r["seconds"], args.slow_threshold, slow_line(args.leg or args.os, r)),
+                          flush=True)
                 # An unlisted slow preset fails but is no sign of a broken GL path: it does not stop the shard.
                 streak = streak + 1 if (r["errors"] and not r.get("slow_unlisted")) else 0
                 if args.fail_fast and streak >= args.fail_fast:

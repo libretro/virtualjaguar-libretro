@@ -286,18 +286,6 @@ jobs:
             echo "fallback=yes" >>"$GITHUB_OUTPUT"
           fi
 
-      # Tracked known failures of this leg (app/test/gl-qualification/known-failures.txt).  Only the two
-      # TEST programs (vj_gl_context_integration, vj_shader_tests gl) may hang at exit, and only with
-      # complete evidence: they load the bundled Mesa in-process and unload it at SDL_Quit (#1179, the
-      # #1167 DllMain hang).  App launches have no allowance: #1172 ended the app's own hang.
-      - name: Known failures of this leg
-        id: known
-        run: |
-          set -eu
-          ref="$(awk -v leg="windows-$ARCH" '$1 == leg && $2 == "test-exit-hang" {print $3; exit}' "$LISTS/known-failures.txt")"
-          echo "test_exit_hang=$ref" >>"$GITHUB_OUTPUT"
-          [ -z "$ref" ] || echo "::notice::windows-$ARCH: the test programs' exit hang is a tracked known failure ($ref); app launches must exit"
-
       # The pre-#1138 loader against the bundled Mesa (before/after evidence), then a context
       # created, drawn to, read back and destroyed through the same library the fallback child
       # uses: the smallest program that must come back promptly on this runner.
@@ -322,10 +310,6 @@ jobs:
           code=${PIPESTATUS[0]}
           set -e
           echo "context create/draw/destroy: exit $code after $SECONDS s" | tee -a glq/sdl-loader.txt
-          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.test_exit_hang }}" ] && grep -q '^PASS GL loader' glq/sdl-loader.txt; then
-            echo "probe drew and read back, then did not exit: the tracked test-program known failure (${{ steps.known.outputs.test_exit_hang }})" | tee -a glq/sdl-loader.txt
-            code=0
-          fi
           # The same with llvmpipe's rasterizer threads off, then with softpipe (no LLVM at all):
           # splits "llvmpipe's thread pool never winds down" from "WGL/the process itself".
           for v in "LP_NUM_THREADS=0" "GALLIUM_DRIVER=softpipe"; do
@@ -435,15 +419,6 @@ jobs:
           timeout 600 build/vj_shader_tests.exe gl 2>&1 | tee glq/shaders_gl.txt
           code=${PIPESTATUS[0]}
           set -e
-          # The tracked test-program exit hang (#1179): the final verdict line comes after SDL_Quit, which never
-          # returns there, so the evidence is "nothing failed or skipped and the last check ran"
-          # (the test writes stdout unbuffered, so a killed run still has every line before it).
-          if [ "$code" -eq 124 ] && [ -n "${{ steps.known.outputs.test_exit_hang }}" ] \
-            && ! grep -q 'shader_tests: FAIL\|shader_tests gl: SKIP' glq/shaders_gl.txt \
-            && grep -q '^broken shader -> chain build failed' glq/shaders_gl.txt; then
-            echo "shader_tests gl: every check passed, then the process did not exit: the tracked test-program known failure (${{ steps.known.outputs.test_exit_hang }})" | tee -a glq/shaders_gl.txt
-            code=0
-          fi
           test "$code" -eq 0
 
       - name: Automatic Mesa fallback verdict
@@ -583,13 +558,16 @@ jobs:
           # The hosted display is too small for the default 960x760 window (it came back 960x642 and ~45 s a
           # launch): 640x480 (small-window.ini).  2 at once: at 3, launches slowed each other and a run of
           # killed GL processes left later launches without a window (run 41760278887: no `[gl]` line at all),
-          # hence also the SIGTERM before the kill and one retry of a launch that never got a window.
-          # An unlisted preset that takes longer than SLOW_LIMIT fails, with the line to list it printed.
+          # hence also the SIGTERM before the kill and one retry of a launch that never got a window, after
+          # restarting Apple's GL compile service (--reset-cvms: run 41957577821's stack samples of those
+          # launches all wait in CGLChoosePixelFormat on an XPC reply from CVMServer that never came).
+          # An unlisted preset fails only if it does not render within the 240 s timeout; one that renders
+          # but takes longer than SLOW_LIMIT is a ::notice:: with the line to list it, counted in the summary.
           # --summary '': the run summary gets macos-summary's joined table, not three shard tables.
           python3 -I "$QUALIFY" --os macos --summary '' --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
             --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 2 --timeout 240 --low-dpi \
             --shard "${{ matrix.shard }}/$SHARDS" --known-failures "$LISTS/known-failures.txt" --leg macos-arm64 \
-            --slow-threshold "$SLOW_LIMIT" --graceful-kill 10 --retry-no-gl \
+            --slow-threshold "$SLOW_LIMIT" --graceful-kill 10 --retry-no-gl --reset-cvms \
             --seed-config "$LISTS/small-window.ini" --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}

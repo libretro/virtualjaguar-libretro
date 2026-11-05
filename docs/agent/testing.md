@@ -419,12 +419,16 @@ a shard is missing or the shards did not run every preset exactly once, and uplo
 `gl-qualification-macos-arm64-shard-<n>` artifacts). A preset that alone takes over `SLOW_LIMIT`
 (120 s) there is a `macos-arm64 slow <measured>@<run> <preset>` line in `known-failures.txt`: it is
 stopped at the limit and listed as a known failure ("chain built, not rendered" / "no chain"), not
-a checked picture. An unlisted preset over the limit fails and the summary prints its line to paste;
-a listed one that renders in time is checked like any other (the summary counts both; drop entries
+a checked picture. An unlisted preset fails only if it does not render within the 240 s timeout; one
+that renders but takes over 120 s is a `::notice::` with its line to paste and a count in the summary
+(hosted-Mac times swing ~2x between runs, so a hard 120 s gate failed new presets every run); a
+listed one that renders in time is checked like any other (the summary counts both; drop entries
 that stay well under the limit). A launch with no `[gl]` line is retried once and never counts as
-slow: twice a hosted Mac stopped giving every launch a window for ~15 minutes (runs 41760278887,
-41891214865), and on macOS such a timeout leaves a stack sample (`logs/<preset>.sample.txt`,
-`sample(1)`) of where the app was stuck. Each folder has `times.tsv` (seconds per preset) and the summary a "Slowest
+slow. On macOS such a timeout leaves a stack sample (`logs/<preset>.sample.txt`, `sample(1)`), and
+the retry first restarts Apple's GL compile service (`--reset-cvms`: `sudo -n killall -9 CVMCompiler
+CVMServer`; launchd starts a fresh one). Three runs (41760278887, 41891214865, 41957577821) had every
+launch stall for ~15 minutes in the vectorscale/xbr stretch of the list; the samples all end in
+`CGLChoosePixelFormat` -> `cvms_connection_create`, an XPC call to CVMServer that never answered. Each folder has `times.tsv` (seconds per preset) and the summary a "Slowest
 launches" table. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
 compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
 candidates into the artifact.
@@ -451,11 +455,8 @@ candidates into the artifact.
 - `screenshot is black` → the window drew nothing (lost context, hidden window, swap failure).
 - `known-failures.txt` holds tracked failures, one line each; nothing else on that leg is forgiven.
   `macos-arm64 slow`: presets Apple's software renderer cannot render within 120 s (above).
-  `windows-x64 test-exit-hang #1179`: the two TEST programs (`vj_gl_context_integration`,
-  `vj_shader_tests gl`) load the bundled Mesa in-process and never exit after unloading it; the
-  loader probe and `shaders_gl` accept the timeout only with their complete evidence (`PASS GL
-  loader`; no FAIL/SKIP and the broken-shader check ran). App launches have no allowance: the
-  app's own exit hang (#1167) is fixed by #1172, so an app launch that does not exit fails the leg.
+  The Windows exit hangs are fixed and no longer listed: the app's (#1167, by #1172) and the two
+  GL test programs' (#1179, by #1181); a Windows process that does not exit on its own fails the leg.
 - Windows "Automatic Mesa fallback verdict" red → the stock-Windows path (#1138) regressed or the
   boot did not come back: `automatic-seconds.txt` has the exit code, the seconds and which of the
   checks failed (the retry line, the `renderer=` line, `config.ini` in the parent's data dir, no
