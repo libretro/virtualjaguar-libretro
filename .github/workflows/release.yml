@@ -597,7 +597,7 @@ jobs:
         env:
           SIGNED: ${{ steps.winsign.outputs.signed || 'false' }}
         run: |
-          set -e
+          set -eu
           method=none; [ "$SIGNED" != true ] || method=azure-artifact-signing
           for f in dist/*.dll dist/*.exe; do
             [ -f "$f" ] || continue
