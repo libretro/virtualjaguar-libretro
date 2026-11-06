@@ -167,7 +167,8 @@ jobs:
         run: |
           set -eu
           export LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 VJ_LIBRASHADER="$PWD/stage/bin/librashader.so"
-          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
+          # Bounded like the Windows leg: a hang ends in a logged 124, not a cancelled job.
+          xvfb-run -a -s '-screen 0 1600x1200x24 +extension GLX' timeout 600 build/vj_shader_tests gl 2>&1 | tee glq/shaders_gl.txt
           test "${PIPESTATUS[0]}" -eq 0
 
       - name: shaders_gl verdict
@@ -393,13 +394,16 @@ jobs:
         run: |
           set -eu
           refresh=(); [ "$REFRESH_GOLDENS" = true ] && refresh=(--refresh-goldens)
-          expect_log=()
+          # Both expectations hold only on the bundled-Mesa path.  On a runner with a native GL 3.3
+          # (fallback=no) the app stays on the vendor driver, so neither the retry line nor a Mesa
+          # renderer is asserted; the loop still checks every preset's build and picture.
+          expect=()
           if [ "${{ steps.native.outputs.fallback }}" = yes ]; then
-            expect_log=(--expect-log 'automatically retrying with bundled Mesa OpenGL')
+            expect=(--expect-log 'automatically retrying with bundled Mesa OpenGL' --expect-renderer 'llvmpipe|D3D12')
           fi
           python -I "$QUALIFY" --os windows --exe stage/bin/virtualjaguar.exe --shaders stage/bin/shaders \
             --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 1 --timeout 240 \
-            --expect-renderer 'llvmpipe|D3D12' ${expect_log[@]+"${expect_log[@]}"} \
+            ${expect[@]+"${expect[@]}"} \
             --refused-allowlist "$LISTS/refused-windows.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/windows --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
 
