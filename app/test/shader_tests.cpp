@@ -729,6 +729,16 @@ static int runGl() {
 
 #ifdef VJ_SLANG_DIR
     // ---- the bundled slang-shaders presets that must work on this GL ----
+    // At a size the presets are written for: the 128x64 picture the pixel checks above use is
+    // below what some need (crt-royale's mask passes scale by 0.0625 of the viewport and its preset
+    // says "Safe for >= 341.333 horizontal triads at viewport size"; at 128x64 those passes are
+    // 8x4 px and the chain comes out black on llvmpipe and Apple's software renderer, while the
+    // app at 960x760 renders it; gl-qualification.yml, #1155).  Not larger: on Apple's software
+    // renderer (hosted macOS) 640x480 did not finish the ~30 presets in 10 minutes.
+    const int BW = 384, BH = 288;
+    ShaderFrame fb = f;
+    fb.outW = BW;
+    fb.outH = BH;
     {
         std::string root = VJ_SLANG_DIR;
         if (!root.empty() && root.back() != '/') root += '/';
@@ -749,13 +759,13 @@ static int runGl() {
             bool used = ex.usePreset(root + rel, e2);
             unsigned t = 0;
             for (int i = 1; used && i <= 4; i++) {
-                f.srcTex = srcTex;
-                f.frameCount = (uint64_t)i;
-                t = ex.render(f);
+                fb.srcTex = srcTex;
+                fb.frameCount = (uint64_t)i;
+                t = ex.render(fb);
             }
             long sum = 0;
             if (t) {
-                std::vector<unsigned char> o = readTexture(t, OW, OH);
+                std::vector<unsigned char> o = readTexture(t, BW, BH);
                 for (size_t i = 0; i < o.size(); i += 4) sum += o[i] + o[i + 1] + o[i + 2];
             }
             std::printf("bundled %s: %s (energy %ld)%s%s\n", rel, t && sum > 0 ? "renders" : "FAILS", sum,
@@ -790,12 +800,12 @@ static int runGl() {
             bool used = ex.usePreset(one, e2);
             unsigned t = 0;
             for (int i = 1; used && i <= 3; i++) {   // a few frames: history/feedback passes warm up
-                f.frameCount = (uint64_t)i;
-                t = ex.render(f);
+                fb.frameCount = (uint64_t)i;
+                t = ex.render(fb);
             }
             long sum = 0;
             if (t) {
-                std::vector<unsigned char> o = readTexture(t, OW, OH);
+                std::vector<unsigned char> o = readTexture(t, BW, BH);
                 for (size_t i = 0; i < o.size(); i += 4) sum += o[i] + o[i + 1] + o[i + 2];
             }
             std::printf("preset %s: %s, %zu params, output energy %ld%s%s\n", one.c_str(),
@@ -891,6 +901,9 @@ static int runProbe(const char* dir) {
 }
 
 int main(int argc, char** argv) {
+    // Unbuffered: a run that is killed (the x64 bundled Mesa never returns from SDL_Quit, #1167) must still have
+    // every verdict line in its log; the stderr [shader] lines already are.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::string mode = argc > 1 ? argv[1] : "unit";
     if (mode == "probe") return runProbe(argc > 2 ? argv[2] : nullptr);
     if (mode == "unit") return runUnit();

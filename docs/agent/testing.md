@@ -377,6 +377,96 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
 - **Failed start:** `emu_thread_start_fallback` runs with `VJ_TEST_EMU_START_FAIL=1`, which takes the real failure
   branch of `App::startEmuThread`: the run falls back inline.
 
+## GL qualification (desktop app, windowed, every shader preset)
+
+`.github/workflows/gl-qualification.yml` (#1155) boots `app/` **windowed with a real OpenGL
+context** on hosted runners, once per bundled `.slangp`, and keeps the screenshots. Legs: Linux
+(`ubuntu-24.04`, Xvfb + Mesa llvmpipe), Windows x64 (hosted, no vendor GL: the app must relaunch
+beside the bundled MSYS2 Mesa, #1138/#1143), Windows arm64 (same, plus the portable test build
+Store testers used), macOS arm64 (Apple OpenGL 4.1). Runs on PRs touching the GL/shader path,
+nightly, on dispatch, and `release.yml` requires it on tags and `release/**`.
+
+Per leg: one build, `cmake --install` into `stage/`, the preset loop (below), then
+`vj_shader_tests gl` run **directly** after it (exit 77 = skipped = failure here; everywhere else
+it is `-E shaders_gl`; the step is `continue-on-error` and a "shaders_gl verdict" step fails the
+job, so the screenshots exist even when the test is red, and a test that has to be killed cannot
+wedge the window server before the loop). The loop:
+`app/test/gl-qualification/gl_qualify.py` launches `stage/bin/virtualjaguar --shader <preset>
+--screenshot <png> --screenshot-frame 20 --screenshot-emu-frames 60 test/roms/yarc.j64` for `--shader off`
+and every preset (the capture waits for 20 UI frames *and* 60 core frames, so it is the game's picture
+however fast or crowded the host is).
+Per (leg, preset) it asserts: exit 0 before the timeout; the `[gl] version=...; renderer=` line
+matches the leg (`llvmpipe` / `llvmpipe|D3D12` after `automatically retrying with bundled Mesa
+OpenGL` / `Apple`); the PNG decodes and is not black; a `[shader] <preset> built` line
+(`shaders.cpp`); the picture differs from the plain capture unless the preset is in
+`identical-to-plain.txt`. After 8 consecutive failed presets the loop stops (`--fail-fast`; the
+summary says how many were not run), so a leg with no working runtime fails in minutes. A
+`[shader] ... refused` line (macOS OpenGL 4.1 has no
+`GL_ARB_arrays_of_arrays`), or a `... failed` line for a preset the leg's GL cannot compile
+(packHalf2x16 on macOS), passes only for presets in `refused-<os>.txt`, so that set can shrink but
+never grow. The macOS leg runs in a 640x480 window (`small-window.ini`, `--seed-config`): the hosted
+display is too small for 960x760 (the window came back 960x642, ~45 s a launch), and a seeded 480x360
+window captures uniform white while ImGui's extra OS windows are on (the default; off, or at 640x480
+and up, it captures the game), which its "Capture diagnostics" step keeps showing.
+
+The macOS leg is **sharded**: Apple's software renderer (hosted runners have no GPU) takes minutes
+over a heavy chain's first frame, so one runner cannot render ~500 presets in a job. Three `macos`
+jobs each take the presets whose sorted index modulo 3 is their shard (`--shard I/3`, each with its
+own `off` baseline, 2 launches at once); the GL probe, the capture diagnostics and `shaders_gl` run in
+shard 0 only; `macos-summary` joins them (`gl_qualify.py --merge ... --expect-shards 3`), failing if
+a shard is missing or the shards did not run every preset exactly once, and uploads the one
+`gl-qualification-macos-arm64` summary (screenshots and logs stay in the
+`gl-qualification-macos-arm64-shard-<n>` artifacts). A preset that alone takes over `SLOW_LIMIT`
+(120 s) there is a `macos-arm64 slow <measured>@<run> <preset>` line in `known-failures.txt`: it is
+stopped at the limit and listed as a known failure ("chain built, not rendered" / "no chain"), not
+a checked picture. An unlisted preset fails only if it does not render within the 240 s timeout; one
+that renders but takes over 120 s is a `::notice::` with its line to paste and a count in the summary
+(hosted-Mac times swing ~2x between runs, so a hard 120 s gate failed new presets every run); a
+listed one that renders in time is checked like any other (the summary counts both; drop entries
+that stay well under the limit). A launch with no `[gl]` line is retried once and never counts as
+slow. On macOS such a timeout leaves a stack sample (`logs/<preset>.sample.txt`, `sample(1)`), and
+the retry first restarts Apple's GL compile service (`--reset-cvms`: `sudo -n killall -9 CVMCompiler
+CVMServer`; launchd starts a fresh one). Three runs (41760278887, 41891214865, 41957577821) had every
+launch stall for ~15 minutes in the vectorscale/xbr stretch of the list; the samples all end in
+`CGLChoosePixelFormat` -> `cvms_connection_create`, an XPC call to CVMServer that never answered. Each folder has `times.tsv` (seconds per preset) and the summary a "Slowest
+launches" table. Goldens are a second pass: `app/test/golden/gl/<os>/<preset>.png` is
+compared and reported (not gated) when present; the `refresh_goldens` dispatch input collects
+candidates into the artifact.
+
+**Reading a failure.** The job summary lists failed presets with the reason and the last `[gl]` /
+`[shader]` lines. Download `gl-qualification-<leg>` (always uploaded): `shots/<preset>.png`
+(`/` in the preset path becomes `__`), `logs/<preset>.log` (the full stderr of that launch),
+`results.json`, `summary.md`, plus the leg's probes (`glxinfo.txt`, `gl-context-integration.txt`,
+`shaders_gl.txt`; Windows adds `native-driver*.txt`, `automatic-stderr.txt`, `legacy-loader.txt`).
+- `no \`[gl] version=...\`` line → the app never got a context: read the log head (SDL error) and
+  the probe files; on Windows check `native-driver*.txt` and whether the retry line is there.
+- `renderer ... does not match` → the leg landed on the wrong driver (e.g. Windows picked WARP
+  instead of llvmpipe/d3d12; Linux lost `LIBGL_ALWAYS_SOFTWARE`).
+- `shader failed: ...` → librashader's compile/link message; the preset or the runtime pin broke.
+  One preset = that preset; all presets = the chain/loader (look at `shaders_gl.txt` too). Presets
+  the bundled librashader rejects on every GL live in `known-broken.txt` with the reason (they must
+  keep failing: one that starts building is reported so the list shrinks).
+- `refused and not in the allowlist` → a preset newly needs a GL feature the leg lacks: fix it or,
+  if genuinely platform-limited, add it to `refused-<os>.txt` with the reason.
+- `no \`[shader] ... built\` line` → the chain never ran: the game had not drawn by frame 20 or the
+  preset was not enabled; compare `shots/off.png` and the log's `[emu]` lines.
+- `identical to the --shader off capture` → the preset changed nothing; either the chain fell back
+  to the plain presenter (check for a `[shader]` line) or it is a true no-op at this scale (list it).
+- `screenshot is black` → the window drew nothing (lost context, hidden window, swap failure).
+- `known-failures.txt` holds tracked failures, one line each; nothing else on that leg is forgiven.
+  `macos-arm64 slow`: presets Apple's software renderer cannot render within 120 s (above).
+  The Windows exit hangs are fixed and no longer listed: the app's (#1167, by #1172) and the two
+  GL test programs' (#1179, by #1181); a Windows process that does not exit on its own fails the leg.
+- Windows "Automatic Mesa fallback verdict" red → the stock-Windows path (#1138) regressed or the
+  boot did not come back: `automatic-seconds.txt` has the exit code, the seconds and which of the
+  checks failed (the retry line, the `renderer=` line, `config.ini` in the parent's data dir, no
+  `saves/instance-2`); `timing.txt` then has three bounded experiments (the Mesa-side child run
+  directly, the same with `--emu-thread off`, the same with `video.vsync=0`) that split "the
+  parent never returns" from "the window never finishes a swap". The preset loop is skipped on
+  that leg until the plain boot works. If `native-driver-gl33.txt` ends in exit 0 the runner image
+  has grown a real GL and the fallback is not exercised there (skipped with a warning); arm64 is
+  then the proof.
+
 ## Headless framebuffer caveat
 
 The miniretro harness in `test/regression_test.sh` doesn't expose the same composited

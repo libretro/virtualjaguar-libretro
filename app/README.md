@@ -418,6 +418,10 @@ failed to load) on stdout and stderr. `VJ_REQUIRE_LIBRASHADER=1` turns a skip of
 `shaders_library` into a failure; every packaging leg, Windows included, runs it
 that way. Point `VJ_LIBRASHADER` at the library, and optionally
 `VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
+The per-PR builds exclude `shaders_gl` (`-E shaders_gl`: no display); the
+[GL qualification](../.github/workflows/gl-qualification.yml) workflow runs it on a real context on
+every desktop OS, where a skip is a failure, then renders every bundled preset through `--shader`
+([docs/agent/testing.md](../docs/agent/testing.md), "GL qualification").
 
 ## Game library
 

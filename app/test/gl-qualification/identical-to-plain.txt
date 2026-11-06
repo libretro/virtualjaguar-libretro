@@ -1,0 +1,4 @@
+# Presets whose output may be pixel-identical to the plain picture (--shader off), on every
+# leg.  gl_qualify.py otherwise fails a preset that changes nothing, which is how a chain that
+# silently fell back to the plain presenter would look.  Paths relative to shaders/.
+slang-shaders/nearest.slangp

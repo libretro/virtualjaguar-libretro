@@ -1,0 +1,30 @@
+# Presets the macOS leg of gl-qualification.yml cannot build: macOS stops at OpenGL 4.1.
+# A preset that fails to build on macOS and is NOT listed here fails the leg, and a listed
+# one that starts building is reported too: the set may only shrink.  Paths are relative
+# to the shaders/ folder beside the executable.
+#
+# GL_ARB_arrays_of_arrays (GL 4.3): librashader 0.12 emits a 2-D array for these and the app
+# logs "[shader] <preset> refused: ..." (app/packaging/README.md, "macOS notes";
+# presetsNeedingArraysOfArrays() in app/src/present_util.cpp is the same list).
+slang-shaders/crt/crt-geom-deluxe.slangp
+slang-shaders/crt/crt-geom-tate.slangp
+slang-shaders/crt/crt-geom.slangp
+slang-shaders/crt/crt-hyllian-ntsc-rainbow.slangp
+slang-shaders/crt/crt-hyllian-ntsc.slangp
+slang-shaders/crt/crt-hyllian-sinc-composite.slangp
+slang-shaders/crt/crt-hyllian.slangp
+slang-shaders/crt/crt-nobody.slangp
+slang-shaders/crt/crt-super-xbr.slangp
+slang-shaders/crt/vt220.slangp
+slang-shaders/denoisers/crt-fast-bilateral-super-xbr.slangp
+slang-shaders/misc/img_mod.slangp
+slang-shaders/misc/test-pattern-append.slangp
+slang-shaders/misc/test-pattern-prepend.slangp
+slang-shaders/scanlines/res-independent-scanlines.slangp
+# packHalf2x16 (GLSL 4.20): the app logs "[shader] <preset> failed: ... undeclared identifier".
+slang-shaders/edge-smoothing/fsr/fsr.slangp
+slang-shaders/edge-smoothing/fsr/smaa+fsr.slangp
+# Interface matching: Apple's GL 4.1 linker rejects the chain ("Input of fragment shader
+# 'LIBRA_VARYING_2' differs in type/qualifiers to that written by vertex shader"); it builds
+# on GL 4.6 (Linux, Windows).  Run 41891214865.
+slang-shaders/ntsc/ntsc-blastem.slangp

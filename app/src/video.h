@@ -58,6 +58,7 @@ public:
     // Small helper textures for save-state thumbnails (RGBA8, tight).
     static unsigned createTextureRGBA(const void* pixels, int w, int h);
     static void destroyTexture(unsigned tex);
+    uint64_t emuFrames() const { return emuFrames_; }   // distinct core frames uploaded so far
 
 private:
     unsigned tex_ = 0;
