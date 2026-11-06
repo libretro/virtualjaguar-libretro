@@ -2,6 +2,11 @@
 #include "app.h"
 #include "build_channel.h"
 #include "gl_context.h"
+#include "startup_screen.h"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include "imgui_impl_opengl3_loader.h"
 #include "devices_ui.h"
 #include "fonts_imgui.h"
 #include "ui_scale.h"
@@ -439,7 +444,7 @@ bool App::initWindow() {
     w = std::max(320, w);
     h = std::max(240, h);
     const std::string firstTitle = "Virtual Jaguar" + instanceTitleSuffix(paths.instance);
-    SDL_WindowFlags wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+    SDL_WindowFlags wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;
     if (!lowDpi_) wflags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;   // --low-dpi: a 1x framebuffer, for screenshots of a standard display
     if (simDensity_) { w *= (int)simDensity_; h *= (int)simDensity_; }   // --pixel-density: the window holds N pixels per point
     window_ = SDL_CreateWindow(firstTitle.c_str(), w, h, wflags);
@@ -514,7 +519,10 @@ bool App::initImGui() {
 #else
     const char* glsl = "#version 330 core";
 #endif
-    if (!ImGui_ImplSDL3_InitForOpenGL(window_, gl_)) return false;
+    if (!ImGui_ImplSDL3_InitForOpenGL(window_, gl_)) {
+        ImGui::DestroyContext();
+        return false;
+    }
     // The backend submits no pad state: the library's popups get ImGui gamepad nav fed with our intents (deskPadBeforeNewFrame).
     ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
     if (simDensity_) {   // --pixel-density: the multi-viewport path asks the platform handler too
@@ -522,9 +530,66 @@ bool App::initImGui() {
             return ImVec2(g_simDensity, g_simDensity);
         };
     }
-    if (!ImGui_ImplOpenGL3_Init(glsl)) return false;
+    if (!ImGui_ImplOpenGL3_Init(glsl)) {
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+        return false;
+    }
     imguiUp_ = true;
+    // Compile the plain UI program now: a context alone does not qualify a driver.
+    if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
+        SDL_SetError("Could not create the interface renderer.");
+        return false;
+    }
     if (!video.init()) return false;
+    return true;
+}
+
+// No core calls or game shader: also safe from the startup load's emu wait hook,
+// before the interactive loop has begun any ImGui frame.
+bool App::startupFrame(const char* status) {
+    if (startupStatus_ != status) {
+        std::fprintf(stderr, "[startup] %s (%.0f ms)\n", status, (now() - startupStarted_) * 1000.0);
+        startupStatus_ = status;
+    }
+    // Leave file-open, controller and input events queued for the normal loop.
+    // In particular, swallowing an OS drop event here would lose a Finder launch.
+    SDL_PumpEvents();
+    SDL_Event e;
+    while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0) quit = true;
+    while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_WINDOW_CLOSE_REQUESTED,
+                         SDL_EVENT_WINDOW_CLOSE_REQUESTED) > 0) {
+        if (e.window.windowID == SDL_GetWindowID(window_)) quit = true;
+    }
+    if (quit) return true; // cancellation is not a graphics failure
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    simulateDensity();
+    ImGui::NewFrame();
+    drawStartupScreen(status, now() - startupStarted_);
+    ImGui::Render();
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(window_, &w, &h);
+    glViewport(0, 0, w, h);
+    glClearColor(0.025f, 0.03f, 0.04f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    // Force lazy driver/JIT work before declaring the renderer ready.
+    unsigned char pixel[4] = {};
+    if (!startupFrames_) glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    const GLenum error = glGetError();
+    if (error != 0 /* GL_NO_ERROR */) {
+        SDL_SetError("Startup frame failed (OpenGL error 0x%x).", (unsigned)error);
+        std::fprintf(stderr, "[startup] %s\n", SDL_GetError());
+        startupFailed_ = true;
+        return false;
+    }
+    if (!SDL_GL_SwapWindow(window_)) {
+        std::fprintf(stderr, "[startup] swap failed: %s\n", SDL_GetError());
+        startupFailed_ = true;
+        return false;
+    }
+    ++startupFrames_;
     return true;
 }
 
@@ -812,6 +877,7 @@ void App::startEmuThread() {
 // The emulation thread is busy with a call() the UI waits on (#967): keep the window alive and say so.  Called by
 // EmuThread::call() on this thread -- possibly in the middle of an ImGui frame -- so: no ImGui, no call(), no event
 // dispatch (SDL_PumpEvents only queues them), no read of a field only a call() writes (CoreHost counts those).
+// Startup is the exception: no ImGui frame is open yet and startupFrame only handles window close, never core input.
 void App::busyFrame(double waited, unsigned tick) {
     if (tick == 0) std::fprintf(stderr, "[emu] busy: a call has taken over 250 ms\n");
     if (!window_ || !imguiUp_) return;
@@ -820,6 +886,10 @@ void App::busyFrame(double waited, unsigned tick) {
         explicit UiWaiting(CoreHost& host) : h(host) { h.setUiWaiting(true); }
         ~UiWaiting() { h.setUiWaiting(false); }
     } waiting(host);
+    if (startupStatus_) {
+        if (!startupFrame(startupStatus_)) quit = true;
+        return;
+    }
     SDL_PumpEvents();
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(window_, &w, &h);
@@ -2624,11 +2694,21 @@ int App::runInteractive(const CliArgs& a) {
     lowDpi_ = a.lowDpi || a.pixelDensity > 1;   // --pixel-density builds its own density on a 1x window
     simDensity_ = a.pixelDensity > 1 ? std::min(4u, a.pixelDensity) : 0;
     g_simDensity = simDensity_ ? (float)simDensity_ : 1.0f;
-    if (!initWindow() || !initImGui()) {
+    startupStarted_ = now();
+    if (!initWindow() || !initImGui() || !startupFrame("Checking graphics")) {
         graphicsStartupError = SDL_GetError();
         if (graphicsStartupError.empty()) graphicsStartupError = "Could not initialize the graphics renderer.";
         return 1;
     }
+    if (quit) return 0;
+    std::fprintf(stderr, "[startup] renderer qualified: interface draw and swap passed\n");
+    if (!SDL_ShowWindow(window_)) {
+        graphicsStartupError = SDL_GetError();
+        return 1;
+    }
+    // Present into the visible window before potentially slow device/content work.
+    if (!startupFrame("Preparing audio and controls")) return 1;
+    if (quit) return 0;
     desktopInit();
     if (!a.font.empty()) {
         if (!fonts::applySpec(a.font, fontSettings)) std::fprintf(stderr, "--font: cannot read '%s'\n", a.font.c_str());
@@ -2688,8 +2768,12 @@ int App::runInteractive(const CliArgs& a) {
         toast("Instance " + std::to_string(paths.instance) + ": game saves go to saves/instance-" +
                   std::to_string(paths.instance) + "/, and settings changes are not kept (except window size and controllers)",
               7.0);
+    if (!startupFrame(a.noContent || !a.content.empty() ? "Loading game" : "Opening library")) return 1;
+    if (quit) return 0;
     if (a.noContent) openNoContent();
     else if (!a.content.empty()) openContent(a.content[0]);
+    if (startupFailed_) return 1;
+    if (quit) return 0;
     library.createTexture = &VideoOut::createTextureRGBA;
     library.destroyTexture = &VideoOut::destroyTexture;
     ach.images.createTexture = &VideoOut::createTextureRGBA;   // RetroAchievements avatar / icons / badges
@@ -2702,6 +2786,8 @@ int App::runInteractive(const CliArgs& a) {
     const bool scriptFailed = !a.tvTestScript.empty() && !tvScriptBegin(a, true);
     if (scriptFailed) quit = true;
 
+    startupStatus_ = nullptr;
+    std::fprintf(stderr, "[startup] ready (%.0f ms, %u frames)\n", (now() - startupStarted_) * 1000.0, startupFrames_);
     lastTick_ = now();
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
@@ -2810,7 +2896,9 @@ int App::runInteractive(const CliArgs& a) {
         ImGui::NewFrame();
         if (a.verbose && !densityLogged_ && ++densityFrames_ >= 5) logDensity();
         bool capKb = false;
-        drawUi(*this, capKb);
+        // Developer screenshot/animation preview, using the same geometry as startup.
+        if (a.showWindow == "startup") drawStartupScreen("Loading game", now() - startupStarted_);
+        else drawUi(*this, capKb);
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (perf.on && perf.gpu) Perf::finish();

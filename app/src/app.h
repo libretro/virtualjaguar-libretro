@@ -435,6 +435,11 @@ private:
     bool initSdl(const CliArgs& a);
     bool initWindow();
     bool initImGui();
+    bool startupFrame(const char* status);
+    const char* startupStatus_ = nullptr; // non-null only before the interactive frame loop
+    double startupStarted_ = 0.0;
+    unsigned startupFrames_ = 0;
+    bool startupFailed_ = false;
     void shutdown();
     void loadConfig();
     void wireHost();
