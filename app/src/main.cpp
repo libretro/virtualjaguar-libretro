@@ -79,6 +79,7 @@ static void usage(const char* argv0) {
         "  --cheats-dir DIR      look for .cht files (libretro cheat database) in DIR too\n"
         "  --cheat-set NAME      use the cheat set NAME.cht for the loaded game (remembered)\n"
         "  --cheat-on CHEAT      turn on a database cheat by description, id or position (repeatable)\n"
+        "  --cheat-once CODE     apply a RAM code once after loading (repeatable, not saved)\n"
         "  --cheat CODE          add a manual code, hex ADDRESS:VALUE e.g. 00007D3D:05 (repeatable)\n"
         "  --cheats-community-install  headless: fetch the community cheat store (cheats.community.url in config.ini,\n"
         "                        else the project site) and install the loaded cartridge's pack\n"
@@ -292,6 +293,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--cheats-dir")) a.cheatsDir = need(s);
         else if (!std::strcmp(s, "--cheat-set")) a.cheatSet = need(s);
         else if (!std::strcmp(s, "--cheat-on")) a.cheatOn.emplace_back(need(s));
+        else if (!std::strcmp(s, "--cheat-once")) a.cheatOnceCodes.emplace_back(need(s));
         else if (!std::strcmp(s, "--cheat")) a.cheatCodes.emplace_back(need(s));
         else if (!std::strcmp(s, "--cheats-community-install")) a.cheatsCommunityInstall = true;
         else if (!std::strcmp(s, "--expect-ram")) {

@@ -37,8 +37,26 @@
 
 namespace vj {
 
+bool parseCheatValue(const std::string& text, uint32_t& value);
+
+struct CheatChoice { uint32_t value = 0; std::string label; };
+struct CheatValue {
+    unsigned bytes = 0; // zero means a compound/unsupported code, not a scalar
+    uint32_t address = 0, initial = 0, minimum = 0, maximum = 0, step = 1;
+    bool bigEndian = true;
+    bool hasRange = false; // explicit metadata, not just the storage width
+    std::vector<CheatChoice> choices;
+    bool accepts(uint32_t value) const;
+    std::string code(uint32_t value) const;
+};
+// Atomic, RAM-only one-shot: validate the WHOLE group before writing any byte.
+// Does not install a freeze or disturb the core's existing cheat list.
+bool writeCheatOnce(const std::string& code, const std::function<void(uint32_t, uint32_t, uint8_t)>& write);
+bool canApplyCheatOnce(const std::string& code);
+
 struct ChtCheat {
     std::string desc;
+    CheatValue value;
     std::string code;        // core format, segments joined by '+'; "" when unsupported
     std::string id;          // stable: 8 hex digits, FNV-1a of desc + "\n" + code
     unsigned parts = 1;      // >1: several consecutive entries ("... (Part 1)", "(Part 2)") toggled as one
@@ -112,6 +130,7 @@ struct CheatOp {
     unsigned index = 0;
     bool enabled = false;
     std::string code;
+    bool once = false;
 };
 using CheatBatch = std::vector<CheatOp>;
 
@@ -189,6 +208,12 @@ public:
     // cheat) does not end the search: the next set is tried, so a same-named supported community cheat is enabled
     // instead; false only when nothing enableable matches.
     bool setEnabledByName(const std::string& name, bool on);
+    uint32_t valueOf(const ChtCheat& c, CheatOrigin origin = CheatOrigin::Database) const;
+    bool setValue(const ChtCheat& c, uint32_t value, CheatOrigin origin = CheatOrigin::Database);
+    std::string effectiveCode(const ChtCheat& c, CheatOrigin origin = CheatOrigin::Database) const;
+    bool applyOnce(const ChtCheat& c, CheatOrigin origin = CheatOrigin::Database);
+    bool applyUserOnce(size_t index);
+    bool applyCodeOnce(const std::string& code);
     void disableAll();
     unsigned enabledCount() const;
 
@@ -220,6 +245,7 @@ private:
     void pickSet();
     void loadSelectedSet();
     void loadCommunity();
+    void applyWithOnce(const std::string& code);
 
     std::vector<std::string> dirs_;
     std::vector<ChtRef> library_;

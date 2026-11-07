@@ -97,6 +97,7 @@ struct CliArgs {
     std::string cheatsDir;                    // extra folder of .cht files
     std::string cheatSet;                     // select this cheat set (file stem) for the game
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
+    std::vector<std::string> cheatOnceCodes;  // one-shot RAM writes, never persisted
     std::vector<std::string> cheatCodes;      // add these manual codes
     bool cheatsCommunityInstall = false;      // headless: fetch the community cheat store and install the loaded cartridge's pack (#1071)
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end

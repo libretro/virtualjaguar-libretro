@@ -6,6 +6,7 @@
 #include "http.h"
 
 #include "libretro.h"
+#include "jaguar.h"
 #include "titledb.h"   // TitleDBContentCRC / TitleDBTitleName: the identity the core logs at load
 
 #include <chrono>
@@ -22,7 +23,7 @@ namespace {
 struct CliCheats {
     std::string set;
     std::vector<std::string> on;
-    std::vector<std::string> codes;
+    std::vector<std::string> codes, once;
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;
     std::string dir;
     bool failed = false;   // a --cheat-set / --cheat-on / --cheat the manager refused
@@ -70,7 +71,16 @@ uint8_t* systemRam(size_t& size) {
 // On the emulation thread (or inline): the cheat list as one command.
 void applyCheatBatch(const CheatBatch& b) {
     for (const CheatOp& o : b) {
-        if (o.reset) retro_cheat_reset();
+        if (o.once) {
+            // Same bus writes as libretro's normal cheat writer, on the emulation
+            // thread, but without ever adding this code to the per-frame list.
+            if (!writeCheatOnce(o.code, [](uint32_t address, uint32_t value, uint8_t size) {
+                if (size == 1) JaguarWriteByte(address, (uint8_t)value, UNKNOWN);
+                else if (size == 2) JaguarWriteWord(address, (uint16_t)value, UNKNOWN);
+                else if (size == 4) JaguarWriteLong(address, value, UNKNOWN);
+            })) std::fprintf(stderr, "cheats: apply once rejected (invalid RAM code)\n");
+        }
+        else if (o.reset) retro_cheat_reset();
         else retro_cheat_set(o.index, o.enabled, o.code.c_str());
     }
 }
@@ -82,13 +92,21 @@ void cheatsInit(App& app, const CliArgs& a) {
     g_cli.set = a.cheatSet;
     g_cli.on = a.cheatOn;
     g_cli.codes = a.cheatCodes;
+    g_cli.once = a.cheatOnceCodes;
     g_cli.expectRam = a.expectRam;
     g_cli.dir = a.cheatsDir;
 
     CheatManager& cm = app.cheats;
     // The cheat list is one command: posted to the emulation thread, run at once when inline or already there.
     cm.commit = [&app](CheatBatch b) {
-        app.emu.post([b = std::move(b)] { applyCheatBatch(b); });
+        const std::string game = app.cheats.game().key;
+        app.emu.post([&app, game, b = std::move(b)] {
+            // Recheck at execution, not only at the button click: a queued load
+            // or hardcore transition must not let a stale one-shot reach RAM.
+            if (app.cheats.game().key != game) return;
+            if (app.cheats.blockedNow()) { retro_cheat_reset(); return; }
+            applyCheatBatch(b);
+        });
     };
     // RetroAchievements hardcore: no cheat may reach the core.  The saved selections
     // stay on disk untouched and go back in when hardcore ends (see the callback).
@@ -152,8 +170,9 @@ void cheatsAfterLoad(App& app) {
     if (cm.blockedNow()) {
         // The command-line twins of the window's toggles are as disabled as the window:
         // they would also rewrite the saved selections.
-        if (!g_cli.set.empty() || !g_cli.on.empty() || !g_cli.codes.empty())
-            std::fprintf(stderr, "cheats: --cheat-set/--cheat-on/--cheat ignored: disabled in hardcore mode\n");
+        if (!g_cli.set.empty() || !g_cli.on.empty() || !g_cli.codes.empty() || !g_cli.once.empty())
+            std::fprintf(stderr, "cheats: --cheat-set/--cheat-on/--cheat/--cheat-once ignored: disabled in hardcore mode\n");
+        g_cli.once.clear(); // ignored means discarded, not deferred until a later game load
         const unsigned saved = cm.enabledCount();
         // app.toast / app.ach.notice here (and the toast below) run on the emulation thread in threaded mode.  That is
         // safe only because every caller is inside emu.call (the main thread is parked in busyFrame, which touches
@@ -178,6 +197,14 @@ void cheatsAfterLoad(App& app) {
         std::string err;
         if (!cm.addUser("Command line", code, err)) {
             std::fprintf(stderr, "cheats: --cheat '%s': %s\n", code.c_str(), err.c_str());
+            g_cli.failed = true;
+        }
+    }
+    std::vector<std::string> once;
+    once.swap(g_cli.once); // consumed once, never replayed on restart or a disc swap
+    for (const std::string& code : once) {
+        if (!cm.applyCodeOnce(code)) {
+            std::fprintf(stderr, "cheats: --cheat-once refused invalid RAM code\n");
             g_cli.failed = true;
         }
     }
