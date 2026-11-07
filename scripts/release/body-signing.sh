@@ -4,19 +4,41 @@
 # the SHA-256 list.  Printed to stdout; release.yml appends it to the curated
 # notes (tag) or the generated rolling body (nightly / prerelease).
 #
-#   scripts/release/body-signing.sh <release-dir> <table.md|""> <owner/repo> <default-branch>
+#   scripts/release/body-signing.sh <release-dir> <table.md|""> <owner/repo> <default-branch> [download-url]
+# A download URL folds the nightly file list into the signing table.
 set -euo pipefail
 rel=${1:?release dir}; table=${2:-}; repo=${3:?owner/repo}; branch=${4:-master}
+download_url=${5:-}
 here=$(cd "$(dirname "$0")/../.." && pwd)
 minipub="$here/docs/release-signing.pub"
 server=${GITHUB_SERVER_URL:-https://github.com}
 
 echo "## Signatures, provenance and checksums"
 echo
+if [ -n "$download_url" ]; then
+  echo '<details><summary>All files and signing status</summary>'
+  echo
+fi
 if [ -n "$table" ] && [ -s "$table" ]; then
-  cat "$table"
+  if [ -n "$download_url" ]; then
+    sed -E "s@^\| \`([A-Za-z0-9_.-]+)\` \|@| [\`\1\`]($download_url/\1) |@" "$table"
+  else
+    cat "$table"
+  fi
 else
   echo "_The signing gate did not produce a table for this run (see the workflow log)._"
+  if [ -n "$download_url" ]; then
+    echo
+    for file in "$rel"/*; do
+      [ -f "$file" ] || continue
+      name=${file##*/}
+      printf -- '- [`%s`](%s/%s)\n' "$name" "$download_url" "$name"
+    done
+  fi
+fi
+if [ -n "$download_url" ]; then
+  echo
+  echo '</details>'
 fi
 echo
 echo "Every asset above carries a GitHub build-provenance attestation that names the commit and the workflow run that built it."
