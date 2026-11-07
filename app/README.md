@@ -15,6 +15,32 @@ found in your keychain on macOS, a `.pfx` or store certificate on Windows, optio
 gitignored `.env`), run `bash app/packaging/local-package.sh --sign [--notarize] [--build-dir DIR]`: see
 "Signing locally" in [`packaging/README.md`](packaging/README.md).
 
+## Startup
+
+The main window stays hidden until the OpenGL context, interface program, and a
+complete interface draw/readback/swap succeed. On Windows, a failed native GL
+check can hand off once to bundled Mesa; both probes stay hidden, avoiding the
+brief black-window restart. CPU capability overrides are unchanged.
+
+A quiet animated startup screen then reports audio/control setup and game or
+library opening. It uses plain interface rendering, with no game filter or
+external assets, and disappears as soon as startup finishes (no minimum intro
+time). Threaded game loads keep animating via the existing wait pump. A blocking
+OS/driver call or an inline game load can still pause animation; this is not a
+watchdog for a hung driver. Optional game filters retain their existing fail-soft
+behavior and only run after the interface renderer has qualified.
+
+To check the real window path on a desktop or under Xvfb:
+
+```sh
+python3 app/tests/startup_smoke.py /path/to/virtualjaguar test/roms/yarc.j64
+```
+
+For a visual preview, use `--show-window startup` (also works with `--screenshot`).
+
+The test covers an empty launch, animated threaded loading, and the headless
+bypass. It requires a working OpenGL display, not SDL's dummy video driver.
+
 ## Build
 
 You need CMake 3.20+, a C99/C++17 toolchain and, on Linux, the SDL3 desktop dev
