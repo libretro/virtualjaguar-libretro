@@ -760,6 +760,39 @@ single instance.
   same game and choose Netplay > Join with address `127.0.0.1` and the same port. Two copies that both
   host need different ports (the window offers 42171-42174).
 
+## Emulation Server libraries
+
+Choose **File > Server library...** or **Servers...** in the game library. Enter an
+Emulation Server origin such as `http://192.168.1.10:8473`, then paste a device or
+guest access token with read permission. A server that admits your LAN connection
+can accept an empty token. **Connect** saves the server address and lists the
+libraries you can read.
+
+Select a library and **Jaguar cartridges** or **Jaguar CD**, search by title, and
+use **Load more** for additional pages. Select a game and choose **Download and
+play**. The transfer runs in the background, shows progress, and can be cancelled.
+A download can contain up to 512 files and 8 GiB.
+Completed files go under `<data>/content-server/`; the normal loader opens the
+local cartridge, CHD, CDI, CUE or playlist. **Open recent** can launch that local
+copy later. Each completed version has its own cache folder, so another download
+can coexist with a running game.
+Launch filenames include a stable game identifier to keep saves and states for
+different server games separate.
+
+Managed items verify the manifest's SHA-256 hashes. Indexed CUE/BIN sources stage
+the descriptor and its companions together, preserving their relative layout.
+Unsafe paths, missing companions, unsupported images, incomplete transfers and
+hash mismatches stop the launch. CUE `FILE` entries must use quoted, portable
+paths with forward slashes. Multi-disc playlists need a managed item containing
+all required disc files.
+
+**Remember token in credential store** uses Keychain on macOS, Credential Manager
+on Windows and Secret Service on Linux. If the store is unavailable, the token
+stays in memory for that session. The settings file keeps server addresses.
+**Forget server** removes its saved address and token. Downloads use the app's
+existing WinHTTP backend on Windows and libcurl on Linux and macOS. The server
+URL should identify the origin itself, with its port and no `/ui` suffix.
+
 ## Where files go
 
 | | |

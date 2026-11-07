@@ -21,6 +21,7 @@
 #include "cheat_store.h"
 #include "cheats.h"
 #include "config.h"
+#include "content_server_browser.h"
 #include "core_host.h"
 #include "debug/debug_session.h"
 #include "display_lock.h"
@@ -178,6 +179,7 @@ public:
     // virtualjaguar_pN_device = pad_pro (devices.h lockedCoreOptionFor) on the emulation thread: atomic.
     std::array<std::atomic<bool>, 2> proPorts{{false, false}};
     LibraryService library;   // optional game library (#838); idle until start()ed
+    ContentServerBrowser contentServers;
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
