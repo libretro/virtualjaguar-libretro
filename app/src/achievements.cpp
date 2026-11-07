@@ -571,20 +571,23 @@ bool Achievements::hardcoreNextGame() const {
 bool Achievements::hardcoreActive() const { return hardcoreNextGame() && (loading_ || gameKnown_); }
 
 void Achievements::checkSettings() {
-    settingsOk_ = true;
+    bool allowed = true;
     blocker_.clear();
-    if (!app_) return;
-    CoreHost& host = app_->host;
-    const rc_disallowed_setting_t* dis = rc_libretro_get_disallowed_settings(host.coreName());
-    if (!dis) return;
-    for (const OptionDef& d : host.optionDefs()) {
-        std::string v = host.optionValue(d);
-        if (!rc_libretro_is_setting_allowed(dis, d.key.c_str(), v.c_str())) {
-            settingsOk_ = false;
-            blocker_ = d.key + " = " + v;
-            return;
+    if (app_) {
+        CoreHost& host = app_->host;
+        const rc_disallowed_setting_t* dis = rc_libretro_get_disallowed_settings(host.coreName());
+        if (dis) for (const OptionDef& d : host.optionDefs()) {
+            std::string v = host.optionValue(d);
+            if (!rc_libretro_is_setting_allowed(dis, d.key.c_str(), v.c_str())) {
+                allowed = false;
+                blocker_ = d.key + " = " + v;
+                break;
+            }
         }
     }
+    // Publish only the finished result; refreshing a blocked setting must not
+    // briefly allow a queued cheat command while the options are being checked.
+    settingsOk_ = allowed;
 }
 
 // rc_client is driven by the emulation thread (rc_client_do_frame / rc_client_idle run there), and it raises events

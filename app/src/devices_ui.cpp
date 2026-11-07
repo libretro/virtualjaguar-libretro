@@ -81,7 +81,7 @@ void tvInputFrame(App& app, uint64_t ms) {
 
 // The windows that take the pointer from a running game, and the pad / keyboard from the TV screens beneath them.
 bool App::desktopWindowOpen() const {
-    if (showSettings || showStates || showCheats || showAbout || library.show || input.overlay.open) return true;
+    if (showSettings || showStates || showCheats || showAbout || library.show || contentServers.show || input.overlay.open) return true;
     return ImGui::GetCurrentContext() && ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
 }
 
