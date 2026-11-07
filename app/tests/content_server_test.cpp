@@ -1,6 +1,7 @@
 #include "content_server.h"
 #include "content_server_browser.h"
 #include "config.h"
+#include "m3u.h"
 #include "secret_store.h"
 #include "sha256.h"
 
@@ -170,6 +171,50 @@ static void tests(const fs::path& root) {
     const std::string disc = fixture.client().download(source, root.u8string(), &fixture.cancel);
     CHECK(bytes(fs::u8path(disc)) == cue);
     CHECK(bytes(fs::u8path(disc).parent_path().parent_path() / "tracks/Track.bin") == "bin");
+
+    // The loader keys states by the mounted disc's stem, including after a swap.
+    // Two sets (and two same-named discs in one set) must never share that key.
+    const auto downloadSet = [&](const std::string& id, bool rootPlaylist = false) {
+        const std::string prefix = rootPlaylist ? "" : "../";
+        const std::vector<std::pair<std::string, std::string>> files = {
+            {rootPlaylist ? "Game.m3u" : "playlists/Game.m3u", "\xEF\xBB\xBF#EXTM3U\r\n" + prefix +
+                "first/Disc 1.chd|First\r\n" + prefix + "second/Disc 1.chd\r\n" + prefix + "disc/Game.cue\r\n" + prefix + "disc/Game.iso\r\n"},
+            {"first/Disc 1.chd", "generated-disc-one"},
+            {"second/Disc 1.chd", "generated-disc-two"},
+            {"disc/Game.cue", cue}, {"tracks/Track.bin", "bin"}, {"disc/Game.iso", "generated-iso"}};
+        std::string body = "{\"files\":[";
+        for (size_t i = 0; i < files.size(); ++i) {
+            const std::string fileId = "set-file-" + std::to_string(i);
+            const auto& file = files[i];
+            if (i) body += ",";
+            body += "{\"id\":" + neuro::jsonQuote(fileId) + ",\"kind\":\"rom\",\"required\":true,\"relativePath\":" +
+                neuro::jsonQuote(file.first) + ",\"size\":" + std::to_string(file.second.size()) + ",\"sha256\":\"" +
+                sha256Hex(file.second.data(), file.second.size()) + "\"}";
+            fixture.responses["/api/v1/files/" + fileId + "/content"] = file.second;
+        }
+        fixture.responses["/api/v1/items/" + id + "/manifest"] = body + "]}";
+        ecs::Game game = item();
+        game.id = id;
+        return fs::u8path(fixture.client().download(game, root.u8string(), &fixture.cancel));
+    };
+    const fs::path firstSet = downloadSet("multi-disc-one");
+    const fs::path secondSet = downloadSet("multi-disc-two", true);
+    CHECK(downloadSet("multi-disc-one") == firstSet); // rewritten descriptors participate in cache verification
+    const auto firstDiscs = parseM3u(bytes(firstSet), "");
+    const auto secondDiscs = parseM3u(bytes(secondSet), "");
+    CHECK(firstDiscs.size() == 4 && secondDiscs.size() == 4);
+    for (size_t i = 0; i < std::min(firstDiscs.size(), secondDiscs.size()); ++i) {
+        const fs::path firstDisc = firstSet.parent_path() / fs::u8path(firstDiscs[i]);
+        const fs::path secondDisc = secondSet.parent_path() / fs::u8path(secondDiscs[i]);
+        CHECK(fs::exists(firstDisc) && fs::exists(secondDisc));
+        CHECK(firstDisc.stem() != secondDisc.stem());
+        CHECK(bytes(firstDisc) == bytes(secondDisc));
+        for (size_t j = 0; j < i; ++j) CHECK(firstDisc.stem() != fs::u8path(firstDiscs[j]).stem());
+        if (firstDisc.extension() == ".cue") {
+            CHECK(bytes(firstDisc) == cue);
+            CHECK(bytes(firstDisc.parent_path().parent_path() / "tracks/Track.bin") == "bin");
+        }
+    }
     const std::string unsafe = "FILE \"../../secrets.bin\" BINARY\n";
     fixture.responses["/api/v1/sources/cue/group"] = "{\"error\":null,\"files\":[{\"id\":\"cue\",\"relativePath\":\"disc/Game.cue\",\"size\":" + std::to_string(unsafe.size()) + ",\"availability\":\"local\"}]}";
     fixture.responses["/api/v1/sources/cue/content"] = unsafe;

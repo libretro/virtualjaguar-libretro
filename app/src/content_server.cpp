@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -137,6 +138,59 @@ void checkDescriptors(const std::vector<File>& files, const fs::path& folder) {
         }
         require(count > 0, "The disc descriptor has no companion files.");
     }
+}
+
+// Saves use the opened file's stem, while states use each mounted disc's stem.
+// Namespace the playlist and its discs, preserving CUE track paths within each folder.
+std::string namespaceGameFiles(std::vector<File>& files, const std::string& selected,
+                               const fs::path& folder, const std::string& identity) {
+    const bool playlist = pathExt(selected) == "m3u";
+    std::map<std::string, std::string> renamed;
+    for (const File& file : files) {
+        const std::string ext = pathExt(file.path);
+        const bool disc = ext == "cue" || ext == "chd" || ext == "cdi" || ext == "iso";
+        if (file.path != selected && !(playlist && disc)) continue;
+        std::string stem = fs::u8path(file.path).stem().u8string();
+        if (stem.size() > 120) {
+            size_t end = 120;
+            while (end && (static_cast<unsigned char>(stem[end]) & 0xc0) == 0x80) --end;
+            stem.resize(end);
+        }
+        // Include a disc's original relative path so same-named discs in separate
+        // subfolders also have distinct state keys. The key stays stable on refresh.
+        const std::string key = file.path == selected ? identity : identity + "\n" + file.path;
+        const std::string name = stem + "-ecs-" + sha256Hex(key.data(), key.size()).substr(0, 16) + "." + ext;
+        renamed.emplace(lower(file.path), (fs::u8path(file.path).parent_path() / fs::u8path(name)).generic_u8string());
+    }
+    if (playlist) for (File& file : files) {
+        if (pathExt(file.path) != "m3u") continue;
+        std::ifstream input(folder / fs::u8path(file.path), std::ios::binary);
+        const std::string original((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        require(input.good() || input.eof(), "Could not read a disc playlist.");
+        input.close();
+        std::string body;
+        const fs::path parent = fs::u8path(file.path).parent_path();
+        for (const auto& reference : parseM3u(original, "")) {
+            const fs::path resolved = (parent / fs::u8path(reference)).lexically_normal();
+            const auto found = renamed.find(lower(resolved.generic_u8string()));
+            body += found == renamed.end() ? reference : fs::u8path(found->second).lexically_relative(parent).generic_u8string();
+            body += '\n';
+        }
+        std::ofstream output(folder / fs::u8path(file.path), std::ios::binary | std::ios::trunc);
+        output.write(body.data(), std::streamsize(body.size()));
+        output.close();
+        require(bool(output), "Could not update the downloaded disc playlist.");
+        file.size = body.size();
+        file.hash = sha256Hex(body.data(), body.size());
+    }
+    for (File& file : files) {
+        const auto found = renamed.find(lower(file.path));
+        if (found == renamed.end()) continue;
+        require(!fs::exists(folder / fs::u8path(found->second)), "The game contains a conflicting launch filename.");
+        fs::rename(folder / fs::u8path(file.path), folder / fs::u8path(found->second));
+        file.path = found->second;
+    }
+    return renamed.at(lower(selected));
 }
 
 std::string launchFile(const std::vector<File>& files) {
@@ -355,22 +409,9 @@ std::string Client::download(const Game& game, const std::string& cacheRoot, con
         file.hash = digest;
     }
     checkDescriptors(files, staging.path);
-    // The existing loader names saves by file stem. Keep distinct server games from sharing saves.
-    std::string stem = fs::u8path(selected).stem().u8string();
-    if (stem.size() > 120) {
-        size_t end = 120;
-        while (end && (static_cast<unsigned char>(stem[end]) & 0xc0) == 0x80) --end;
-        stem.resize(end);
-    }
-    const std::string launchName = stem + "-ecs-" + sha256Hex(identity.data(), identity.size()).substr(0, 16) + "." + pathExt(selected);
-    const std::string launchPath = (fs::u8path(selected).parent_path() / fs::u8path(launchName)).generic_u8string();
-    require(!fs::exists(staging.path / fs::u8path(launchPath)), "The game contains a conflicting launch filename.");
-    fs::rename(staging.path / fs::u8path(selected), staging.path / fs::u8path(launchPath));
-    for (File& file : files) {
-        if (file.path == selected) file.path = launchPath;
-        fingerprint += file.path + "\n" + file.hash + "\n";
-    }
-    selected = launchPath;
+    selected = namespaceGameFiles(files, selected, staging.path, identity);
+    checkDescriptors(files, staging.path);
+    for (const File& file : files) fingerprint += file.path + "\n" + file.hash + "\n";
     checkCancel(cancel);
     fs::path final = base / sha256Hex(fingerprint.data(), fingerprint.size());
     if (fs::exists(final)) {
