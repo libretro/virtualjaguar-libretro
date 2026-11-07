@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Print the nightly's quick download table from the assets staged for upload.
-# Usage: bash scripts/release/body-downloads.sh <release-dir> <download-url>
+# Print a quick download table from the assets staged for upload.
+# Usage: bash scripts/release/body-downloads.sh <release-dir> <download-url> <tag>
 set -euo pipefail
 rel=${1:?release dir}
 download_url=${2:?download URL}
-app=VirtualJaguar-nightly
+tag=${3:?release tag}
+# Match the asset label in app-package.yml (e.g. v3.11.0 -> 3.11.0).
+asset_label=${tag#v}
+app=VirtualJaguar-$asset_label
 core=virtualjaguar_libretro
+shopt -s nullglob
+app_files=("$rel/$app"-* "$rel/virtualjaguar_${asset_label}_"*.deb)
 
 links() {
   local separator='' label file
@@ -20,22 +25,31 @@ links() {
 row() {
   local platform=$1 standalone=$2 retroarch=$3
   if [ -n "$standalone$retroarch" ]; then
-    printf '| %s | %s | %s |\n' "$platform" "${standalone:-—}" "${retroarch:-—}"
+    if [ "${#app_files[@]}" -gt 0 ]; then
+      printf '| %s | %s | %s |\n' "$platform" "${standalone:-—}" "${retroarch:-—}"
+    else
+      printf '| %s | %s |\n' "$platform" "$retroarch"
+    fi
   fi
 }
 
-echo '### Quick downloads'
+echo '## Quick downloads'
 echo
-echo '| Platform | Standalone app | Libretro core |'
-echo '|---|---|---|'
+if [ "${#app_files[@]}" -gt 0 ]; then
+  echo '| Platform | Standalone app | Libretro core |'
+  echo '|---|---|---|'
+else
+  echo '| Platform | Libretro core |'
+  echo '|---|---|'
+fi
 row 'macOS' "$(links 'Universal app (.zip)' "$app-macos-universal.zip")" \
   "$(links 'Apple Silicon' "$core-macos-arm64.dylib" 'Intel' "$core-macos-x86_64.dylib")"
 row 'Windows x64 / x86' "$(links 'x64 installer (.exe)' "$app-windows-x64-setup.exe" 'x64 portable (.zip)' "$app-windows-x64.zip")" \
   "$(links '64-bit' "$core-windows-x86_64.dll" '32-bit' "$core-windows-i686.dll")"
 row 'Windows ARM64' "$(links 'Installer (.exe)' "$app-windows-arm64-setup.exe" 'Portable (.zip)' "$app-windows-arm64.zip")" ''
-row 'Linux x86-64 / x86' "$(links 'AppImage (64-bit)' "$app-linux-x86_64.AppImage" '.deb (64-bit)' virtualjaguar_nightly_amd64.deb 'Flatpak (64-bit)' "$app-linux-x86_64.flatpak")" \
+row 'Linux x86-64 / x86' "$(links 'AppImage (64-bit)' "$app-linux-x86_64.AppImage" '.deb (64-bit)' "virtualjaguar_${asset_label}_amd64.deb" 'Flatpak (64-bit)' "$app-linux-x86_64.flatpak")" \
   "$(links '64-bit' "$core-linux-x86_64.so" '32-bit' "$core-linux-i686.so")"
-row 'Linux ARM64' "$(links 'AppImage' "$app-linux-aarch64.AppImage" '.deb' virtualjaguar_nightly_arm64.deb 'Flatpak' "$app-linux-aarch64.flatpak")" \
+row 'Linux ARM64' "$(links 'AppImage' "$app-linux-aarch64.AppImage" '.deb' "virtualjaguar_${asset_label}_arm64.deb" 'Flatpak' "$app-linux-aarch64.flatpak")" \
   "$(links 'ARM64' "$core-linux-aarch64.so")"
 row 'Android' '' "$(links 'ARM64' "$core-android-arm64-v8a.so" 'ARMv7' "$core-android-armeabi-v7a.so" \
   'x86-64' "$core-android-x86_64.so" 'x86' "$core-android-x86.so")"

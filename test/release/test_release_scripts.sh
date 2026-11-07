@@ -169,6 +169,26 @@ gate strict $NOPUB
 check_has "tampered SHA256SUMS.txt fails" "$OUT" "SHA256SUMS.txt does not match the staged files"
 cp "$T/sums.bak" "$T/rel/SHA256SUMS.txt"; command rm -f "$T/rel/SHA256SUMS.txt.orig"
 
+printf '\n== release notes ==\n'
+mkdir -p "$T/notes"
+repo=libretro/virtualjaguar-libretro
+download_url="https://github.com/$repo/releases/download/v3.11.0"
+touch "$T/notes/virtualjaguar_libretro-linux-x86_64.so"
+OUT=$(bash "$S/body-downloads.sh" "$T/notes" "$download_url" v3.11.0 2>&1); RC=$?
+check_rc "core-only table renders" "$RC" 0 "$OUT"
+check_lacks "core-only table omits the app column" "$OUT" "Standalone app"
+check_has "core link uses the release tag" "$OUT" "$download_url/virtualjaguar_libretro-linux-x86_64.so"
+touch "$T/notes/VirtualJaguar-3.11.0-windows-x64-setup.exe" "$T/notes/virtualjaguar_3.11.0_amd64.deb"
+OUT=$(bash "$S/body-downloads.sh" "$T/notes" "$download_url" v3.11.0 2>&1); RC=$?
+check_rc "tagged package table renders" "$RC" 0 "$OUT"
+check_has "tagged installer uses the versioned asset name" "$OUT" "$download_url/VirtualJaguar-3.11.0-windows-x64-setup.exe"
+check_has "tagged Debian package uses the versioned asset name" "$OUT" "$download_url/virtualjaguar_3.11.0_amd64.deb"
+check_lacks "unstaged ARM64 installer is omitted" "$OUT" "windows-arm64-setup.exe"
+OUT=$(bash "$S/body-signing.sh" "$T/rel" "$T/table.md" "$repo" master "$download_url" 2>&1); RC=$?
+check_rc "linked signing table renders" "$RC" 0 "$OUT"
+check_has "signing table is collapsed by default" "$OUT" '<details><summary>All files and signing status</summary>'
+check_has "signing result remains beside the linked file" "$OUT" "[\`virtualjaguar_libretro-linux-x86_64.so\`]($download_url/virtualjaguar_libretro-linux-x86_64.so) | core-or-tool | n/a | n/a | skipped | ✅ |"
+
 printf '\n== verify-appimage.py ==\n'
 python3 -I "$HERE/fake_appimage.py" "$T/unsigned.AppImage"
 OUT=$(python3 -I "$VA" "$T/unsigned.AppImage" 2>&1); RC=$?
