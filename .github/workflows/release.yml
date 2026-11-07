@@ -1101,6 +1101,10 @@ jobs:
           SHORT_SHA="${SHA:0:7}"
           BODY_FILE="$RUNNER_TEMP/rolling_body.md"
           RUN_URL="${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}"
+          DOWNLOAD_URL=""
+          if [ "$TAG" = nightly ]; then
+            DOWNLOAD_URL="${GITHUB_SERVER_URL}/${REPO}/releases/download/${TAG}"
+          fi
           BASE_VERSION=$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)
 
           # Where the rolling tag pointed BEFORE this run — captured here
@@ -1135,6 +1139,9 @@ jobs:
             fi
             echo "$P"
             echo
+            if [ -n "$DOWNLOAD_URL" ]; then
+              bash scripts/release/body-downloads.sh release "$DOWNLOAD_URL"
+            fi
             echo "The core logs its identity as \`${BASE_VERSION} ${SHORT_SHA}\` at startup — quote that line when reporting a bug against this build."
             echo
             echo "### Changes since the previous ${LANE,,}"
@@ -1143,16 +1150,18 @@ jobs:
             echo "${CHANGES}"
             echo '```'
             echo
-            echo "### Artifacts"
-            echo
-            echo '```'
-            find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
-            echo '```'
-            echo
+            if [ -z "$DOWNLOAD_URL" ]; then
+              echo "### Artifacts"
+              echo
+              echo '```'
+              find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
+              echo '```'
+              echo
+            fi
             echo "Each platform ships alongside a \`-debug.tar.gz\` of its split debug symbols; extract it next to the binary to get symbolised backtraces."
             echo
             bash scripts/release/body-signing.sh release "$RUNNER_TEMP/signing-table/signing-table.md" \
-              "${REPO}" "${{ github.event.repository.default_branch }}" | sed 's/^## /### /'
+              "${REPO}" "${{ github.event.repository.default_branch }}" "$DOWNLOAD_URL" | sed 's/^## /### /'
           } > "$BODY_FILE"
           echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
