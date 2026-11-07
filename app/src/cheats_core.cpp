@@ -9,6 +9,8 @@
 #include "jaguar.h"
 #include "titledb.h"   // TitleDBContentCRC / TitleDBTitleName: the identity the core logs at load
 
+#include <atomic>
+#include <memory>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -98,17 +100,27 @@ void cheatsInit(App& app, const CliArgs& a) {
 
     CheatManager& cm = app.cheats;
     // The cheat list is one command: posted to the emulation thread, run at once when inline or already there.
-    cm.commit = [&app](CheatBatch b) {
-        const std::string game = app.cheats.game().key;
-        app.emu.post([&app, game, b = std::move(b)] {
-            // Recheck at execution, not only at the button click: a queued load
+	// Publish permission while on the policy-owning UI thread (or inside a
+	// synchronous load with that thread parked). Never query Achievements from
+	// the asynchronous command: checkSettings() updates its plain fields on UI.
+	// A hardcore transition submits a reset batch and revokes pending writes.
+	const auto writesAllowed = std::make_shared<std::atomic<bool>>(false);
+	cm.commit = [&app, writesAllowed](CheatBatch b) {
+		writesAllowed->store(!app.cheats.blockedNow());
+		const std::string game = app.cheats.game().key;
+		app.emu.post([&app, writesAllowed, game, b = std::move(b)] {
+			// Recheck at execution, not only at the button click: a queued load
             // or hardcore transition must not let a stale one-shot reach RAM.
-            if (app.cheats.game().key != game) return;
-            if (app.cheats.blockedNow()) { retro_cheat_reset(); return; }
-            applyCheatBatch(b);
-        });
-    };
-    // RetroAchievements hardcore: no cheat may reach the core.  The saved selections
+            if (app.cheats.game().key != game)
+				return;
+			if (!writesAllowed->load()) {
+				retro_cheat_reset();
+				return;
+			}
+			applyCheatBatch(b);
+		});
+	};
+	// RetroAchievements hardcore: no cheat may reach the core.  The saved selections
     // stay on disk untouched and go back in when hardcore ends (see the callback).
     cm.blocked = [&app] { return !app.ach.allowCheats(); };
     app.ach.onHardcoreChanged = [&app](bool hardcore) {
