@@ -780,6 +780,34 @@ several). What is on is remembered per game (`<data>/cheats/games/<key>.ini`, ke
 by the cartridge CRC32; discs by the core's title row or file name) and sent to the
 core again after every load and state restore.
 
+**Values and one-shot writes.** Single-value cheats have a value editor. A complete
+numbered choice list in the description, such as Wolfenstein's weapon list, becomes
+a dropdown containing mutually exclusive radio buttons. Values are decimal (or
+explicitly `0x`-prefixed hexadecimal); ambiguous prose is left as a description.
+Other scalar cheats accept a numeric value (press Enter to save), bounded by the
+storage width. That bound is not a promise that every value is meaningful to the
+game. Compound/multipart cheats keep their original grouped code, rather than
+exposing a misleading single value. **Default** restores the supplied value.
+Edits are saved per game without modifying the downloaded files; editing an off
+cheat does not enable it.
+
+**Keep applied** writes every frame. **Apply once** turns off that entry's freeze,
+writes once on the emulation thread, and does not replay after a reset, state load,
+or restart. Other enabled cheats can still overwrite the same address. One-shot
+writes support main RAM only and obey revision and hardcore restrictions. Manual
+codes also have Apply once; `--cheat-once ADDRESS:VALUE` is its nonpersistent CLI
+counterpart.
+
+Legacy RetroArch entries do not carry game-specific ranges. Authors can supply
+optional VJ metadata on a scalar entry: `cheatN_vj_value_min`,
+`cheatN_vj_value_max`, and `cheatN_vj_value_step` (default 1). Bounds are inclusive;
+the original value must be in range and on the step grid. Small explicit ranges
+(up to 16 values) become radio choices; larger ranges use the numeric editor.
+Malformed metadata disables editing while preserving the original cheat.
+BigPEmu's source API supports bounded integer settings, but the current source
+converter emits those as separate fixed-value entries; it does not yet emit these
+range extensions. Values are never inferred from neighboring memory addresses.
+
 The cheat files are not committed to this repository (the libretro database is
 CC BY-SA 4.0), but they are **bundled with builds**: configure downloads the 41
 `cht/Atari - Jaguar` files of one pinned libretro-database commit (SHA-256 per file)
