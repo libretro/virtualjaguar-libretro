@@ -154,7 +154,8 @@ else()
 endif()
 
 FetchContent_Declare(imgui
-    URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8-docking.tar.gz
+    URL      https://codeload.github.com/ocornut/imgui/tar.gz/refs/tags/v1.92.8-docking
+             https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8-docking.tar.gz
     URL_HASH SHA256=ca0653454ed371b7a87e9b0bc29a5d15c9be7f7c0fbe778042fc48c71df1d3d8
     DOWNLOAD_EXTRACT_TIMESTAMP ON)
 FetchContent_GetProperties(imgui)
@@ -177,7 +178,8 @@ if(VJ_APP_FREETYPE)
     set(_vj_saved_shared ${BUILD_SHARED_LIBS})
     set(BUILD_SHARED_LIBS OFF)
     FetchContent_Declare(freetype
-        URL      https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-1.tar.gz
+        URL      https://codeload.github.com/freetype/freetype/tar.gz/refs/tags/VER-2-14-1
+                 https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-1.tar.gz
         URL_HASH SHA256=44bd69d1f0750603410cfd4f26f1c5523c5a3a087a2dfa8639b757dc7c6677be
         DOWNLOAD_EXTRACT_TIMESTAMP ON
         EXCLUDE_FROM_ALL)
