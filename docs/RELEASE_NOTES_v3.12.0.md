@@ -42,8 +42,15 @@ Cloud tests exercise windowed OpenGL startup and bundled shader presets on
 Windows x64/ARM64, Linux and macOS. Release packaging also checks the Windows
 portable ZIP and installed application. Download verification uses build
 provenance and the per-artifact verification table attached to the release.
+Windows website downloads are unsigned in this release; Microsoft Store
+packages are signed separately by Microsoft when published.
 
 ## Compatibility and limitations
+
+The 155-title cartridge and 28-case CD boot sweeps have no backward moves
+from 3.11.0. The accurate-blitter cartridge sweep matches the default
+sweep's boot stages and watchdog results.
+Gorf 2000 reaches game code in both HLE and real-BIOS boot modes.
 
 Core options and v17 savestates carry over from 3.11.0. RISC pipeline measurement
 tests were added without changing the timing model (#1158).
