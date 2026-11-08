@@ -29,6 +29,13 @@ and graphics testing across desktop platforms.
 - Correct the Mac App Store library build configuration for persistent
   bookmarks, and improve font-worker validation (#1176, #1175).
 
+## Picture
+
+- The picture now covers the whole visible line, so games no longer lose columns
+  at the left edge. The standard NTSC frame grows from 326 to 352 pixels wide
+  (345 on PAL), and columns past a game's display end show the border color, as
+  on hardware. Screenshots and windows use the wider frame (#1191).
+
 ## Packaging and verification
 
 Cloud tests exercise windowed OpenGL startup and bundled shader presets on
