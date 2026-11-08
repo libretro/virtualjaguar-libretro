@@ -7,7 +7,7 @@
  *
  *   CARTPROBE rom="<path>" frames=<rendered> w=<W> h=<H> pc_valid=<0|1> \
  *       pc=$<FINALPC> \
- *       nonblack_max_pct=<peak %% of any frame lit> lit_frames=<frames >1%% lit> \
+ *       nonblack_max_pct=<peak %% of any frame lit> lit_frames=<frames meeting --lit-percent (default 1)> \
  *       motion=<distinct sampled frame hashes> \
  *       audio_nonsilent=<samples> audio_onset=<frame|-1> \
  *       bios_ran=<0|1> handoff=<frame|-1> final_op=$<WORD> halt_frames=<n> \
@@ -123,6 +123,10 @@ typedef struct {
     probe_video_state scored;
 } probe_video_pair;
 
+/* The demo suite supplies its configured visibility threshold. Cartridge
+ * matrix callers retain the default one-percent criterion. */
+static double probe_lit_percent = 1.0;
+
 static void probe_video_track(probe_video_state *st, unsigned width,
                               unsigned height, unsigned nonblack,
                               uint32_t hash)
@@ -130,7 +134,8 @@ static void probe_video_track(probe_video_state *st, unsigned width,
     st->last_nonblack = nonblack;
     if (st->last_nonblack > st->max_nonblack)
         st->max_nonblack = st->last_nonblack;
-    if (st->last_nonblack * 100u > width * height)
+    if (nonblack && (double)nonblack * 100.0 >=
+        (double)width * height * probe_lit_percent)
         st->lit_frames++;
     st->frames++;
     st->last_w = width;
@@ -439,10 +444,26 @@ int main(int argc, char **argv)
     cfg.quiet = 1;
     if (!harness_init_from_args(&cfg, argc, argv))
         return 2;
-    /* The harness skips flags it does not know; --post-handoff is ours. */
-    for (i = 1; (int)i + 1 < argc; i++)
+    /* The harness skips flags it does not know. */
+    for (i = 1; (int)i < argc; i++) {
         if (strcmp(argv[i], "--post-handoff") == 0)
-            boot.post_handoff = (unsigned)strtoul(argv[i + 1], NULL, 10);
+            boot.post_handoff = (int)i + 1 < argc
+                ? (unsigned)strtoul(argv[i + 1], NULL, 10) : 0;
+        else if (strcmp(argv[i], "--lit-percent") == 0) {
+            char *end;
+            double value;
+            if ((int)i + 1 >= argc) {
+                fprintf(stderr, "--lit-percent requires a percentage in (0, 100]\n");
+                return 2;
+            }
+            value = strtod(argv[++i], &end);
+            if (*end || !(value > 0.0 && value <= 100.0)) {
+                fprintf(stderr, "--lit-percent requires a percentage in (0, 100]\n");
+                return 2;
+            }
+            probe_lit_percent = value;
+        }
+    }
     cfg.video_callback = probe_video_cb;
     cfg.video_callback_data = &vpair;
 

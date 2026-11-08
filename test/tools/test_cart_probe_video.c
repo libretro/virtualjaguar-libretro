@@ -38,6 +38,15 @@ int main(void)
     probe_video_cb(&pair, pixels, 8, 8, sizeof(pixels[0]));
     assert(pair.whole.last_nonblack == 0);
     assert(pair.whole.lit_frames == 0);
+    /* A demo's configured 0.5% must not secretly require 1% in this probe. */
+    memset(&pair, 0, sizeof(pair));
+    probe_video_track(&pair.whole, 100, 100, 75, 1);
+    assert(pair.whole.lit_frames == 0);
+    probe_lit_percent = 0.5;
+    probe_video_track(&pair.whole, 100, 100, 75, 2);
+    assert(pair.whole.lit_frames == 1);
+    probe_video_track(&pair.whole, 100, 100, 0, 3);
+    assert(pair.whole.lit_frames == 1);
     puts("cart probe video: stripe phases, pitch, motion and black passed");
     return 0;
 }
