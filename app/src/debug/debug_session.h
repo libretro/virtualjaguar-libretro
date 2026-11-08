@@ -212,7 +212,7 @@ public:
         return enabled() && t.toggle && (!t.needsHalt || halted());
     }
     // Greyed placeholders for the windows the later work packages add: Memory, CLUT, Cheat scanner, CPU,
-    // Objects, Blitter, Textures, Audio scope.
+    // Symbols, Objects, Blitter, Textures, Audio scope.
     void registerPlaceholderTools();
     // Asks every open tool window to close (hardcore, a content change).
     void closeAllTools(const char* why);

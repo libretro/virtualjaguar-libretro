@@ -442,6 +442,8 @@ set(VJ_APP_SOURCES
     src/debug/blitter_ui.cpp
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
+    src/debug/symbol_table.cpp
+    src/debug/symbols_ui.cpp
     src/desktop.cpp
     src/tv_script.cpp
     src/platform/commands.cpp
