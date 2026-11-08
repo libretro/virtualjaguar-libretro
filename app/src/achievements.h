@@ -224,17 +224,19 @@ private:
     mutable std::recursive_mutex clientMu_;
     rc_client_t* client_ = nullptr;
     AchHttp http_;
-    bool enabled_ = true;
-    bool hardcoreWanted_ = false;
+    // Policy inputs are also read by queued cheat commands on the emulation thread.
+    // UI setters and the periodic settings check must publish them without a data race.
+    std::atomic<bool> enabled_{true};
+    std::atomic<bool> hardcoreWanted_{false};
     bool unofficial_ = false;
-    bool loginPending_ = false;
+    std::atomic<bool> loginPending_{false};
     bool tokenInSettings_ = false;   // the token is in config.ini (no system keyring), not in the credential store
-    bool loading_ = false;           // an identify/load request is in flight
-    bool gameKnown_ = false;         // the current content has an achievement set
+    std::atomic<bool> loading_{false};   // an identify/load request is in flight
+    std::atomic<bool> gameKnown_{false}; // the current content has an achievement set
     bool resetPending_ = false;      // rc_client asked for a reset (hardcore just turned on)
     bool restartTried_ = false;      // the pending restart was attempted already (cheat reset posted, reload line logged)
     bool restartGaveUpLogged_ = false;
-    bool settingsOk_ = true;
+    std::atomic<bool> settingsOk_{true};
     std::atomic<bool> memoryReady_{false};
     bool loadFailed_ = false;        // the last identify/load attempt did not produce a tracked game
     unsigned unlockedBeforePoke_ = 0;

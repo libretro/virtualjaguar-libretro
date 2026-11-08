@@ -594,6 +594,7 @@ bool App::startupFrame(const char* status) {
 }
 
 void App::shutdown() {
+    contentServers.stop();
     beginQuit();   // a hosted halt ends within one pump wait; the auto-save and the unload below need the core out of it
     // Quitting: keep where the game was -- but never wait on a core that is still halted after beginQuit's bounded wait, and
     // never past 1.5 s (the save's give-up polls the clock): the unload below and the join are the backstop.
@@ -2780,6 +2781,8 @@ int App::runInteractive(const CliArgs& a) {
     ach.images.destroyTexture = &VideoOut::destroyTexture;
     // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
     library.start(paths, cfg, !host.isLoaded() && !homeLibrary && !tvMode.active());   // (TV mode's Library is the TV screen, never this window)
+    contentServers.init(cfg, paths.root, paths.instance <= 1);
+    if (a.showWindow == "server-library") contentServers.show = true;
     if (a.showWindow == "library") library.show = true;
 
     // dev: drive the TV menu from a script (a screenshot of it).  A script that cannot start ends the run through the normal teardown.

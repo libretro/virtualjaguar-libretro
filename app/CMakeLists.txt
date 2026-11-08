@@ -398,6 +398,9 @@ set(VJ_APP_SOURCES
     src/settings_reset.cpp
     src/settings_reset_ui.cpp
     src/library_ui.cpp
+    src/content_server.cpp
+    src/content_server_browser.cpp
+    src/content_server_ui.cpp
     src/bios_ui.cpp
     src/cheats.cpp
     src/cheat_store.cpp
@@ -611,6 +614,7 @@ if(VJ_APP_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter)   # gdb_threaded_halt (VJEmuThreadTests.cmake) drives a gdb client from Python
     include(VJSmokeTests)
+    include(VJContentServerTests)
     include(VJAchTests)
     include(VJCheatTests)
     include(VJNetplayTests)

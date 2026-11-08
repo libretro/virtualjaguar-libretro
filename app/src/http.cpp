@@ -21,6 +21,35 @@ namespace {
 [[maybe_unused]] bool schemeOk(const std::string& url) {
     return url.compare(0, 8, "https://") == 0 || url.compare(0, 7, "http://") == 0;
 }
+
+[[maybe_unused]] bool tokenOk(const Options& options, Response& resp) {
+    for (unsigned char c : options.bearerToken) {
+        if (c <= 32 || c >= 127) {
+            resp.error = "invalid access token";
+            return false;
+        }
+    }
+    return true;
+}
+
+[[maybe_unused]] bool receive(Response& resp, const Options& options, const void* data, size_t size,
+                             uint64_t maxBytes) {
+    if (size > maxBytes - resp.bytesReceived) {
+        resp.error = "response too large";
+        return false;
+    }
+    if (options.write) {
+        if (!options.write(data, size)) {
+            resp.error = "could not write download";
+            return false;
+        }
+    } else {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        resp.body.insert(resp.body.end(), bytes, bytes + size);
+    }
+    resp.bytesReceived += size;
+    return true;
+}
 }  // namespace
 
 #if defined(VJ_HTTP_CURL)
@@ -29,20 +58,15 @@ namespace {
 
 struct Ctx {
     Response* resp;
-    size_t maxBytes;
+    uint64_t maxBytes;
     const std::atomic<bool>* cancel;
-    bool tooBig = false;
+    const Options* options;
 };
 
 size_t onWrite(char* p, size_t sz, size_t n, void* ud) {
     Ctx* c = (Ctx*)ud;
     size_t len = sz * n;
-    if (c->resp->body.size() + len > c->maxBytes) {
-        c->tooBig = true;
-        return 0;   // aborts the transfer
-    }
-    c->resp->body.insert(c->resp->body.end(), (unsigned char*)p, (unsigned char*)p + len);
-    return len;
+    return receive(*c->resp, *c->options, p, len, c->maxBytes) ? len : 0;
 }
 
 int onProgress(void* ud, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
@@ -57,8 +81,10 @@ std::once_flag g_curlInit;
 bool available() { return true; }
 const char* backendName() { return "libcurl"; }
 
-bool get(const std::string& url, Response& resp, size_t maxBytes, const std::atomic<bool>* cancel) {
+bool get(const std::string& url, Response& resp, uint64_t maxBytes, const std::atomic<bool>* cancel,
+         const Options& options) {
     resp = Response();
+    if (!tokenOk(options, resp)) return false;
     if (!schemeOk(url)) {
         resp.error = "unsupported URL scheme";
         return false;
@@ -76,11 +102,17 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
         resp.error = "curl_easy_init failed";
         return false;
     }
-    Ctx ctx{&resp, maxBytes, cancel};
+    Ctx ctx{&resp, maxBytes, cancel, &options};
+    curl_slist* headers = nullptr;
+    if (!options.bearerToken.empty()) {
+        const std::string auth = "Authorization: Bearer " + options.bearerToken;
+        headers = curl_slist_append(headers, auth.c_str());
+        curl_easy_setopt(h, CURLOPT_HTTPHEADER, headers);
+    }
     char errbuf[CURL_ERROR_SIZE] = {0};
     curl_easy_setopt(h, CURLOPT_URL, url.c_str());
     curl_easy_setopt(h, CURLOPT_USERAGENT, "VirtualJaguar/" VJ_APP_VERSION " (+https://github.com/libretro/virtualjaguar-libretro)");
-    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, options.followRedirects && options.bearerToken.empty() ? 1L : 0L);
     curl_easy_setopt(h, CURLOPT_MAXREDIRS, 5L);
 #if LIBCURL_VERSION_NUM >= 0x075500
     curl_easy_setopt(h, CURLOPT_PROTOCOLS_STR, "http,https");
@@ -89,7 +121,7 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
     curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(h, CURLOPT_LOW_SPEED_LIMIT, 1L);   // stalled for 20 s -> give up
     curl_easy_setopt(h, CURLOPT_LOW_SPEED_TIME, 20L);
-    curl_easy_setopt(h, CURLOPT_TIMEOUT, 120L);
+    curl_easy_setopt(h, CURLOPT_TIMEOUT, options.write ? 0L : 120L);
     curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(h, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, onWrite);
@@ -102,10 +134,10 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
     long status = 0;
     curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(h);
+    curl_slist_free_all(headers);
     if (rc != CURLE_OK) {
-        if (ctx.tooBig) resp.error = "response too large";
-        else if (cancel && cancel->load()) resp.error = "cancelled";
-        else resp.error = errbuf[0] ? errbuf : curl_easy_strerror(rc);
+        if (cancel && cancel->load()) resp.error = "cancelled";
+        else if (resp.error.empty()) resp.error = errbuf[0] ? errbuf : curl_easy_strerror(rc);
         resp.body.clear();
         return false;
     }
@@ -140,8 +172,10 @@ struct Handle {
 bool available() { return true; }
 const char* backendName() { return "WinHTTP"; }
 
-bool get(const std::string& url, Response& resp, size_t maxBytes, const std::atomic<bool>* cancel) {
+bool get(const std::string& url, Response& resp, uint64_t maxBytes, const std::atomic<bool>* cancel,
+         const Options& options) {
     resp = Response();
+    if (!tokenOk(options, resp)) return false;
     if (!schemeOk(url)) {
         resp.error = "unsupported URL scheme";
         return false;
@@ -184,7 +218,17 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
         resp.error = "WinHttpOpenRequest failed";
         return false;
     }
-    if (!WinHttpSendRequest(req.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+    if (!options.followRedirects || !options.bearerToken.empty()) {
+        DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+        if (!WinHttpSetOption(req.h, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof policy)) {
+            resp.error = "could not disable redirects";
+            return false;
+        }
+    }
+    const std::wstring headers = options.bearerToken.empty()
+        ? std::wstring() : widen("Authorization: Bearer " + options.bearerToken + "\r\n");
+    if (!WinHttpSendRequest(req.h, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
+                           (DWORD)headers.size(), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(req.h, nullptr)) {
         resp.error = "request failed (error " + std::to_string((unsigned long)GetLastError()) + ")";
         return false;
@@ -209,12 +253,10 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
             return false;
         }
         if (got == 0) break;
-        if (resp.body.size() + got > maxBytes) {
-            resp.error = "response too large";
+        if (!receive(resp, options, chunk.data(), got, maxBytes)) {
             resp.body.clear();
             return false;
         }
-        resp.body.insert(resp.body.end(), chunk.begin(), chunk.begin() + got);
     }
     resp.status = (int)status;
     return true;
@@ -225,7 +267,7 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
 bool available() { return false; }
 const char* backendName() { return "none"; }
 
-bool get(const std::string& url, Response& resp, size_t, const std::atomic<bool>*) {
+bool get(const std::string& url, Response& resp, uint64_t, const std::atomic<bool>*, const Options&) {
     resp = Response();
     (void)url;
     resp.error = "this build has no HTTP support";
