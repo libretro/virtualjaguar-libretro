@@ -62,7 +62,7 @@ try {
         $process.Dispose()
         if ($exitCode -ne 0) { throw "Installed app exited $exitCode" }
     }
-    Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', "`"$rom`"")
+    Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'e33e2c61', "`"$rom`"")
     if ((Get-FileHash $original -Algorithm SHA256).Hash -ne $metadata.sha256) { throw 'Original Store candidate changed' }
     'PASS: test-signed installation and installed headless hash. Manual GUI/controller/audio/upgrade checks remain.' | Set-Content (Join-Path $out 'RESULT.txt')
 } finally {

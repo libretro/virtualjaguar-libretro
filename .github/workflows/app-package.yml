@@ -80,7 +80,7 @@ permissions:
 
 env:
   # The frame hash of the in-tree public ROM after 300 frames (app/cmake/VJSmokeTests.cmake).
-  SMOKE_HASH: f4c30ea3
+  SMOKE_HASH: e33e2c61
   SMOKE_ROM: test/roms/yarc.j64
   # Discord Rich Presence (#833): the CMake default is the project's application ID.  The repository variable
   # DISCORD_APP_ID, when set, overrides it (each configure below passes it only when non-empty, so an unset

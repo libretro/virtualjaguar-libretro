@@ -77,8 +77,8 @@
 
 /* src/tom/tom.c DEFAULT_LEFT_VISIBLE_HC / _PAL.  Restated, not derived:
  * if either constant moves, this test is meant to notice. */
-#define LEFT_VISIBLE_HC_NTSC  (208 - 16 - (1 * 4))
-#define LEFT_VISIBLE_HC_PAL   (208 - 16 - (-3 * 4))
+#define LEFT_VISIBLE_HC_NTSC  125   /* HBE of the stock blanking (#1191) */
+#define LEFT_VISIBLE_HC_PAL   158
 
 /* Balloons RAM map, from a byte-level disassembly of the ROM (loaded at
  * $4000 as a JST_RAW_BINARY).  Word-sized and big-endian unless noted. */

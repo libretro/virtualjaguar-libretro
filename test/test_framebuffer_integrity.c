@@ -54,12 +54,17 @@ const char *__lsan_default_suppressions(void) {
 
 /* Maximum number of leading all-black columns before we flag a
  * screen position shift. If rendering is active, the first content
- * should appear within this many columns. */
-#define MAX_LEADING_BLACK_COLS 10
+ * should appear within this many columns.  yarc's picture starts at
+ * line-buffer x=11; since the window opens at the hardware blanking edge
+ * (HC 125, #1191) rather than HC 188, those 11 columns are its real left
+ * margin, so the bound is 16 -- still well short of a 1-character shift. */
+#define MAX_LEADING_BLACK_COLS 16
 
 /* Trailing side is more lenient: the framebuffer may be wider than
- * the active rendering area (e.g. 326px wide for 320px content). */
-#define MAX_TRAILING_BLACK_COLS 16
+ * the active rendering area -- 352px wide for 320px content since the
+ * window covers the whole unblanked line (#1191), so up to 32 columns
+ * of margin split between the two sides. */
+#define MAX_TRAILING_BLACK_COLS 32
 
 /* Alpha consistency: what fraction of non-black pixels must share
  * the same X-channel value for the test to pass. */
@@ -367,7 +372,7 @@ int main(int argc, char **argv)
 
     {
         unsigned trailing_black_cols = 0;
-        for (x = (unsigned)w; x > 0 && ((unsigned)w - x) < MAX_LEADING_BLACK_COLS + 5; ) {
+        for (x = (unsigned)w; x > 0 && ((unsigned)w - x) < MAX_TRAILING_BLACK_COLS + 5; ) {
             x--;
             col_has_content = 0;
             for (y = 0; y < (unsigned)h; y++) {

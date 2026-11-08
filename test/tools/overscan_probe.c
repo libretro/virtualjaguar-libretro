@@ -44,7 +44,7 @@
 #define GREEN          0xFF00FC38u
 #define SENTINEL       0xFFFF00FFu
 #define MAX_CENSUS     24
-#define LEFT_HC        188      /* DEFAULT_LEFT_VISIBLE_HC, NTSC */
+#define LEFT_HC        125      /* DEFAULT_LEFT_VISIBLE_HC, NTSC (188 before #1191) */
 
 /* TOM register offsets (see src/tom/tom.c). */
 #define R_VMODE  0x28

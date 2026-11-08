@@ -300,7 +300,7 @@ static void testScreenMapping() {
     g.vp = 523;
     g.vmode = 0;   // PWIDTH 1
     CHECK(!g.pal());
-    CHECK_EQ(opLeftVisibleHC(g), 188);
+    CHECK_EQ(opLeftVisibleHC(g), 125);   // tom.c DEFAULT_LEFT_VISIBLE_HC (#1191)
     CHECK_EQ(opTopVisible(g), 31);
     Bm b;
     b.ypos = 51;
@@ -309,7 +309,7 @@ static void testScreenMapping() {
     b.iwidth = 4;   // 32 px at 8 bpp
     OpScreenRect r = opScreenRect(b.decode(), g);
     CHECK(r.valid);
-    CHECK_EQ((int)r.x, 30);     // (208-188)/1 + 10
+    CHECK_EQ((int)r.x, 93);     // (208-125)/1 + 10
     CHECK_EQ((int)r.y, 10);     // (51-31)/2
     CHECK_EQ((int)r.w, 32);
     CHECK_EQ((int)r.h, 20);
@@ -325,7 +325,7 @@ static void testScreenMapping() {
     g.vdb = 0;
     CHECK(g.pal());
     CHECK_EQ(opTopVisible(g), 67);
-    CHECK_EQ(opLeftVisibleHC(g), 204);
+    CHECK_EQ(opLeftVisibleHC(g), 158);
 
     // REFLECT: XPOS is the right edge.  PWIDTH 8 (vmode bits 9-11 = 7) doubles columns (scale = 8/4).
     Bm rf;
@@ -334,7 +334,7 @@ static void testScreenMapping() {
     rf.iwidth = 1;
     rf.ypos = 40;
     OpScreenGeom n;
-    n.hdb1 = 188;
+    n.hdb1 = 125;   // == the NTSC left edge, so start = 0
     n.vdb = 40;
     n.vp = 523;
     CHECK_EQ((int)opScreenRect(rf.decode(), n).x, 100 - 7);

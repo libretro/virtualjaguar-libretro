@@ -162,7 +162,7 @@ for selection in ['core', 'app', 'both']:
     if selection in ['app', 'both']:
         for p in sentinels:
             assert p.read_text() == 'qualification user data', f'update lost user data: {p}'
-        run([exe, '--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', repo/'test/roms/yarc.j64'], selection+'-updated-launch')
+        run([exe, '--headless', '--frames', '300', '--expect-hash', 'e33e2c61', repo/'test/roms/yarc.j64'], selection+'-updated-launch')
 if windows:
     # Exercise the downloaded Inno installer too, not just the portable updater.
     asset_name = f'VirtualJaguar-{args.tag}-windows-x64-setup.exe'
@@ -183,7 +183,7 @@ if windows:
     data.parent.mkdir(parents=True, exist_ok=True); data.write_text('preserve through setup lifecycle')
     setup_cmd = [setup, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/DIR='+str(installed)]
     run(setup_cmd, 'setup-install')
-    run([installed/'virtualjaguar.exe', '--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', repo/'test/roms/yarc.j64'], 'setup-launch')
+    run([installed/'virtualjaguar.exe', '--headless', '--frames', '300', '--expect-hash', 'e33e2c61', repo/'test/roms/yarc.j64'], 'setup-launch')
     if (installed/'portable.txt').exists():
         raise RuntimeError('Installed app unexpectedly enables portable mode')
     run(setup_cmd, 'setup-update')
