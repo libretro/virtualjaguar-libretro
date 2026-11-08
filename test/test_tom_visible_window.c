@@ -44,18 +44,19 @@ uint8_t tomRam8[0x4000];
 #define VP    0x3E
 #define HDB1  0x38
 #define HDE   0x3C
+#define HP    0x2E
 
 /* Screen constants (from tom.h) */
-#define VIRTUAL_SCREEN_WIDTH  326
+#define VIRTUAL_SCREEN_WIDTH  352
 
 /* Visible window defaults (from tom.c) */
-#define DEFAULT_LEFT_VISIBLE_HC       (208 - 16 - (1 * 4))
-#define DEFAULT_RIGHT_VISIBLE_HC      (DEFAULT_LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
+#define DEFAULT_LEFT_VISIBLE_HC       125
+#define DEFAULT_RIGHT_VISIBLE_HC      1534
 #define DEFAULT_TOP_VISIBLE_VC        31
 #define DEFAULT_BOTTOM_VISIBLE_VC     511
 
-#define DEFAULT_LEFT_VISIBLE_HC_PAL   (208 - 16 - (-3 * 4))
-#define DEFAULT_RIGHT_VISIBLE_HC_PAL  (DEFAULT_LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
+#define DEFAULT_LEFT_VISIBLE_HC_PAL   158
+#define DEFAULT_RIGHT_VISIBLE_HC_PAL  1538
 #define DEFAULT_TOP_VISIBLE_VC_PAL    67
 #define DEFAULT_BOTTOM_VISIBLE_VC_PAL 579
 
@@ -119,17 +120,31 @@ static uint32_t TOMGetLeftVisibleHC(void)
    return FALLBACK_LEFT_HC;
 }
 
+static uint32_t TOMLinearHC(uint16_t value)
+{
+   uint32_t hp = (uint32_t)(GET16(tomRam8, HP) & 0x03FF);
+
+   if (value & 0x0400)
+      return (uint32_t)(value & 0x03FF) + hp + 1;
+   return (uint32_t)(value & 0x03FF);
+}
+
 static uint32_t TOMGetRightVisibleHC(void)
 {
    uint16_t hde = GET16(tomRam8, HDE);
    uint32_t left = TOMGetLeftVisibleHC();
-   uint32_t max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
+   uint32_t max_right = FALLBACK_RIGHT_HC;
+   uint32_t hde_hc;
 
-   if (hde == 0 || (uint32_t)hde <= left)
+   if (hde == 0 || (GET16(tomRam8, HP) & 0x03FF) == 0)
       return max_right;
 
-   if ((uint32_t)hde < max_right)
-      return (uint32_t)hde;
+   hde_hc = TOMLinearHC(hde);
+   if (hde_hc <= left)
+      return max_right;
+
+   if (hde_hc < max_right)
+      return hde_hc;
    return max_right;
 }
 
@@ -334,56 +349,95 @@ static void test_left_always_fallback_pal(void)
 
 static void test_right_hde_zero(void)
 {
-   uint32_t left, max_right;
    reset_regs();
    vjs.hardwareTypeNTSC = 1;
+   SET16(tomRam8, HP, 844);
    SET16(tomRam8, HDE, 0);
-   left = (uint32_t)DEFAULT_LEFT_VISIBLE_HC;
-   max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
-   CHECK(TOMGetRightVisibleHC() == max_right,
+   CHECK(TOMGetRightVisibleHC() == (uint32_t)DEFAULT_RIGHT_VISIBLE_HC,
          "right(HDE=0): got %u, expected %u",
-         (unsigned)TOMGetRightVisibleHC(), (unsigned)max_right);
+         (unsigned)TOMGetRightVisibleHC(), (unsigned)DEFAULT_RIGHT_VISIBLE_HC);
 }
 
-static void test_right_hde_valid(void)
+/* #1191: Atari's stock NTSC init writes HDE = $6BF, tick 703 of the SECOND
+ * half-line = 703 + 845 = 1548, just past the blanking edge -> full window.
+ * Read raw (1727) it would also clamp, which is why the old linear compare
+ * never showed a difference; the narrow case below is where it matters. */
+static void test_right_hde_stock_ntsc(void)
 {
-   uint32_t left;
    reset_regs();
    vjs.hardwareTypeNTSC = 1;
-   SET16(tomRam8, HDE, 1400);
-   left = (uint32_t)DEFAULT_LEFT_VISIBLE_HC;
-   /* 1400 should be > left (188) and < max_right (188 + 1304 = 1492) */
-   CHECK(TOMGetRightVisibleHC() == 1400,
-         "right(HDE=1400): got %u, expected 1400",
+   SET16(tomRam8, HP, 844);
+   SET16(tomRam8, HDE, 0x06BF);
+   CHECK(TOMGetRightVisibleHC() == (uint32_t)DEFAULT_RIGHT_VISIBLE_HC,
+         "right(stock NTSC HDE=$6BF): got %u, expected %u",
+         (unsigned)TOMGetRightVisibleHC(), (unsigned)DEFAULT_RIGHT_VISIBLE_HC);
+}
+
+static void test_right_hde_stock_pal(void)
+{
+   reset_regs();
+   vjs.hardwareTypeNTSC = 0;
+   SET16(tomRam8, HP, 850);
+   SET16(tomRam8, HDE, 0x06B1);   /* 689 + 851 = 1540 > 1538 */
+   CHECK(TOMGetRightVisibleHC() == (uint32_t)DEFAULT_RIGHT_VISIBLE_HC_PAL,
+         "right(stock PAL HDE=$6B1): got %u, expected %u",
+         (unsigned)TOMGetRightVisibleHC(), (unsigned)DEFAULT_RIGHT_VISIBLE_HC_PAL);
+}
+
+/* A narrow HDE is decoded through the half-line bit: $578 is tick 376 of the
+ * second half = 376 + 845 = 1221, not the raw 1400. */
+static void test_right_hde_narrow_second_half(void)
+{
+   reset_regs();
+   vjs.hardwareTypeNTSC = 1;
+   SET16(tomRam8, HP, 844);
+   SET16(tomRam8, HDE, 0x0578);
+   CHECK(TOMGetRightVisibleHC() == 1221,
+         "right(HDE=$578): got %u, expected 1221",
          (unsigned)TOMGetRightVisibleHC());
-   (void)left;
 }
 
-static void test_right_hde_exceeds_max(void)
+static void test_right_hde_first_half(void)
 {
-   uint32_t left, max_right;
    reset_regs();
    vjs.hardwareTypeNTSC = 1;
-   SET16(tomRam8, HDE, 3000);
-   left = (uint32_t)DEFAULT_LEFT_VISIBLE_HC;
-   max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
-   CHECK(TOMGetRightVisibleHC() == max_right,
-         "right(HDE=3000>max): got %u, expected %u",
-         (unsigned)TOMGetRightVisibleHC(), (unsigned)max_right);
+   SET16(tomRam8, HP, 844);
+   SET16(tomRam8, HDE, 700);   /* first half, linear 700 */
+   CHECK(TOMGetRightVisibleHC() == 700,
+         "right(HDE=700): got %u, expected 700",
+         (unsigned)TOMGetRightVisibleHC());
+}
+
+static void test_right_hp_unprogrammed(void)
+{
+   reset_regs();
+   vjs.hardwareTypeNTSC = 1;
+   SET16(tomRam8, HP, 0);
+   SET16(tomRam8, HDE, 0x0578);
+   CHECK(TOMGetRightVisibleHC() == (uint32_t)DEFAULT_RIGHT_VISIBLE_HC,
+         "right(HP=0): got %u, expected %u",
+         (unsigned)TOMGetRightVisibleHC(), (unsigned)DEFAULT_RIGHT_VISIBLE_HC);
 }
 
 static void test_right_hde_le_left(void)
 {
-   uint32_t left, max_right;
    reset_regs();
    vjs.hardwareTypeNTSC = 1;
-   /* HDE=100, which is <= left (188) */
+   SET16(tomRam8, HP, 844);
+   /* HDE=100, which is <= left (125) */
    SET16(tomRam8, HDE, 100);
-   left = (uint32_t)DEFAULT_LEFT_VISIBLE_HC;
-   max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
-   CHECK(TOMGetRightVisibleHC() == max_right,
+   CHECK(TOMGetRightVisibleHC() == (uint32_t)DEFAULT_RIGHT_VISIBLE_HC,
          "right(HDE<=left): got %u, expected %u",
-         (unsigned)TOMGetRightVisibleHC(), (unsigned)max_right);
+         (unsigned)TOMGetRightVisibleHC(), (unsigned)DEFAULT_RIGHT_VISIBLE_HC);
+}
+
+/* The window width at PWIDTH 4 is VIRTUAL_SCREEN_WIDTH (tom.h). */
+static void test_window_width_matches_tom_h(void)
+{
+   CHECK((DEFAULT_RIGHT_VISIBLE_HC - DEFAULT_LEFT_VISIBLE_HC) / 4 == VIRTUAL_SCREEN_WIDTH,
+         "NTSC window /4 = %u, expected %u",
+         (unsigned)((DEFAULT_RIGHT_VISIBLE_HC - DEFAULT_LEFT_VISIBLE_HC) / 4),
+         (unsigned)VIRTUAL_SCREEN_WIDTH);
 }
 
 int main(void)
@@ -413,9 +467,13 @@ int main(void)
 
    /* TOMGetRightVisibleHC */
    test_right_hde_zero();
-   test_right_hde_valid();
-   test_right_hde_exceeds_max();
+   test_right_hde_stock_ntsc();
+   test_right_hde_stock_pal();
+   test_right_hde_narrow_second_half();
+   test_right_hde_first_half();
+   test_right_hp_unprogrammed();
    test_right_hde_le_left();
+   test_window_width_matches_tom_h();
 
    if (failures == 0)
       printf("All %d tests passed.\n", passes);

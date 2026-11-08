@@ -71,7 +71,7 @@ try {
         $process.Dispose()
         if ($exitCode -ne 0) { throw "Installed app exited $exitCode" }
     }
-    Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', "`"$rom`"")
+    Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'e33e2c61', "`"$rom`"")
     # Exercise the installed payload's default startup, without --shader or a saved config.
     $defaultShot = Join-Path $out 'default.png'
     $defaultData = Join-Path $out 'default-data'

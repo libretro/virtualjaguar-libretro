@@ -210,7 +210,7 @@ add_test(NAME smoke_state_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 240 --state-roundtrip "${VJ_ROMS}/jagniccc.j64")
 add_test(NAME smoke_boot_cd_bios_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 400 --boot-bios cd --expect-bios cd:builtin
-            --expect-hash b83cb3ee)
+            --expect-hash f7dc52ce)
 add_test(NAME cheat_apply_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 60 --cheat 001F0000:AB --expect-ram 1F0000=AB
             "${VJ_ROMS}/yarc.j64")
@@ -218,7 +218,7 @@ add_test(NAME smoke_cd_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 120 --allow-blank "${VJ_ROMS}/synth_jagcd.chd")
 add_test(NAME smoke_boot_cart_rom_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 400 --boot-bios cart --expect-bios cart:builtin
-            --expect-hash 3cc9c43e)
+            --expect-hash 261701ba)
 set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threaded smoke_boot_cd_bios_threaded
                      smoke_cd_threaded smoke_boot_cart_rom_threaded cheat_apply_threaded PROPERTIES
     TIMEOUT 300 LABELS emu_thread

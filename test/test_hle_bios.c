@@ -2764,14 +2764,17 @@ static void test_libretro_geometry_update_order(void)
 
    /* The change is observed at retro_run() entry, the screen pitch is
     * latched, SET_GEOMETRY fires, and only then does TOM render this
-    * frame — so the submitted frame already uses the new width. */
-   if (last_video_width == 326 && last_video_pitch == (326U << 2))
+    * frame — so the submitted frame already uses the new width.
+    *
+    * 352 = the whole NTSC unblanked window, HC 125..1534, at PWIDTH 4: the
+    * frame no longer narrows to HDE; columns past it are border (#1191). */
+   if (last_video_width == 352 && last_video_pitch == (352U << 2))
       PASS("first frame after TOM size change uses new pitch");
    else
       FAIL("first frame after TOM size change was %ux%u pitch=%lu",
             last_video_width, last_video_height, (unsigned long)last_video_pitch);
 
-   if (geometry_update_count > old_geometry_count && last_geometry_width == 326)
+   if (geometry_update_count > old_geometry_count && last_geometry_width == 352)
       PASS("geometry update fired this frame at width %u", last_geometry_width);
    else
       FAIL("geometry update missing or wrong width: count %d->%d width=%u",
@@ -2780,7 +2783,7 @@ static void test_libretro_geometry_update_order(void)
    old_geometry_count = geometry_update_count;
    p_retro_run();
 
-   if (last_video_width == 326 && last_video_pitch == (326U << 2))
+   if (last_video_width == 352 && last_video_pitch == (352U << 2))
       PASS("following frame stays at new pitch");
    else
       FAIL("following frame was %ux%u pitch=%lu",

@@ -8,7 +8,7 @@
  *      the park on CI with no ROM on disk.
  *   2. Fountain vj.j64 live run (optional).  The unfixed crash
  *      presents 1024-wide frames (above retro_get_system_av_info
- *      max_width 652) and aborts RetroArch with no log.  This arm
+ *      max_width 652 then, 704 since #1191) and aborts RetroArch with no log.  This arm
  *      checks presented width and that GPU PC stays in local RAM for
  *      the first 30 frames.  It does NOT assert the intro completes;
  *      a later gpu_runaway (~frame 91) is a separate accuracy issue.
@@ -33,7 +33,7 @@
 #define FOUNTAIN_ROM_DEFAULT "/tmp/fountain_vj.j64"
 #define DUMMY_CART_SIZE      131072u
 #define BIOS_ROM_PARK_PC     0x00E005DCu
-#define MAX_PRESENT_WIDTH    652u
+#define MAX_PRESENT_WIDTH    704u   /* TOM_MAX_VIDEO_WIDTH (src/tom/tom.h) */
 #define GPU_RAM_LO           0x00F03000u
 #define GPU_RAM_HI           0x00F04000u
 #define EARLY_GPU_FRAMES     30u

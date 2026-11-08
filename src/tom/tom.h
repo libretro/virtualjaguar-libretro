@@ -20,10 +20,15 @@ extern "C" {
 
 // Virtual screen size stuff
 
-// NB: This virtual width is for PWIDTH = 4
-//#define VIRTUAL_SCREEN_WIDTH            320
-//was:340, 330
-#define VIRTUAL_SCREEN_WIDTH            326
+// NB: This virtual width is for PWIDTH = 4.  It is the NTSC unblanked line
+// (HBE..HBB = HC 125..1534, 1409 video clocks -- Atari's own ntsc_width)
+// divided by 4; see the visible-window constants in tom.c (#1191).  It was
+// 326 (HC 188..1492), which cropped the first ~16 pixels of every line on
+// games using Atari's standard video init (HDB1 = 123).
+#define VIRTUAL_SCREEN_WIDTH            352
+// Widest frame TOM can emit for any PWIDTH >= 2: the NTSC unblanked line at
+// PWIDTH = 2 (1409 / 2).  retro_get_system_av_info's max_width must bound it.
+#define TOM_MAX_VIDEO_WIDTH             704
 #define VIRTUAL_SCREEN_HEIGHT_NTSC      240
 #define VIRTUAL_SCREEN_HEIGHT_PAL       256
 
