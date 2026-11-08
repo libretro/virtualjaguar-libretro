@@ -127,8 +127,7 @@ static void probe_video_track(probe_video_state *st, unsigned width,
                               unsigned height, unsigned nonblack,
                               uint32_t hash)
 {
-    /* Scale the sampled count back up to an approximate full-frame count. */
-    st->last_nonblack = nonblack * 16u;
+    st->last_nonblack = nonblack;
     if (st->last_nonblack > st->max_nonblack)
         st->max_nonblack = st->last_nonblack;
     if (st->last_nonblack * 100u > width * height)
@@ -148,7 +147,7 @@ static void probe_video_cb(void *userdata, const void *data,
     probe_video_pair *pair = (probe_video_pair *)userdata;
     const uint8_t *rows;
     uint32_t hash;
-    unsigned nonblack, x, y, step;
+    unsigned nonblack, x, y;
 
     if (!data || !width || !height)
         return;
@@ -156,12 +155,12 @@ static void probe_video_cb(void *userdata, const void *data,
     rows = (const uint8_t *)data;
     hash = 2166136261u;
     nonblack = 0;
-    /* Sample every 4th pixel of every 4th row: cheap, and plenty to tell
-     * "black screen" from "rendering" and frame A from frame B. */
-    step = 4;
-    for (y = 0; y < height; y += step) {
+    /* Inspect every pixel: a fixed sampling grid can land entirely on dark
+     * stripes (tj_julia after the visible-window shift) and report a black
+     * screen even while the picture animates. Respect the frontend pitch. */
+    for (y = 0; y < height; y++) {
         const uint32_t *px = (const uint32_t *)(rows + y * pitch);
-        for (x = 0; x < width; x += step) {
+        for (x = 0; x < width; x++) {
             uint32_t v = px[x] & 0x00FFFFFFu;
             if (v != 0)
                 nonblack++;

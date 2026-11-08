@@ -1432,7 +1432,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_option_explain test/tools/test_disk_control \
 		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 test/tools/test_doom_pace_gate test/tools/test_cf_canary \
 		test/tools/i2s_lag_probe test/tools/kart_line_probe test/tools/joymatrix_identity \
-		test/tools/teamtap_ports \
+		test/tools/teamtap_ports test/tools/test_cart_probe_video \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
 		test/tools/paddle_decode_test test/tools/procontroller_decode_test test/tools/sixd_decode_test \
@@ -1543,6 +1543,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Also the gate on probe balance: a VJP_ENTER region that gains an
 	@# early return silently wedges its slot off for the rest of a session.
 	./test/tools/perf_iface_witness ./$(TARGET) || test $$? -eq 77
+	./test/tools/test_cart_probe_video
 	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
 	@# title: two core instances drive the real ROM through 911 -> the
 	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
@@ -2678,6 +2679,10 @@ test/tools/netlink_mismatch_witness: test/tools/netlink_mismatch_witness.c
 test/tools/perf_iface_witness: test/tools/perf_iface_witness.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/perf_iface_witness.c -ldl
+
+test/tools/test_cart_probe_video: test/tools/test_cart_probe_video.c test/tools/cart_boot_probe.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_cart_probe_video.c test/harness/harness.c -ldl -lm
 
 test/test_dram_timing: test/test_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_dram_timing.c src/core/bus_arbiter.c
