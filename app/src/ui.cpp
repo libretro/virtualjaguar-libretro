@@ -592,6 +592,7 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
         if (ImGui::MenuItem("New window", "Ctrl+N")) app.newWindow();
         if (ImGui::MenuItem("Game library...", "Ctrl+L", (app.library.show && !app.homeVisible()) || (app.tvMode.active() && app.tvShell().showingLibrary()))) app.openLibrary();
+        if (ImGui::MenuItem("Server library...", nullptr, app.contentServers.show)) app.contentServers.show = !app.contentServers.show;
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list
             for (size_t i = 0; i < list.size(); i++) {
@@ -814,6 +815,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     themeFrameHook(app);   // theme file-dialog results
     drawResumePrompt(app);
     drawLibrary(app);
+    drawContentServers(app);
     drawKeypadOverlay(app);
     drawControlsOverlay(app, areaPos, areaSize);
     drawAchievementsUi(app);

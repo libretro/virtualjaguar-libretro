@@ -286,6 +286,8 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
 
     flow.next(ui::Flow::buttonW("Add folder..."));
     if (ImGui::Button("Add folder...")) svc.addFolderDialog(app.window());
+    flow.next(ui::Flow::buttonW("Servers..."));
+    if (ImGui::Button("Servers...")) app.contentServers.show = true;
     flow.next(ui::Flow::buttonW("Rescan"));
     if (ImGui::Button("Rescan")) svc.rescan();
     flow.next(ui::Flow::buttonW("Update database"));
@@ -1098,6 +1100,8 @@ void drawEmptyHome(App& app, LibraryService& svc) {
     ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap + h1 + gap));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(f * 1.6f, f * 0.55f));
     if (ImGui::Button("Add folder...")) svc.addFolderDialog(app.window());
+    ImGui::SameLine();
+    if (ImGui::Button("Servers...")) app.contentServers.show = true;
     ImGui::SameLine();
     if (ImGui::Button("BIOS & boot...")) app.openBiosSettings();
     ImGui::PopStyleVar();

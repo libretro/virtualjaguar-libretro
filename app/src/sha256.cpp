@@ -1,6 +1,8 @@
 #include "sha256.h"
 
 #include <cstdint>
+#include <algorithm>
+#include <cstring>
 
 namespace vj {
 
@@ -43,35 +45,48 @@ void compress(uint32_t h[8], const unsigned char* p) {
 
 } // namespace
 
-std::string sha256Hex(const void* data, size_t size) {
-    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-    const unsigned char* p = static_cast<const unsigned char*>(data);
-    if (!p) size = 0; // size 0 with a null pointer is a valid (empty) message
-    size_t left = size;
-    while (left >= 64) {
-        compress(h, p);
-        p += 64;
-        left -= 64;
+void Sha256::update(const void* data, size_t size) {
+    if (!data) return;
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    size_ += size;
+    while (size) {
+        const size_t count = std::min(size, sizeof buffer_ - buffered_);
+        std::memcpy(buffer_ + buffered_, bytes, count);
+        buffered_ += count;
+        bytes += count;
+        size -= count;
+        if (buffered_ == sizeof buffer_) {
+            compress(state_, buffer_);
+            buffered_ = 0;
+        }
     }
-    // Final one or two blocks: the tail, 0x80, zeros, then the message length in bits (big-endian, 64 bit).
+}
+
+std::string Sha256::hexDigest() const {
+    Sha256 final = *this;
     unsigned char tail[128] = {};
-    for (size_t i = 0; i < left; i++) tail[i] = p[i];
-    tail[left] = 0x80;
-    const size_t blocks = (left < 56) ? 1 : 2;
-    const uint64_t bits = uint64_t(size) * 8u;
+    std::memcpy(tail, buffer_, buffered_);
+    tail[buffered_] = 0x80;
+    const size_t blocks = buffered_ < 56 ? 1 : 2;
+    const uint64_t bits = size_ * 8u;
     for (int i = 0; i < 8; i++) tail[blocks * 64 - 1 - i] = static_cast<unsigned char>(bits >> (8 * i));
-    for (size_t b = 0; b < blocks; b++) compress(h, tail + b * 64);
+    for (size_t block = 0; block < blocks; block++) compress(final.state_, tail + block * 64);
 
     static const char kHex[] = "0123456789abcdef";
     std::string out(64, '0');
     for (int i = 0; i < 8; i++)
         for (int j = 0; j < 4; j++) {
-            const unsigned char byte = static_cast<unsigned char>(h[i] >> (24 - 8 * j));
+            const unsigned char byte = static_cast<unsigned char>(final.state_[i] >> (24 - 8 * j));
             out[size_t(i) * 8 + size_t(j) * 2] = kHex[byte >> 4];
             out[size_t(i) * 8 + size_t(j) * 2 + 1] = kHex[byte & 15];
         }
     return out;
+}
+
+std::string sha256Hex(const void* data, size_t size) {
+    Sha256 hash;
+    hash.update(data, size);
+    return hash.hexDigest();
 }
 
 } // namespace vj
