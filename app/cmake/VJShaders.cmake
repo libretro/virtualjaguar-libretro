@@ -64,10 +64,10 @@ option(VJ_APP_BUNDLE_SLANG_SHADERS "Fetch a pinned subset of libretro/slang-shad
 set(VJ_SLANG_SHADERS_ARCHIVE "" CACHE FILEPATH "Local copy of the pinned slang-shaders tarball (offline builds)")
 
 # libretro/slang-shaders at one commit.  The tarball is what GitHub serves for
-# /archive/<commit>.tar.gz (byte-identical on two downloads when this was pinned).
+# /archive/<commit>.tar.gz, fetched directly from its codeload endpoint.
 set(VJ_SLANG_COMMIT "e1d75632a205c70f14a4cc947c46d5abb7b3f7f1")
 set(VJ_SLANG_SHA256 "b8bc2fbb31a754ed41ee4ab309ece63c08123ada8e5e7c5142621461f165bbd9")
-set(VJ_SLANG_URL "https://github.com/libretro/slang-shaders/archive/${VJ_SLANG_COMMIT}.tar.gz")
+set(VJ_SLANG_URL "https://codeload.github.com/libretro/slang-shaders/tar.gz/${VJ_SLANG_COMMIT}")
 # The CRT, scanline and interpolation families plus every directory their presets
 # and shaders reference (include/, blurs/, misc/, ...): the transitive closure,
 # computed by walking #reference / shaderN / textures / #include.  ~23 MB, ~900 files.
