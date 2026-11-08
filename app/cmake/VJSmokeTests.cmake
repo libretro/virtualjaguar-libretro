@@ -49,7 +49,7 @@
 
 set(VJ_ROMS "${VJ_ROOT}/test/roms")
 set(VJ_SMOKE_FRAMES 300 CACHE STRING "Frames per game in the smoke tests")
-set(VJ_SMOKE_YARC_HASH "f4c30ea3" CACHE STRING "Expected final-frame hash of yarc.j64 (hex); empty disables the check")
+set(VJ_SMOKE_YARC_HASH "e33e2c61" CACHE STRING "Expected final-frame hash of yarc.j64 (hex); empty disables the check")
 
 # The OK line of a headless run on the emulation thread (it says "emulation thread" only when the thread really ran):
 # what every _threaded twin requires (VJEmuThreadTests.cmake, VJCheatTests.cmake, the controls tests below).
@@ -116,9 +116,9 @@ set_tests_properties(smoke_m3u_playlist PROPERTIES TIMEOUT 300
 # Neither passes --allow-blank: the boot ROM's logo and the CD BIOS's logo and cube must actually draw (the hashes
 # are the final frame at 400 frames; like yarc's they are meant to be the same on every OS and CPU).
 add_test(NAME smoke_boot_cd_bios
-    COMMAND virtualjaguar --headless --frames 400 --boot-bios cd --expect-bios cd:builtin --expect-hash b83cb3ee)
+    COMMAND virtualjaguar --headless --frames 400 --boot-bios cd --expect-bios cd:builtin --expect-hash f7dc52ce)
 add_test(NAME smoke_boot_cart_rom
-    COMMAND virtualjaguar --headless --frames 400 --boot-bios cart --expect-bios cart:builtin --expect-hash 3cc9c43e)
+    COMMAND virtualjaguar --headless --frames 400 --boot-bios cart --expect-bios cart:builtin --expect-hash 261701ba)
 set_tests_properties(smoke_boot_cd_bios PROPERTIES PASS_REGULAR_EXPRESSION "BIOS CD BIOS: built-in retail CD BIOS")
 set_tests_properties(smoke_boot_cart_rom PROPERTIES PASS_REGULAR_EXPRESSION "BIOS Cart boot ROM: built-in Series K boot ROM")
 

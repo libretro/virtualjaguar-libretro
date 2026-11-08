@@ -95,7 +95,7 @@ try:
     for downloaded in (launch, source_launch):
         with tempfile.TemporaryDirectory(prefix="vj-server-launch-") as data:
             environment = dict(os.environ, SDL_AUDIODRIVER="dummy", SDL_VIDEODRIVER="dummy")
-            game = subprocess.run([emulator, "--headless", "--frames", "300", "--expect-hash", "f4c30ea3",
+            game = subprocess.run([emulator, "--headless", "--frames", "300", "--expect-hash", "e33e2c61",
                                    "--data-dir", data, downloaded], env=environment,
                                   capture_output=True, text=True, timeout=30)
             if game.returncode or "headless: OK" not in game.stdout + game.stderr:

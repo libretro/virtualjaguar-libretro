@@ -1512,7 +1512,7 @@ void JaguarReset(void)
        * 68K with no program after that trampoline.  Illegal/F-line
        * fetches through PRNG vectors smash GPU RAM / G_PC; the core
        * then presents 1024-wide frames and RetroArch aborts (max_width
-       * is 652).
+       * is TOM_MAX_VIDEO_WIDTH, 704).
        *
        * Park traps at the boot ROM BRA.S * ($E005DC), not a RAM stub:
        * the $400 trampoline would overwrite an HLE-style RTE there.

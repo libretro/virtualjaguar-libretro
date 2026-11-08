@@ -389,14 +389,29 @@ uint8_t bluecv[16][16] = {
 #define BG			0x58		// Background color
 #define INT1		0xE0
 
-/* Default fallback values used when registers haven't been programmed yet */
-#define DEFAULT_LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
-#define DEFAULT_RIGHT_VISIBLE_HC		(DEFAULT_LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
+/* Default fallback values used when registers haven't been programmed yet.
+ *
+ * Horizontal window (#1191): the unblanked part of the line, i.e. the
+ * HBE..HBB span the boot ROM programs and every game we have measured
+ * keeps (yarc, jagniccc and Atari's stock VideoInit):
+ *   NTSC  HBE = 125, HBB = $6B1 -> 689 + (HP 844 + 1) = 1534   (1409 clocks)
+ *   PAL   HBE = 158, HBB = $6AF -> 687 + (HP 850 + 1) = 1538   (1380 clocks)
+ * 1409 clocks is exactly Atari's `ntsc_width`, and at the 26.59 MHz video
+ * clock it is ~53 us -- the whole active line, which is what a 4:3 picture
+ * spans -- so the 4:3 aspect the core reports is now correct rather than
+ * an ~8% horizontal stretch.  The old window, HC 188..1492 (NTSC) /
+ * 204..1508 (PAL), started 65 / 47 clocks after the stock HDB1 (123 / 157)
+ * and cut ~16 / ~11 pixels off the left of every such game.
+ *
+ * Both edges stay FIXED (see TOMGetLeftVisibleHC): they are the TV's frame,
+ * not the game's, so a title that moves HDB1 still moves its picture. */
+#define DEFAULT_LEFT_VISIBLE_HC			125
+#define DEFAULT_RIGHT_VISIBLE_HC		1534
 #define DEFAULT_TOP_VISIBLE_VC			31
 #define DEFAULT_BOTTOM_VISIBLE_VC		511
 
-#define DEFAULT_LEFT_VISIBLE_HC_PAL		(208 - 16 - (-3 * 4))
-#define DEFAULT_RIGHT_VISIBLE_HC_PAL	(DEFAULT_LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
+#define DEFAULT_LEFT_VISIBLE_HC_PAL		158
+#define DEFAULT_RIGHT_VISIBLE_HC_PAL	1538
 #define DEFAULT_TOP_VISIBLE_VC_PAL		67
 #define DEFAULT_BOTTOM_VISIBLE_VC_PAL	579
 
@@ -549,21 +564,43 @@ static uint32_t TOMGetLeftVisibleHC(void)
 	return FALLBACK_LEFT_HC;
 }
 
+/* Linear HC of a horizontal register value.  TOM's HC is a 10-bit count
+ * of 0..HP plus bit 10 = "second half of the line" (jtrm-register-map.md),
+ * so $6BF (HDE in Atari's stock init) is tick 703 of the SECOND half, i.e.
+ * 703 + HP + 1 = 1548 on NTSC -- not 1727.  The visible-window edges above
+ * are in this linear unit (the renderers step one PWIDTH per pixel straight
+ * across the half-line boundary), so a register must be decoded before it
+ * is compared with them. */
+static uint32_t TOMLinearHC(uint16_t value)
+{
+	uint32_t hp = (uint32_t)(GET16(tomRam8, HP) & 0x03FF);
+
+	if (value & 0x0400)
+		return (uint32_t)(value & 0x03FF) + hp + 1;
+	return (uint32_t)(value & 0x03FF);
+}
+
 static uint32_t TOMGetRightVisibleHC(void)
 {
 	uint16_t hde = GET16(tomRam8, HDE);
 	uint32_t left = TOMGetLeftVisibleHC();
-	uint32_t max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
+	uint32_t max_right = FALLBACK_RIGHT_HC;
+	uint32_t hde_hc;
 
-	/* If HDE is zero or not usefully beyond the left edge, return
-	 * the max right (== FALLBACK_RIGHT_HC since left is fixed). */
-	if (hde == 0 || (uint32_t)hde <= left)
+	/* HP == 0 means the video registers have not been programmed; a
+	 * half-line decode against it is meaningless. */
+	if (hde == 0 || (GET16(tomRam8, HP) & 0x03FF) == 0)
 		return max_right;
 
-	/* Right edge is the lesser of HDE and max_right.  This respects
+	/* If HDE is not usefully beyond the left edge, keep the full window. */
+	hde_hc = TOMLinearHC(hde);
+	if (hde_hc <= left)
+		return max_right;
+
+	/* Right edge is the lesser of HDE and the blanking edge.  This respects
 	 * games that program a narrower HDE while preventing overflow. */
-	if ((uint32_t)hde < max_right)
-		return (uint32_t)hde;
+	if (hde_hc < max_right)
+		return hde_hc;
 	return max_right;
 }
 
@@ -1614,6 +1651,44 @@ static void TOMLightgunHalfline(uint16_t halfline)
    SET16(tomRam8, LPV, (uint16_t)vc);
 }
 
+/* Display end (#1191).  TOM stops the OP at HDE and shows the border colour
+ * for the rest of the unblanked line (jtrm-register-map.md, HDE).  The frame
+ * keeps the full window width (TOMGetVideoModeWidth) so the picture sits
+ * where it does on a TV; the columns past the decoded HDE are overwritten
+ * with BORD1/BORD2 here, after the renderer, at 1x or hi-res alike (N-wide
+ * on N sub-rows, so the Nx frame stays a box replication of the 1x one).
+ * Most titles set HDE past the blanking edge and never reach the loop; the
+ * ones that leave the BIOS value ($681 -> HC 1486) lose the line-buffer
+ * columns the hardware also hides -- AvP's parked object (#266) among them. */
+static void TOMFillPastHDE(uint32_t * line, uint32_t n)
+{
+   uint32_t left = TOMGetLeftVisibleHC();
+   uint32_t right = TOMGetRightVisibleHC();
+   uint32_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+   uint32_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
+   uint32_t col, hr, i, end;
+   uint8_t g, r, b;
+   uint32_t pixel;
+
+   if (right <= left)
+      return;
+   col = ((right - left) / pwidth) * pwidth_scale;
+   if (col >= tomWidth)
+      return;
+
+   g = tomRam8[BORD1]; r = tomRam8[BORD1 + 1]; b = tomRam8[BORD2 + 1];
+   pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+   end = tomWidth * n;
+
+   for (hr = 0; hr < n; hr++)
+   {
+      uint32_t * row = line + hr * screenPitch;
+
+      for (i = col * n; i < end; i++)
+         row[i] = pixel;
+   }
+}
+
 void TOMExecHalfline(uint16_t halfline, bool render)
 {
    unsigned i;
@@ -1832,6 +1907,7 @@ void TOMExecHalfline(uint16_t halfline, bool render)
                tom_render_scanline_hires(TOMCurrentLine);
             else
                scanline_render[TOMGetVideoMode()](TOMCurrentLine);
+            TOMFillPastHDE(TOMCurrentLine, hiresRowScale);
          }
          else
          {
@@ -1875,31 +1951,15 @@ void TOMDone(void)
 
 uint32_t TOMGetVideoModeWidth(void)
 {
-   uint16_t hdb1 = GET16(tomRam8, HDB1);
-   uint16_t hde = GET16(tomRam8, HDE);
+   /* The frame is the whole unblanked window at the current pixel width,
+    * whatever HDB1/HDE say: HDB1 only moves the picture inside it (border on
+    * the left, TOMExecHalfline's startPos) and HDE only ends it early
+    * (border on the right, TOMFillPastHDE).  A constant frame keeps the
+    * picture where a TV puts it and the 4:3 aspect exact (#1191). */
    uint16_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-   uint32_t leftHC = TOMGetLeftVisibleHC();
-   uint32_t rightHC = TOMGetRightVisibleHC();
    uint32_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
 
-   uint32_t dispStart = (hdb1 > leftHC) ? hdb1 : leftHC;
-   uint32_t dispEnd = (hde < rightHC) ? hde : rightHC;
-
-   if (dispEnd > dispStart && dispEnd > leftHC)
-   {
-      uint32_t width = ((dispEnd - leftHC) / pwidth) * pwidth_scale;
-      uint32_t startPos = (dispStart > leftHC)
-         ? ((dispStart - leftHC) / pwidth) * pwidth_scale : 0;
-
-      /* 652 = libretro retro_get_system_av_info max_width; matches the
-       * pwidth=8 fallback below. The old VIRTUAL_SCREEN_WIDTH (326) gate
-       * blocked pwidth=8 modes from reporting their actual register-derived
-       * width even though the fallback was free to return up to 652. */
-      if (width > 0 && width >= startPos && width <= 652)
-         return width;
-   }
-
-   return ((rightHC - leftHC) / pwidth) * pwidth_scale;
+   return ((FALLBACK_RIGHT_HC - TOMGetLeftVisibleHC()) / pwidth) * pwidth_scale;
 }
 
 /* One past the highest framebuffer row TOMExecHalfline wrote in the frame that

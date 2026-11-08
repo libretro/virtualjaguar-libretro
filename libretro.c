@@ -5035,7 +5035,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->geometry.base_height  = game_height;
    /* Hi-res: the maxima scale by the (load-time-fixed) internal
     * resolution factor; shadowHiresN is 1 when the option is off. */
-   info->geometry.max_width    = 652 * shadowHiresN; // Highest value encountered during testing
+   info->geometry.max_width    = TOM_MAX_VIDEO_WIDTH * shadowHiresN; /* PWIDTH=2 width of the visible window (#1191) */
    /* Must bound every height the core can emit, not the nominal active
     * display.  VDB/VDE are game-programmable, so a title can open a window
     * taller than the nominal 240 NTSC lines (yarc programs VDB=25/VDE=507 =
