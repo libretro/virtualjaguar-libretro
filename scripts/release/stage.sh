@@ -11,6 +11,10 @@
 #                  the GL qualification's screenshots and logs (#1155), and
 #                  signing-status-* are the signing sidecars
 #                  (see signing-status.sh): none of them is a release asset.
+#                  release-staged, release-signing-status and signing-table
+#                  are this workflow's own outputs.  A re-run attempt sees the
+#                  earlier attempt's copies, whose stale SHA256SUMS.txt, README
+#                  and .status files must not be staged again.
 #   release-dir    every shipped file, flat; plus SHA256SUMS.txt
 #   status-dir     the signing sidecars, for the verify-signatures gate
 #
@@ -44,7 +48,9 @@ while IFS= read -r f; do
 done < <(find "$art" -mindepth 2 -type f \
            -not -path "$art/librashader-*" -not -path "$art/ci-core-*" \
            -not -path "$art/windows-stage-*" -not -path "$art/gl-qualification-*" \
-           -not -path "$art/signing-status-*" | LC_ALL=C sort)
+           -not -path "$art/signing-status-*" \
+           -not -path "$art/release-staged/*" -not -path "$art/release-signing-status/*" \
+           -not -path "$art/signing-table/*" | LC_ALL=C sort)
 
 find "$art" -mindepth 2 -type f -path "$art/signing-status-*" -exec cp {} "$st/" \;
 # The gate downloads this directory as an artifact; an empty artifact cannot be

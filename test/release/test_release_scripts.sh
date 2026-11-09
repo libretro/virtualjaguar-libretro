@@ -78,6 +78,22 @@ sed 's/$/\r/' dist/info/virtualjaguar_libretro.info > "$A/virtualjaguar_libretro
 OUT=$(LANE=nightly GITHUB_SHA=0123456789abcdef bash "$S/stage.sh" "$A" "$T/rel-same" "$T/status-same" 2>&1); RC=$?
 check_rc "the .info copies in every dist/ (even a CRLF one) are ignored" "$RC" 0 "$OUT"
 check_has "... and the lane's .info still wins" "$(cat "$T/rel-same/virtualjaguar_libretro.info")" "-nightly-0123456"
+# A re-run attempt downloads the earlier attempt's own outputs as artifacts too.
+mkdir -p "$A/release-staged" "$A/release-signing-status" "$A/signing-table"
+printf 'stale  SHA256SUMS.txt\n' > "$A/release-staged/SHA256SUMS.txt"
+printf 'stale readme\n' > "$A/release-signing-status/README.txt"
+printf 'stale=1\n' > "$A/release-signing-status/cue2cdi-macos-universal.status"
+printf '| stale |\n' > "$A/signing-table/signing-table.md"
+OUT=$(LANE=nightly GITHUB_SHA=0123456789abcdef bash "$S/stage.sh" "$A" "$T/rel-rerun" "$T/status-rerun" 2>&1); RC=$?
+check_rc "re-run: stage exits 0" "$RC" 0 "$OUT"
+check_lacks "re-run: earlier attempt's sidecars are not staged" "$(ls "$T/rel-rerun")" ".status"
+check_lacks "re-run: earlier attempt's README is not staged" "$(ls "$T/rel-rerun")" "README.txt"
+check_lacks "re-run: earlier attempt's signing table is not staged" "$(ls "$T/rel-rerun")" "signing-table"
+check_lacks "re-run: earlier attempt's sidecars are not re-collected" "$(ls "$T/status-rerun")" "cue2cdi-macos-universal.status"
+check_lacks "re-run: stale SHA256SUMS.txt is not listed" "$(cat "$T/rel-rerun/SHA256SUMS.txt")" " SHA256SUMS.txt"
+if have sha256sum; then (cd "$T/rel-rerun" && sha256sum --check --quiet SHA256SUMS.txt) && pass "re-run: SHA256SUMS.txt checks" || fail "re-run: SHA256SUMS.txt checks"
+else (cd "$T/rel-rerun" && shasum -a 256 --check --quiet SHA256SUMS.txt) && pass "re-run: SHA256SUMS.txt checks" || fail "re-run: SHA256SUMS.txt checks"; fi
+command rm -rf "$A/release-staged" "$A/release-signing-status" "$A/signing-table"
 mk dup virtualjaguar_libretro-linux-x86_64.so
 OUT=$(LANE=nightly bash "$S/stage.sh" "$A" "$T/rel-dup" "$T/status-dup" 2>&1); RC=$?
 check_rc "differing files under one asset name are an error" "$RC" 1 "$OUT"
