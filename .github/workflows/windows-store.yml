@@ -33,7 +33,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: windows-store-${{ github.ref }}
@@ -146,6 +145,9 @@ jobs:
     name: Store MSIX installed ${{ matrix.arch }} windowed smoke
     needs: msix
     if: always() && (needs.msix.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.candidate_run != ''))
+    permissions:
+      contents: read
+      actions: read
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

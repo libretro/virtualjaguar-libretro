@@ -2730,7 +2730,7 @@ int App::runInteractive(const CliArgs& a) {
     // G1 gate drivers (#967): --show-window tools opens every Tools window; --perf-halt re-opens them while halted.  The
     // same open test as openDebugWindow (a second toggle would CLOSE the window).
     auto openAllTools = [this](const char* suffix) {
-        for (const char* id : {"memory", "clut", "scanner", "cpu", "objects", "blitter", "textures", "scope"}) {
+        for (const char* id : {"memory", "clut", "scanner", "cpu", "symbols", "objects", "blitter", "textures", "scope"}) {
             DebugTool* t = debug.findTool(id);
             if (t && t->toggle && !(t->isOpen && t->isOpen())) t->toggle();
             std::fprintf(stderr, "[app] tool %s open=%d%s\n", id, (t && t->isOpen && t->isOpen()) ? 1 : 0, suffix);

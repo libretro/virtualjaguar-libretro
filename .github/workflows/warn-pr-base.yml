@@ -17,10 +17,12 @@ on:
     branches: [master]
 
 permissions:
-  pull-requests: write
+  contents: read
 
 jobs:
   warn:
+    permissions:
+      pull-requests: write
     runs-on: ubuntu-latest
     if: |
       !startsWith(github.event.pull_request.head.ref, 'release/') &&

@@ -51,6 +51,9 @@ concurrency:
   group: ir-ab-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   ir-ab:
     name: Ir A/B (linux x86_64)

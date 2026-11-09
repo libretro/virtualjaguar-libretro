@@ -17,7 +17,7 @@ MED="${GATE_MEDIAN_MS:-17.5}"; P99="${GATE_P99_MS:-25}"
 WD_A="${GATE_WD_A:-60}"; WD_B="${GATE_WD_B:-75}"; WD_C="${GATE_WD_C:-45}"
 fail=0; envfail=0
 f() { echo "FAIL $1"; fail=1; }
-ids="memory clut scanner cpu objects blitter textures scope"
+ids="memory clut scanner cpu symbols objects blitter textures scope"
 free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
 scan() { [ -f "$1" ] && /usr/bin/grep -qE 'owner violation|ThreadSanitizer' "$1" && f "$2: $(/usr/bin/grep -m1 -E 'owner violation|ThreadSanitizer' "$1")"; }
 # stats <csv> <first> <last> -> "median p99 zero nonzero n" of iter_ms / emu_frames over data rows first..last (1-based)

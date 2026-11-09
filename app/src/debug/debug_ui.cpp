@@ -1,5 +1,7 @@
 // The Tools menu, the "halted" bar and the hook every debug tool window draws through.  The logic lives
 // in DebugSession (debug_session.*), which has no ImGui and is unit-tested against the mock core.
+#include "platform/file_access.h"
+
 #include "app.h"
 #include "blitter_ui.h"
 #include "cpu_ui.h"
@@ -7,11 +9,20 @@
 #include "op_ui.h"
 #include "scanner_ui.h"
 #include "scope_ui.h"
+#include "symbols_ui.h"
 #include "texture_ui.h"
 #include "ui_util.h"
 #include "imgui.h"
 
 namespace vj {
+
+namespace {
+
+void SDLCALL symbolFilePicked(void*, const char* const* files, int) {
+    if (files && files[0]) symbolsToolFilePicked(files[0]);
+}
+
+}  // namespace
 
 void drawToolsMenu(App& app) {
     DebugSession& d = app.debug;
@@ -103,6 +114,18 @@ void addDebugTools(App& app) {
     d.addProvider({[&app](DebugSession& s) { scopeToolInit(s, app.host); },
                    [](DebugSession&) { scopeToolDraw(); }});
     d.addProvider({registerCpuTools, drawCpuTools});                    // CPU debugger: 68000 / GPU / DSP
+    d.addProvider({[&app](DebugSession& s) {
+                       SymbolsUiContext ctx;
+                       ctx.contentPath = [&app] { return app.host.contentPath(); };
+                       ctx.pickFile = [&app] {
+                           static const SDL_DialogFileFilter flt[2] = {{"Jaguar executables", "cof;abs"}, {"All files", "*"}};
+                           vj::files::openFile(symbolFilePicked, nullptr, app.window(), flt, 2, nullptr, false);
+                       };
+                       ctx.showCpu = [&s](int target, unsigned addr) { showCpuAt(s, target, addr); };
+                       ctx.showMemory = [&s](unsigned addr) { showMemoryAt(s, addr); };
+                       registerSymbolsTool(s, ctx);
+                   },
+                   drawSymbolsTool});
 }
 
 void shutdownDebugTools() {

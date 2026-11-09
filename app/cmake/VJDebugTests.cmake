@@ -18,6 +18,25 @@ function(vj_add_debug_ui_smoke target test)
     set_tests_properties(${test} PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL " LABELS emu_thread)
 endfunction()
 
+#   debug_symbols_unit   the symbol table parser (app/src/debug/symbol_table.*) on real rmac / rln output and damaged files.
+add_executable(vj_debug_symbols_test tests/debug_symbols_test.cpp src/debug/symbol_table.cpp)
+target_include_directories(vj_debug_symbols_test PRIVATE src/debug "${VJ_ROOT}/src/debug")
+target_compile_definitions(vj_debug_symbols_test PRIVATE VJ_SYMBOL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/symbols")
+if(MSVC)
+    target_compile_options(vj_debug_symbols_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_symbols_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_symbols_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_symbols_unit COMMAND vj_debug_symbols_test)
+set_tests_properties(debug_symbols_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_symbols_ui_smoke   the Symbols window drawn headlessly over the mock: where the symbols come from, the
+#                        search, a row's breakpoint on the right processor, the forced close.
+vj_add_debug_ui_smoke(vj_debug_symbols_ui_smoke debug_symbols_ui_smoke tests/debug_symbols_ui_smoke.cpp
+    src/debug/symbols_ui.cpp src/debug/symbol_table.cpp)
+target_compile_definitions(vj_debug_symbols_ui_smoke PRIVATE VJ_SYMBOL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/symbols")
+
 #   debug_session_unit   DebugSession (app/src/debug) against the mock core interface
 #                        (app/tests/debug_mock.h): when the tools are available, attach / halt /
 #                        resume / step through the nested pump, the breakpoint list, the poke policy,

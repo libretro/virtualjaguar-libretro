@@ -42,7 +42,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 # Tag pushes always run to completion — a release build must never be
 # cancelled.  Develop pushes cancel superseded runs, because only the newest
@@ -945,6 +945,8 @@ jobs:
       && needs.stage.result == 'success'
       && needs.verify-signatures.result == 'success'
       && needs.gl-qualification.result == 'success'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

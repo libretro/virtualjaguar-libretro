@@ -24,6 +24,9 @@ on:
       - '.github/workflows/jaguar-toolchain-image.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     name: Build + push toolchain image
