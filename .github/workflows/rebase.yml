@@ -3,10 +3,16 @@ name: Automatic Rebase
 on:
   issue_comment:
     types: [created]
+permissions:
+  contents: read
+
 jobs:
   rebase:
     name: Rebase
     if: github.event.issue.pull_request != '' && contains(github.event.comment.body, '/rebase')
+    permissions:
+      contents: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the latest code

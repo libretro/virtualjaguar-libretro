@@ -58,6 +58,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.qualification_windows_only && '-windows' || inputs.qualification_intel_only && '-intel' || inputs.qualification_linux_only && '-linux' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   install-sh:
     if: ${{ !inputs.qualification_intel_only && !inputs.qualification_linux_only && !inputs.qualification_windows_only }}

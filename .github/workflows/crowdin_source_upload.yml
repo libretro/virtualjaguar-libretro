@@ -16,6 +16,9 @@ on:
     paths:
       - 'libretro_core_options.h'
 
+permissions:
+  contents: read
+
 jobs:
   upload_source_file:
     runs-on: ubuntu-latest

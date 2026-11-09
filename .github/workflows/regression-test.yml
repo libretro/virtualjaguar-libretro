@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  pull-requests: write
+  contents: read
 
 jobs:
   regression:
@@ -51,6 +51,9 @@ jobs:
             platform: macos-arm64
 
     name: regression-${{ matrix.config.platform }}
+    permissions:
+      contents: read
+      pull-requests: write
     # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
     # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
     # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.

@@ -8,6 +8,9 @@ on:
     # A random time & weekday, so every libretro repo does not sync at once.
     - cron: '35 6 * * 5'  # Fridays at 06:35 UTC
 
+permissions:
+  contents: read
+
 jobs:
   create_intl_file:
     permissions:

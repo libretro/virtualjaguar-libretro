@@ -36,6 +36,9 @@ concurrency:
   group: jaguar-toolchain-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   build-and-smoke:
     name: Build toolchain + smoke assemble
