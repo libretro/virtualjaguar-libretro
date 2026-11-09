@@ -7,9 +7,15 @@ on:
       - production
       # develop is the PR target, never a source; a push there only burned a runner.
       - develop
+permissions:
+  contents: read
+
 jobs:
   auto-pull-request:
     name: PullRequestAction
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - name: pull-request-action

@@ -26,7 +26,7 @@ on:
       - 'hotfix/**'
 
 permissions:
-  issues: write
+  contents: read
 
 # Two merges in quick succession must not race on the same issue.
 concurrency:
@@ -36,6 +36,8 @@ jobs:
   close:
     name: Close issues this PR resolved
     if: github.event.pull_request.merged == true
+    permissions:
+      issues: write
     runs-on: ubuntu-latest
     steps:
       - name: Close referenced issues

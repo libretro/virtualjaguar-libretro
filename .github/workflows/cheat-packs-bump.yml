@@ -14,9 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+  contents: read
 
 concurrency:
   group: cheat-packs-bump
@@ -30,6 +28,10 @@ jobs:
     # The Provenance-Emu fork runs crons too and must never open bump PRs.
     if: github.repository == 'libretro/virtualjaguar-libretro'
     timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7

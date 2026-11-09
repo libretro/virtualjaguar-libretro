@@ -32,7 +32,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: windows-store-${{ github.ref }}
@@ -145,6 +144,9 @@ jobs:
     name: Store MSIX installed x64 smoke
     needs: msix
     if: always() && (needs.msix.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.candidate_run != ''))
+    permissions:
+      contents: read
+      actions: read
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7

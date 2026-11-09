@@ -37,6 +37,9 @@ concurrency:
   # always a green-or-red acid record on the release branch.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   acid:
     name: Acid suite (linux x86_64)
