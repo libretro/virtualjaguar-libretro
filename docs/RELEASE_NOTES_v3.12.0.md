@@ -36,6 +36,11 @@ and graphics testing across desktop platforms.
   (345 on PAL), and columns past a game's display end show the border color, as
   on hardware. Screenshots and windows use the wider frame (#1191).
 
+## Debugger
+
+- Tools > Symbols lists the names and hex values from a `.cof` or `.abs` file, with
+  search and a breakpoint checkbox on each row (#1195).
+
 ## Packaging and verification
 
 Cloud tests exercise windowed OpenGL startup and bundled shader presets on

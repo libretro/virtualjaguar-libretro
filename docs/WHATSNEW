@@ -19,6 +19,8 @@ Full notes: docs/RELEASE_NOTES_v3.12.0.md
   (#1176, #1175).
 * Show the whole visible line instead of clipping the left edge: the standard
   NTSC frame grows from 326 to 352 pixels wide, 345 on PAL (#1191).
+* Add a debugger Symbols window: search .cof and .abs symbols and set breakpoints
+  from the list (#1195).
 * Add Windows signing, release provenance verification and cloud windowed
   GL/shader qualification; publish artifact verification results with releases.
 * Add RISC pipeline measurement tests; no timing-model changes (#1158).
