@@ -5,7 +5,10 @@ name: Post build artifact links
 # the build was triggered by a fork PR.
 on:
   workflow_run:
-    workflows: ["C/C++ CI"]
+    # Entries are glob patterns, not literal names: an unescaped "++" cannot be
+    # parsed and fails every workflow_run event at startup. \+ needs single
+    # quotes, because it is an invalid escape in a double-quoted YAML string.
+    workflows: ['C/C\+\+ CI']
     types: [completed]
 
 permissions:
