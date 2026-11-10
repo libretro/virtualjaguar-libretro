@@ -151,7 +151,10 @@ extern uint8_t jagMemSpace[];
  * Cart-mode SSP=0x4000 matches what the real BIOS leaves behind on a
  * cart boot.  RAM-loaded executables (.abs/.cof/JagServer) park SSP at
  * the top of main RAM (0x200000) so the first push doesn't land inside
- * loaded code. */
+ * loaded code.
+ * The USER stack pointer is deliberately left alone: the real boot ROM
+ * never writes USP (no MOVE An,USP in the Series K or Model M image), so
+ * a cart that drops to user mode must seed it first; see #1165. */
 #define HLE_SSP_CART            0x00004000
 #define HLE_SSP_RAMLOAD         0x00200000
 
@@ -1509,7 +1512,7 @@ void JaguarReset(void)
        * 68K with no program after that trampoline.  Illegal/F-line
        * fetches through PRNG vectors smash GPU RAM / G_PC; the core
        * then presents 1024-wide frames and RetroArch aborts (max_width
-       * is 652).
+       * is TOM_MAX_VIDEO_WIDTH, 704).
        *
        * Park traps at the boot ROM BRA.S * ($E005DC), not a RAM stub:
        * the $400 trampoline would overwrite an HLE-style RTE there.

@@ -45,6 +45,21 @@ set(_no_cheat "headless: FAIL ram 0x1F0000 is [0-9A-F]+, expected AB")
 
 add_test(NAME cheat_apply
     COMMAND virtualjaguar --headless --frames 60 --cheat 001F0000:AB --expect-ram 1F0000=AB "${_yarc}")
+# One-shot writes use the same manager and emulation-thread sink as the UI.
+foreach(_th "" "_threaded")
+    set(_once_args)
+    if(_th)
+        set(_once_args --emu-thread on)
+    endif()
+    add_test(NAME cheat_once${_th}
+        COMMAND virtualjaguar --headless ${_once_args} --frames 60
+                --cheat-once 001F0000:AB --expect-ram 1F0000=AB "${_yarc}")
+    set_tests_properties(cheat_once${_th} PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation")
+    if(_th)
+        set_tests_properties(cheat_once${_th} PROPERTIES LABELS emu_thread)
+    endif()
+endforeach()
+
 add_test(NAME cheat_apply_control
     COMMAND virtualjaguar --headless --frames 60 --expect-ram 1F0000=AB "${_yarc}")
 set_tests_properties(cheat_apply_control PROPERTIES PASS_REGULAR_EXPRESSION "${_no_cheat}")

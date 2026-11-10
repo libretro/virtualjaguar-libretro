@@ -243,7 +243,7 @@ unsigned opTopVisible(const OpScreenGeom& g) {
     return g.vdb;
 }
 unsigned opLeftVisibleHC(const OpScreenGeom& g) {
-    return g.pal() ? (208u - 16u + 12u) : (208u - 16u - 4u);   // DEFAULT_LEFT_VISIBLE_HC(_PAL): 204 / 188
+    return g.pal() ? 158u : 125u;   // tom.c DEFAULT_LEFT_VISIBLE_HC(_PAL): HBE of the stock blanking (#1191)
 }
 
 OpScreenRect opScreenRect(const OpObject& o, const OpScreenGeom& g) {

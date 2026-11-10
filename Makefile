@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.11.0
+CORE_BASE_VERSION := v3.12.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -1336,7 +1336,7 @@ $(CORE_DIR)/libretro.o: $(VERSION_H)
 clean:
 	rm -f $(TARGET) $(OBJECTS) $(BUILD_CONFIG_STAMP) $(LEGACY_LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
-		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_mmult test/test_tom_readback \
+		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_gpu_interleave test/test_mmult test/test_tom_readback \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_fountain_crash test/test_audio_pipeline \
@@ -1414,7 +1414,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
 test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb test/tools/test_gdbstub_proto \
-		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_mmult test/test_tom_readback test/test_dsp_ops \
+		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_gpu_interleave test/test_mmult test/test_tom_readback test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_fountain_crash \
@@ -1432,7 +1432,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_option_explain test/tools/test_disk_control \
 		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 test/tools/test_doom_pace_gate test/tools/test_cf_canary \
 		test/tools/i2s_lag_probe test/tools/kart_line_probe test/tools/joymatrix_identity \
-		test/tools/teamtap_ports \
+		test/tools/teamtap_ports test/tools/test_cart_probe_video \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
 		test/tools/paddle_decode_test test/tools/procontroller_decode_test test/tools/sixd_decode_test \
@@ -1543,6 +1543,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Also the gate on probe balance: a VJP_ENTER region that gains an
 	@# early return silently wedges its slot off for the rest of a session.
 	./test/tools/perf_iface_witness ./$(TARGET) || test $$? -eq 77
+	./test/tools/test_cart_probe_video
 	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
 	@# title: two core instances drive the real ROM through 911 -> the
 	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
@@ -1570,6 +1571,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Matrix-diff release gate (#749): stage ordering, crash-signature and
 	@# asymmetry detection, exit codes. Synthetic fixtures -- no corpus needed.
 	bash test/test_matrix_diff.sh
+	@# Site generator + check_site unit tests (stdlib Python): the cart
+	@# matrix labels are derived from row data (#976), the cheat-pack
+	@# checks from fixtures. No ROMs, no core, no network.
+	python3 -m unittest discover -s scripts -p 'test_*.py'
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
@@ -1585,6 +1590,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_m68k_irq_ssp
 	./test/test_m68k_prefetch
 	./test/test_gpu_ops
+	./test/test_gpu_interleave
 	./test/test_mmult
 	./test/test_tom_readback
 	./test/test_dsp_ops
@@ -2674,6 +2680,10 @@ test/tools/perf_iface_witness: test/tools/perf_iface_witness.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/perf_iface_witness.c -ldl
 
+test/tools/test_cart_probe_video: test/tools/test_cart_probe_video.c test/tools/cart_boot_probe.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_cart_probe_video.c test/harness/harness.c -ldl -lm
+
 test/test_dram_timing: test/test_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_dram_timing.c src/core/bus_arbiter.c
 
@@ -2737,6 +2747,10 @@ test/test_tom_readback: test/test_tom_readback.c test/test_framework.h
 test/test_gpu_ops: test/test_gpu_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_gpu_ops.c -ldl
+
+test/test_gpu_interleave: test/test_gpu_interleave.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_gpu_interleave.c -ldl
 
 test/test_dsp_ops: test/test_dsp_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \

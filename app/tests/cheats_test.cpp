@@ -1854,8 +1854,108 @@ static void testMessageCaps() {
     }
 }
 
+
+static void testEditableAndOnce() {
+    uint32_t number = 7;
+    CHECK(!parseCheatValue("-1", number) && number == 7);
+    CHECK(!parseCheatValue("4294967296", number));
+    CHECK(!parseCheatValue("1oops", number));
+    CHECK(parseCheatValue("0xFFFFFFFF", number) && number == UINT32_MAX);
+    CHECK(parseCheatValue("0123", number) && number == 123);
+    const std::string text =
+        "cheat0_desc = Weapon Select (00 Knife,01 Pistol,02 Machine Gun,03 Chaingun,04 Flame Thrower,05 Launcher)\n"
+        "cheat0_address = 137623\ncheat0_value = 3\ncheat0_memory_search_size = 3\n"
+        "cheat1_desc = Word\ncheat1_address = 256\ncheat1_value = 4660\ncheat1_memory_search_size = 4\n"
+        "cheat2_desc = Range\ncheat2_code = 00000200:04\ncheat2_vj_value_min = 2\n"
+        "cheat2_vj_value_max = 10\ncheat2_vj_value_step = 2\n"
+        "cheat3_desc = Compound\ncheat3_code = 00000300:01+00000301:02\n";
+    std::vector<ChtCheat> parsed;
+    CHECK(parseCht(text, parsed) && parsed.size() == 4);
+    if (parsed.size() != 4) return;
+    CHECK(parsed[0].value.choices.size() == 6);
+    CHECK(parsed[0].value.accepts(0) && parsed[0].value.accepts(5) && !parsed[0].value.accepts(6));
+    CHECK_EQ(parsed[0].value.code(1), "00021997:01");
+    CHECK_EQ(parsed[1].value.code(0xABCD), "00000100:CDAB"); // preserve source endian
+    CHECK(!parsed[1].value.accepts(65536));
+    CHECK(parsed[2].value.hasRange && parsed[2].value.accepts(10) && !parsed[2].value.accepts(3));
+    CHECK(parsed[3].value.bytes == 0);
+    std::vector<ChtCheat> bad;
+    CHECK(parseCht("cheat0_desc = Hint (1 one,1 duplicate)\ncheat0_code = 00000100:01\n", bad));
+    CHECK(bad[0].value.choices.empty());
+    CHECK(parseCht("cheat0_desc = Hint (1 one,2 two,prose)\ncheat0_code = 00000100:01\n", bad));
+    CHECK(bad[0].value.choices.empty());
+    CHECK(parseCht("cheat0_code = 00000100:01\ncheat0_vj_value_min=5\ncheat0_vj_value_max=2\n", bad));
+    CHECK(bad[0].supported && bad[0].value.bytes == 0);
+    CHECK(parseCht("cheat0_code = 00000100:FFFFFFFF\n", bad));
+    CHECK(bad[0].value.accepts(UINT32_MAX));
+    CHECK_EQ(bad[0].value.code(0x11223344), "00000100:11223344");
+
+    Ram ram;
+    unsigned writes = 0;
+    auto writer = [&](uint32_t a, uint32_t v, uint8_t size) { ++writes; ramWrite(a, v, size, &ram); };
+    CHECK(writeCheatOnce("00000020:AB+00000022:1234", writer));
+    CHECK(writes == 2 && ram.b[0x20] == 0xAB && ram.b[0x22] == 0x12 && ram.b[0x23] == 0x34);
+    CHECK(!writeCheatOnce("00000020:CD+00800000:1234", writer));
+    CHECK(writes == 2 && ram.b[0x20] == 0xAB); // no partial write
+    CHECK(!canApplyCheatOnce("001FFFFF:1234"));
+    CHECK(!canApplyCheatOnce("bad"));
+    CHECK(canApplyCheatOnce("001FFFFF:12"));
+
+    const fs::path tmp = fs::temp_directory_path() / "vj-cheat-values-unit";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp);
+    std::ofstream(tmp / "Values.cht") << text;
+    GameIdentity game;
+    game.key = "values"; game.title = "Values";
+    CheatManager m;
+    m.setStateDir((tmp / "state").string() + "/");
+    m.setLibraryDirs({tmp.string()}); m.rescan(); m.gameLoaded(game);
+    const auto* set = m.selectedSet();
+    CHECK(set != nullptr);
+    if (!set) return;
+    const auto& weapon = set->cheats[0];
+    const auto& word = set->cheats[1];
+    const std::string originalId = weapon.id;
+    CheatBatch batch;
+    unsigned batches = 0;
+    m.commit = [&](CheatBatch b) { ++batches; batch = std::move(b); };
+    CHECK(m.setValue(weapon, 1));
+    CHECK(batches == 0 && !m.isEnabled(weapon));
+    CHECK_EQ(weapon.id, originalId);
+    CHECK(!m.setValue(weapon, 6));
+    m.setEnabled(weapon, true); m.setEnabled(word, true);
+    CHECK_EQ(batch[1].code, "00021997:01");
+    CHECK(m.setValue(weapon, 2));
+    CHECK_EQ(batch[1].code, "00021997:02");
+    CHECK(m.setValue(weapon, 1));
+    ChtCheat restricted = weapon;
+    restricted.supported = false; // revision guard / unsupported entry
+    CHECK(!m.applyOnce(restricted) && !m.setValue(restricted, 2));
+    CHECK(m.applyOnce(weapon));
+    CHECK(!m.isEnabled(weapon) && m.isEnabled(word));
+    CHECK(batch.size() == 3 && batch[0].reset && !batch[1].once && batch[2].once);
+    CHECK_EQ(batch[2].code, "00021997:01");
+    m.apply();
+    CHECK(batch.size() == 2 && !batch.back().once); // not repeated by ordinary sync
+    m.blocked = [] { return true; };
+    unsigned before = batches;
+    CHECK(!m.applyOnce(word) && !m.setValue(word, 5));
+    CHECK(batches == before && m.isEnabled(word));
+    m.blocked = {};
+    std::string error;
+    CHECK(m.addUser("Manual", "00000020:AB", error));
+    CHECK(m.applyUserOnce(0) && !m.userCheats()[0].enabled && batch.back().once);
+    m.gameClosed(); m.gameLoaded(game);
+    CHECK(m.valueOf(m.selectedSet()->cheats[0]) == 1);
+    CHECK(!m.isEnabled(m.selectedSet()->cheats[0]));
+    CHECK(m.isEnabled(m.selectedSet()->cheats[1]));
+    CHECK(!m.userCheats()[0].enabled);
+    fs::remove_all(tmp);
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--corpus")) return corpus(argv[2]);
+    testEditableAndOnce();
     testHelpers();
     testParse();
     testReplay();

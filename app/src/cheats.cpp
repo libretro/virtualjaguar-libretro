@@ -90,12 +90,60 @@ bool splitPart(const std::string& desc, std::string& base) {
 }
 
 struct Raw {
+    CheatValue value;
     std::string desc;
     std::string code;
     std::string note;
     bool supported = false;
     unsigned segments = 0;
 };
+
+// Only a complete trailing list of numbered labels is a choice list. Plain
+// prose, button combinations, duplicate values and partial parses are not metadata.
+void readChoices(CheatValue& v, const std::string& desc) {
+    size_t start = desc.rfind('(');
+    if (start == std::string::npos || desc.back() != ')') return;
+    std::string list = desc.substr(start + 1, desc.size() - start - 2);
+    std::vector<CheatChoice> choices;
+    while (!list.empty()) {
+        size_t comma = list.find(',');
+        std::string item = trim(list.substr(0, comma));
+        size_t space = item.find_first_of(" \t");
+        uint64_t value = 0;
+        if (space == std::string::npos || !parseU64(item.substr(0, space), value) || value > UINT32_MAX ||
+            !v.accepts((uint32_t)value)) return;
+        std::string label = trim(item.substr(space));
+        if (label.empty() || choices.size() >= 64) return;
+        for (const auto& c : choices) if (c.value == value) return;
+        choices.push_back({(uint32_t)value, label});
+        if (comma == std::string::npos) break;
+        list.erase(0, comma + 1);
+        if (trim(list).empty()) return;
+    }
+    if (choices.size() < 2) return;
+    bool initialFound = false;
+    for (const auto& c : choices) initialFound |= c.value == v.initial;
+    if (initialFound) v.choices = std::move(choices);
+}
+
+void valueMetadata(CheatValue& v, const std::map<std::string, std::string>& fields, const std::string& desc) {
+    if (!v.bytes) return;
+    v.maximum = v.bytes == 4 ? UINT32_MAX : (1u << (8 * v.bytes)) - 1;
+    // Optional VJ extensions. Legacy .cht has no semantic min/max/step fields.
+    if (fields.count("vj_value_min") || fields.count("vj_value_max") || fields.count("vj_value_step")) {
+        uint64_t lo = 0, hi = 0, step = 1;
+        auto a = fields.find("vj_value_min"), b = fields.find("vj_value_max"), c = fields.find("vj_value_step");
+        if (a == fields.end() || b == fields.end() || !parseU64(a->second, lo) || !parseU64(b->second, hi) ||
+            (c != fields.end() && !parseU64(c->second, step)) || lo > hi || hi > v.maximum ||
+            !step || step > UINT32_MAX || v.initial < lo || v.initial > hi || (v.initial - lo) % step) {
+            v = CheatValue(); // bad hints never authorize arbitrary values
+            return;
+        }
+        v.minimum = (uint32_t)lo; v.maximum = (uint32_t)hi; v.step = (uint32_t)step;
+        v.hasRange = true;
+    }
+    readChoices(v, desc);
+}
 
 Raw convertEntry(const std::map<std::string, std::string>& f, size_t index) {
     Raw r;
@@ -112,6 +160,13 @@ Raw convertEntry(const std::map<std::string, std::string>& f, size_t index) {
         if (validateCode(code, &r.segments, &why)) {
             r.code = code;
             r.supported = true;
+            uint32_t address = 0, value = 0;
+            uint8_t bytes = 0;
+            if (r.segments == 1 && cheat_parse_one(code.c_str(), &address, &value, &bytes) &&
+                address <= 0x200000u - bytes) {
+                r.value.bytes = bytes; r.value.address = address; r.value.initial = value;
+                valueMetadata(r.value, f, r.desc);
+            }
         } else {
             r.note = why;
         }
@@ -149,7 +204,7 @@ Raw convertEntry(const std::map<std::string, std::string>& f, size_t index) {
         r.note = "address or value is not a number";
         return r;
     }
-    if (addr + n > 0x200000u) {
+    if (addr > 0x200000u - n) {
         r.note = "address is outside the 2 MB main RAM";
         return r;
     }
@@ -172,6 +227,8 @@ Raw convertEntry(const std::map<std::string, std::string>& f, size_t index) {
         b[k] = (uint8_t)((val >> (8 * (be ? n - 1 - k : k))) & 0xFF);
     r.code = memoryCheatToCode((uint32_t)addr, b, n);
     r.supported = validateCode(r.code, &r.segments, &r.note);   // cannot fail; belt and braces
+    r.value.bytes = n; r.value.address = (uint32_t)addr; r.value.initial = (uint32_t)val; r.value.bigEndian = be;
+    valueMetadata(r.value, f, r.desc);
     return r;
 }
 
@@ -201,6 +258,53 @@ std::string memoryCheatToCode(uint32_t addr, const uint8_t* bytes, unsigned n) {
         out += buf;
     }
     return out;
+}
+
+bool parseCheatValue(const std::string& text, uint32_t& value) {
+    uint64_t parsed = 0;
+    if (!parseU64(text, parsed) || parsed > UINT32_MAX) return false;
+    value = (uint32_t)parsed;
+    return true;
+}
+
+bool CheatValue::accepts(uint32_t v) const {
+    if (!bytes || v < minimum || v > maximum || !step || (v - minimum) % step) return false;
+    if (choices.empty()) return true;
+    for (const auto& choice : choices) if (choice.value == v) return true;
+    return false;
+}
+
+std::string CheatValue::code(uint32_t v) const {
+    if (!accepts(v)) return {};
+    uint8_t data[4] = {};
+    for (unsigned i = 0; i < bytes; ++i) data[i] = (uint8_t)(v >> (8 * (bigEndian ? bytes - 1 - i : i)));
+    return memoryCheatToCode(address, data, bytes);
+}
+
+static bool onceList(const std::string& code, cheat_list_t& list) {
+    unsigned count = 0;
+    if (!validateCode(code, &count, nullptr) || count > CHEAT_MAX_ENTRIES) return false;
+    cheat_list_reset(&list);
+    cheat_list_set(&list, 0, true, code.c_str());
+    if (list.count != count) return false;
+    for (unsigned i = 0; i < list.count; ++i)
+        if (list.entries[i].address > 0x200000u - list.entries[i].size) return false;
+    return true;
+}
+
+bool canApplyCheatOnce(const std::string& code) {
+    cheat_list_t list = {};
+    return onceList(code, list);
+}
+
+bool writeCheatOnce(const std::string& code, const std::function<void(uint32_t, uint32_t, uint8_t)>& write) {
+    cheat_list_t list = {};
+    if (!write || !onceList(code, list)) return false;
+    for (unsigned i = 0; i < list.count; ++i) {
+        const auto& e = list.entries[i];
+        write(e.address, e.value, e.size);
+    }
+    return true;
 }
 
 bool validateCode(const std::string& code, unsigned* segments, std::string* why) {
@@ -329,6 +433,7 @@ bool parseCht(const std::string& textIn, std::vector<ChtCheat>& out) {
         ChtCheat c;
         c.desc = g.desc;
         c.parts = g.parts;
+        if (g.parts == 1 && g.raw.supported) c.value = g.raw.value;
         c.supported = g.raw.supported;
         c.note = g.raw.note;
         c.code = g.raw.supported ? g.raw.code : std::string();
@@ -647,6 +752,49 @@ void CheatManager::setEnabled(const ChtCheat& c, bool on, CheatOrigin origin) {
     apply();
 }
 
+uint32_t CheatManager::valueOf(const ChtCheat& c, CheatOrigin origin) const {
+    uint64_t v = 0;
+    if (parseU64(state_.get("value." + toggleKey(c, origin), ""), v) && v <= UINT32_MAX && c.value.accepts((uint32_t)v))
+        return (uint32_t)v;
+    return c.value.initial;
+}
+
+std::string CheatManager::effectiveCode(const ChtCheat& c, CheatOrigin origin) const {
+    return c.value.bytes ? c.value.code(valueOf(c, origin)) : c.code;
+}
+
+bool CheatManager::setValue(const ChtCheat& c, uint32_t value, CheatOrigin origin) {
+    if (!active() || blockedNow() || !c.supported || !c.value.accepts(value)) return false;
+    state_.set("value." + toggleKey(c, origin), std::to_string(value));
+    touch();
+    if (isEnabled(c, origin)) apply(); // editing an off cheat does not write to RAM
+    return true;
+}
+
+bool CheatManager::applyOnce(const ChtCheat& c, CheatOrigin origin) {
+    const std::string code = effectiveCode(c, origin);
+    if (!active() || blockedNow() || !c.supported || !canApplyCheatOnce(code)) return false;
+    // One batch disables this freeze, preserves other freezes, then writes once.
+    const std::string key = toggleKey(c, origin);
+    enabled_.erase(key); state_.erase(key); touch();
+    applyWithOnce(code);
+    return true;
+}
+
+bool CheatManager::applyCodeOnce(const std::string& code) {
+    if (!active() || blockedNow() || !canApplyCheatOnce(code)) return false;
+    applyWithOnce(code);
+    return true;
+}
+
+bool CheatManager::applyUserOnce(size_t index) {
+    if (!active() || blockedNow() || index >= user_.size() || !canApplyCheatOnce(user_[index].code)) return false;
+    user_[index].enabled = false;
+    state_.set("user." + std::to_string(index) + ".on", "0"); touch();
+    applyWithOnce(user_[index].code);
+    return true;
+}
+
 bool CheatManager::setEnabledByName(const std::string& name, bool on) {
     if (!game_.valid()) return false;
     std::string want = lowerStr(trim(name));
@@ -782,7 +930,9 @@ void CheatManager::setUserEnabled(size_t i, bool on) {
 // ---------------------------------------------------------------------------------
 // core sync
 // ---------------------------------------------------------------------------------
-void CheatManager::apply() {
+void CheatManager::apply() { applyWithOnce({}); }
+
+void CheatManager::applyWithOnce(const std::string& onceCode) {
     appliedSegments_ = 0;
     CheatBatch b;
     b.push_back(CheatOp{true, 0, false, std::string()});
@@ -794,7 +944,7 @@ void CheatManager::apply() {
         for (size_t i = 0; i < set_.cheats.size(); i++) {
             const ChtCheat& c = set_.cheats[i];
             if (!c.supported || !isEnabled(c)) continue;
-            b.push_back(CheatOp{false, (unsigned)i, true, c.code});
+            b.push_back(CheatOp{false, (unsigned)i, true, effectiveCode(c)});
             appliedSegments_ += c.segments;
         }
     }
@@ -802,7 +952,7 @@ void CheatManager::apply() {
         for (size_t i = 0; i < community_.cheats.size(); i++) {
             const ChtCheat& c = community_.cheats[i];
             if (!c.supported || !isEnabled(c, CheatOrigin::Community)) continue;
-            b.push_back(CheatOp{false, kCommunityIndexBase + (unsigned)i, true, c.code});
+            b.push_back(CheatOp{false, kCommunityIndexBase + (unsigned)i, true, effectiveCode(c, CheatOrigin::Community)});
             appliedSegments_ += c.segments;
         }
     }
@@ -813,6 +963,7 @@ void CheatManager::apply() {
         b.push_back(CheatOp{false, kUserIndexBase + (unsigned)i, true, user_[i].code});
         appliedSegments_ += segs;
     }
+    if (!onceCode.empty()) b.push_back(CheatOp{false, 0, true, onceCode, true});
     if (commit) commit(std::move(b));
     if (appliedSegments_ > kCoreLimit && warn)
         warn("cheats: " + std::to_string(appliedSegments_) + " writes exceed the core's limit of " +

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Authenticode-sign files with signtool (Git Bash / MSYS2).  Used by local-package.sh --sign
-# (package.sh runs it via VJ_SIGN_CMD); never by CI, which signs through SignPath.
+# (package.sh runs it via VJ_SIGN_CMD); never by CI, which signs with Azure Artifact Signing
+# (.github/actions/windows-sign, #1150).
 #
 #   sign.sh <file>...
 #

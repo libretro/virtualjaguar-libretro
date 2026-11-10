@@ -6,6 +6,7 @@ const ARTIFACTS = [
 ];
 const PACKAGE_JOBS = [
   'Package metadata', 'Package-manager templates', 'macOS universal', 'Windows x64', 'Windows arm64',
+  'Windows sign and package', 'Windows smoke x64', 'Windows smoke arm64',
   'Flatpak x86_64', 'Linux x86_64', 'Linux aarch64',
   ...['x86_64-apple-darwin', 'aarch64-apple-darwin', 'x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu']
     .map(target => `librashader runtime / ${target}`),

@@ -7,7 +7,9 @@
 # app/cmake/VJPackage.cmake) that exists beside the executable in the BUILD tree, the same
 # directory must exist, non-empty, beside the executable in the package.  Catches a
 # packaging step that quietly drops cheats/, libretro-db/ or shaders/ (the app would just
-# run without them).  Also prints what the package holds.
+# run without them).  Also fails if the Windows software-OpenGL fallback directory holds a
+# nested copy of itself (software-opengl/software-opengl, shipped by v3.11.0).  Also prints
+# what the package holds.
 set -euo pipefail
 build="$1"; dest="$2"; exe="${3:-virtualjaguar}"
 dirs="cheats libretro-db shaders"
@@ -18,6 +20,9 @@ if [ -f "$cfg" ]; then
 fi
 [ -f "$dest/$exe" ] || { echo "::error::$dest/$exe is missing"; exit 1; }
 rc=0
+if [ -n "$(find "$dest" -ipath '*/software-opengl/software-opengl' -print -quit)" ]; then
+  echo "::error::$dest holds a nested software-opengl/software-opengl copy"; rc=1
+fi
 for d in $dirs; do
   if [ -d "$build/$d" ]; then
     n_build="$(find "$build/$d" -type f | wc -l | tr -d ' ')"

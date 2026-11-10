@@ -5,7 +5,7 @@
 > debugger...**; F9 breaks or continues and F10 steps while halted (PR #924).
 
 The app's **Tools** menu is a set of windows over the core's debug interface: Memory viewer and Palette (CLUT) editor,
-Cheat scanner, Object list (Object Processor), Blitter log, Textures and an Audio scope.  None of it exists under
+Symbols, Cheat scanner, Object list (Object Processor), Blitter log, Textures and an Audio scope.  None of it exists under
 RetroArch: the interface is only handed to a frontend that asks for it (`VJ_CAP_DEBUG`, see
 [`app-frontend-extension.md`](app-frontend-extension.md)).  Every window is a tool for developers and tinkerers; none
 of them changes how the game plays unless you press an edit button.
@@ -170,6 +170,24 @@ big-endian values (signed or unsigned, aligned or not), and narrows with *Unknow
 candidate's value to poke it, or **Add as cheat**: the result goes into the Cheats window through the same
 `CheatManager` as codes typed by hand, so it can be switched on and off, and hardcore blocks it exactly like any other cheat.
 Only the first 1000 candidates are listed; the rest are kept and shown once the search is narrower.
+
+### Symbols
+
+Tools > Symbols... lists the names and hex values from a `.cof` or `.abs` (#1195), with a search box that matches a name
+or the digits of a value (`$` or `0x` is optional) and columns that sort.  The symbols come from, in order: a file picked
+with Load..., the loaded content itself, then a `.cof` with the same name beside the content, which covers running a
+`.j64` or `.rom` from the same link.  Reload re-reads after a relink.  Nothing is read until the window opens.
+
+The checkbox in a row sets a breakpoint on the processor that runs the address: `$F03000-$F03FFF` is the GPU,
+`$F1B000-$F1CFFF` the DSP, anything else the 68000.  GPU or DSP code run from main RAM needs the row's context menu, which
+offers all three, plus the CPU debugger, the memory viewer and copying.  Double-click a name for the CPU debugger.  Odd
+values and values past 24 bits cannot be a program counter, so their breakpoint controls are greyed.
+
+The parser (`symbol_table.*`) reads what `rln` writes: 12-byte COFF records with a string table, or 14-byte `.abs` records,
+whose names stop at 8 characters.  `rln` keeps a table only with `-s` (globals) or `-l` (locals too).  The header of a
+`.cof` linked without them still counts its symbols, so a table missing from the file is reported, not treated as damage.
+Standard 18-byte COFF records are accepted too, tested on a synthesized file only.  `$601A` programs are relocated at load,
+so their symbols are not read.
 
 ### Object list
 

@@ -46,6 +46,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD_REQUIRED OFF)   # the core is built with the toolchain default
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# compile_commands.json beside the build: file_access_define_sync (VJPlatformTests.cmake, #1147) reads it to
+# check that every translation unit agrees on the edition; editors and clangd use it too.  project() has
+# already created the cache entry, EMPTY unless -DCMAKE_EXPORT_COMPILE_COMMANDS=... or the environment variable
+# of that name said otherwise, so "empty" means "nobody chose" and turns it on; an explicit OFF is kept.
+if("${CMAKE_EXPORT_COMPILE_COMMANDS}" STREQUAL "")
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+endif()
 
 # Packaging (#839): install layout, Windows resources/subsystem, Linux desktop files.
 # Deferred to the end of this file, so it sees every target and every feature's install().
@@ -68,6 +75,13 @@ endif()
 set(VJ_TV_DEFAULT "auto" CACHE STRING "TV mode setting for a fresh config: auto (nightlies, PR builds) | manual (releases) | off")
 if(NOT VJ_TV_DEFAULT MATCHES "^(auto|manual|off)$")
     message(FATAL_ERROR "VJ_TV_DEFAULT must be auto, manual or off (got '${VJ_TV_DEFAULT}')")
+endif()
+# Shaders (#1154): the preset a config that never chose one starts on.  A file in app/shaders/ (the first-party presets,
+# shipped by every package whether or not the slang-shaders subset was bundled) or off.  Like VJ_TV_DEFAULT it is written
+# to config.ini only once the user changes it, so it can move between builds; the app target alone sees it.
+set(VJ_SHADER_DEFAULT "vj-scanlines.slangp" CACHE STRING "Shader preset for a fresh config: a file in app/shaders/ | off")
+if(NOT VJ_SHADER_DEFAULT STREQUAL "off" AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${VJ_SHADER_DEFAULT}")
+    message(FATAL_ERROR "VJ_SHADER_DEFAULT must be off or a preset file in app/shaders/ (got '${VJ_SHADER_DEFAULT}')")
 endif()
 # The build channel (#967 phase 3d, design section 8): release | nightly | dev.  Since the 4.0 flip (#1039 phase 5c) every
 # channel defaults Settings > Interface > Emulation thread to On for users who never chose; a stored choice always wins.
@@ -131,7 +145,8 @@ else()
     set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(SDL3
-        URL      https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+        URL      https://www.libsdl.org/release/SDL3-3.4.16.tar.gz
+                 https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
         URL_HASH SHA256=7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
         DOWNLOAD_EXTRACT_TIMESTAMP ON
         EXCLUDE_FROM_ALL)
@@ -139,7 +154,8 @@ else()
 endif()
 
 FetchContent_Declare(imgui
-    URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8-docking.tar.gz
+    URL      https://codeload.github.com/ocornut/imgui/tar.gz/refs/tags/v1.92.8-docking
+             https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8-docking.tar.gz
     URL_HASH SHA256=ca0653454ed371b7a87e9b0bc29a5d15c9be7f7c0fbe778042fc48c71df1d3d8
     DOWNLOAD_EXTRACT_TIMESTAMP ON)
 FetchContent_GetProperties(imgui)
@@ -162,7 +178,8 @@ if(VJ_APP_FREETYPE)
     set(_vj_saved_shared ${BUILD_SHARED_LIBS})
     set(BUILD_SHARED_LIBS OFF)
     FetchContent_Declare(freetype
-        URL      https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-1.tar.gz
+        URL      https://codeload.github.com/freetype/freetype/tar.gz/refs/tags/VER-2-14-1
+                 https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-1.tar.gz
         URL_HASH SHA256=44bd69d1f0750603410cfd4f26f1c5523c5a3a087a2dfa8639b757dc7c6677be
         DOWNLOAD_EXTRACT_TIMESTAMP ON
         EXCLUDE_FROM_ALL)
@@ -232,10 +249,34 @@ include(VJCore)
 # dependency).  Neither found: the feature degrades to "no downloads".
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
+
+# ---------------------------------------------------------------------------
+# Edition-dependent file access (#1147).  platform/file_access.h is a header
+# switch: with VJ_MAC_APP_STORE it declares the security-scoped-bookmark
+# implementation in file_access_macos.mm, without it inline SDL pass-throughs
+# (remember() and forget() are no-ops).  Every translation unit that includes
+# it must see the same answer: the 3.10.0 Store build defined it on the
+# executable only, so vj_library's LibraryService called the no-ops and library
+# folders lost their sandbox grant after a relaunch.  The define therefore lives
+# on ONE target, vj_file_access, which also compiles the .mm exactly once;
+# vj_library carries it PUBLIC, and every other target that includes the header
+# or tests VJ_MAC_APP_STORE links it.  file_access_define_sync
+# (cmake/VJFileAccessDefineCheck.cmake) fails when a translation unit drifts.
+# ---------------------------------------------------------------------------
+if(VJ_MAC_APP_STORE)
+    add_library(vj_file_access STATIC src/platform/file_access_macos.mm)
+    set_source_files_properties(src/platform/file_access_macos.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
+    target_compile_definitions(vj_file_access PUBLIC VJ_MAC_APP_STORE=1)
+    target_include_directories(vj_file_access PRIVATE src)   # config.h (restore() rewrites moved paths)
+    target_link_libraries(vj_file_access PUBLIC ${VJ_SDL3_TARGET} "-framework Cocoa")
+else()
+    add_library(vj_file_access INTERFACE)
+endif()
+
 add_library(vj_library STATIC src/library.cpp src/library_lists.cpp src/library_service.cpp src/bios.cpp src/disc_hash.cpp src/http.cpp)
 target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
-target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
+target_link_libraries(vj_library PUBLIC vj_file_access ${VJ_SDL3_TARGET} Threads::Threads)   # library_service.cpp: files::openFolder/forget
 # .chd track-1 checksums for disc identification (the same libchdr the core reads CHDs with)
 target_include_directories(vj_library PRIVATE "${VJ_ROOT}/deps/libchdr/include")
 target_link_libraries(vj_library PRIVATE vj_libchdr)
@@ -360,6 +401,9 @@ set(VJ_APP_SOURCES
     src/settings_reset.cpp
     src/settings_reset_ui.cpp
     src/library_ui.cpp
+    src/content_server.cpp
+    src/content_server_browser.cpp
+    src/content_server_ui.cpp
     src/bios_ui.cpp
     src/cheats.cpp
     src/cheat_store.cpp
@@ -401,6 +445,8 @@ set(VJ_APP_SOURCES
     src/debug/blitter_ui.cpp
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
+    src/debug/symbol_table.cpp
+    src/debug/symbols_ui.cpp
     src/desktop.cpp
     src/tv_script.cpp
     src/platform/commands.cpp
@@ -489,17 +535,12 @@ endif()
 include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
 add_executable(virtualjaguar ${VJ_APP_SOURCES})
-if(VJ_MAC_APP_STORE)
-    target_sources(virtualjaguar PRIVATE src/platform/file_access_macos.mm)
-    set_source_files_properties(src/platform/file_access_macos.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
-    target_compile_definitions(virtualjaguar PRIVATE VJ_MAC_APP_STORE=1)
-endif()
 vj_app_shaders(virtualjaguar)
 vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src src/debug "${VJ_ROOT}/src/debug")
-target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
+target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_file_access vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
 target_link_libraries(virtualjaguar PRIVATE vj_build_channel)
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 if(VJ_APP_NEURO)
@@ -507,6 +548,7 @@ if(VJ_APP_NEURO)
 endif()
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
 message(STATUS "TV mode default for a fresh config: ${VJ_TV_DEFAULT}")
+message(STATUS "Shader preset default for a fresh config: ${VJ_SHADER_DEFAULT}")
 message(STATUS "Build channel: ${VJ_BUILD_CHANNEL} (emulation thread default ${VJ_EMU_THREAD_DEFAULT_VALUE})")
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses; platform_windows.cpp: WSAStartup for the core
@@ -518,7 +560,8 @@ endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}"
     VJ_DISCORD_APP_ID="${VJ_DISCORD_APP_ID}"
-    VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}")
+    VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}"
+    VJ_SHADER_DEFAULT_PRESET="${VJ_SHADER_DEFAULT}")
 if(MSVC)
     target_compile_options(virtualjaguar PRIVATE /W3 /utf-8)
     target_compile_definitions(virtualjaguar PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -576,6 +619,7 @@ if(VJ_APP_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter)   # gdb_threaded_halt (VJEmuThreadTests.cmake) drives a gdb client from Python
     include(VJSmokeTests)
+    include(VJContentServerTests)
     include(VJAchTests)
     include(VJCheatTests)
     include(VJNetplayTests)

@@ -115,9 +115,16 @@ test('all original compile-only artifact aliases remain in C/C++ CI, with native
     'MSVC ${{ matrix.arch }} compilation check', 'AddressSanitizer + UndefinedBehaviorSanitizer',
     'Code coverage (gcov + codecov)', 'clang-tidy on changed files']) assert(ci.includes(gate), gate);
 });
-test('both Release publishers exclude raw intermediates; shipped core and debug artifact upload stays intact', () => {
+test('the stage job excludes raw intermediates and both Release publishers ship only what it staged; shipped core and debug artifact upload stays intact', () => {
   const release = fs.readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
-  assert.equal((release.match(/-not -path 'artifacts\/ci-core-\*'/g) || []).length, 2);
+  const stage = fs.readFileSync(path.join(root, 'scripts/release/stage.sh'), 'utf8');
+  // One flatten for every lane (#1151): release.yml's stage job runs the script, which keeps the
+  // ci-core-* / librashader-* intermediates and the signing-status-* sidecars out of release/.
+  assert.equal((release.match(/bash scripts\/release\/stage\.sh artifacts release signing-status/g) || []).length, 1);
+  for (const x of ['ci-core-*', 'librashader-*', 'signing-status-*']) assert(stage.includes(`-not -path "$art/${x}"`), x);
+  // The release and nightly jobs publish the staged artifact, never a second flatten.
+  assert.equal((release.match(/name: release-staged/g) || []).length, 4);   // one upload; downloads by the gate, release and nightly
+  assert(!release.includes("-exec cp {} release/"));
   assert(release.includes('name: virtualjaguar_libretro-${{ matrix.config.platform }}'));
   assert(release.includes('path: dist/'));
   assert(release.includes('Verify compile-only Mach-O production exports'));

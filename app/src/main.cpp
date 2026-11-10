@@ -19,6 +19,8 @@ static void usage(const char* argv0) {
         "  --fullscreen          start in fullscreen\n"
         "  --tv                  start with TV mode on (when the TV mode setting is not Off; not remembered)\n"
         "  --theme system|dark|light|custom:NAME   colour theme for this run (not saved; Settings > Interface > Appearance sets it)\n"
+        "  --shader NAME|FILE|off  shader preset for this run (not saved): a name in the bundled shaders folder\n"
+        "                        (vj-scanlines, slang-shaders/crt/crt-easymode), a .slangp file, or off\n"
         "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
         "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
         "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
@@ -50,7 +52,8 @@ static void usage(const char* argv0) {
         "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-halt] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--screenshot-emu-frames M] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
+        "     (the capture waits for N UI frames and, with M, for the core to have shown M frames: a picture, not the boot)\n"
         "     [--font retro|system|mono[:SIZE]|custom:FILE] [--font-then SPEC]   (this run only; --font-then switches live after 60 frames)\n"
         "     [--show-window settings[-video|-input|-audio|-bios|-storage|-interface]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
         "     [--show-window memory|bitmap|palette|scanner|cpu|objects|blitter|textures|scope|tools]   (Tools windows; needs a game; tools = all)\n"
@@ -76,6 +79,7 @@ static void usage(const char* argv0) {
         "  --cheats-dir DIR      look for .cht files (libretro cheat database) in DIR too\n"
         "  --cheat-set NAME      use the cheat set NAME.cht for the loaded game (remembered)\n"
         "  --cheat-on CHEAT      turn on a database cheat by description, id or position (repeatable)\n"
+        "  --cheat-once CODE     apply a RAM code once after loading (repeatable, not saved)\n"
         "  --cheat CODE          add a manual code, hex ADDRESS:VALUE e.g. 00007D3D:05 (repeatable)\n"
         "  --cheats-community-install  headless: fetch the community cheat store (cheats.community.url in config.ini,\n"
         "                        else the project site) and install the loaded cartridge's pack\n"
@@ -116,6 +120,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--headless")) a.headless = true;
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
         else if (!std::strcmp(s, "--tv")) a.tv = true;
+        else if (!std::strcmp(s, "--shader")) a.shader = need(s);
         else if (!std::strcmp(s, "--theme")) {
             a.theme = need(s);
             if (a.theme != "system" && a.theme != "dark" && a.theme != "light" && a.theme.compare(0, 7, "custom:") != 0) {
@@ -271,6 +276,7 @@ int main(int argc, char** argv) {
         }
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--screenshot-emu-frames")) a.screenshotEmuFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
         else if (!std::strcmp(s, "--ui-scale")) a.uiScale = (float)std::strtod(need(s), nullptr);
         else if (!std::strcmp(s, "--low-dpi")) a.lowDpi = true;
@@ -287,6 +293,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--cheats-dir")) a.cheatsDir = need(s);
         else if (!std::strcmp(s, "--cheat-set")) a.cheatSet = need(s);
         else if (!std::strcmp(s, "--cheat-on")) a.cheatOn.emplace_back(need(s));
+        else if (!std::strcmp(s, "--cheat-once")) a.cheatOnceCodes.emplace_back(need(s));
         else if (!std::strcmp(s, "--cheat")) a.cheatCodes.emplace_back(need(s));
         else if (!std::strcmp(s, "--cheats-community-install")) a.cheatsCommunityInstall = true;
         else if (!std::strcmp(s, "--expect-ram")) {

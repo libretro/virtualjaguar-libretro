@@ -376,6 +376,11 @@
     "size": 7140
    },
    {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/SHA256SUMS.txt.minisig",
+    "name": "SHA256SUMS.txt.minisig",
+    "size": 320
+   },
+   {
     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-linux-aarch64.AppImage",
     "name": "VirtualJaguar-nightly-linux-aarch64.AppImage",
     "size": 23738888

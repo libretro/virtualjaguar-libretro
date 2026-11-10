@@ -46,8 +46,6 @@ on:
 
 permissions:
   contents: read
-  issues: write          # addCloseIssueReferences mutates the ISSUE
-  pull-requests: read
 
 concurrency:
   group: pr-issue-link-${{ github.event.pull_request.number }}
@@ -56,6 +54,10 @@ concurrency:
 jobs:
   check:
     name: PR is linked to an issue
+    permissions:
+      contents: read
+      issues: write  # addCloseIssueReferences mutates the ISSUE
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
       # pull_request_target: check out the BASE ref (the default for this

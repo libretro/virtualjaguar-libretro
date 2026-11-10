@@ -75,6 +75,6 @@ jobs:
           }
       - name: Site build accepts the packs
         run: |
-          python3 -m unittest discover -s scripts -p 'test_check_site*.py' -v
+          python3 -m unittest discover -s scripts -p 'test_*.py' -v
           python3 scripts/build_site.py --releases scripts/testdata/releases.json --out "$RUNNER_TEMP/site"
           python3 scripts/check_site.py "$RUNNER_TEMP/site"

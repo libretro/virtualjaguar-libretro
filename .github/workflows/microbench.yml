@@ -39,6 +39,9 @@ concurrency:
   group: microbench-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   run:
     name: Microbench ROM assertions (linux x86_64)

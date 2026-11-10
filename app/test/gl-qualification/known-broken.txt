@@ -1,0 +1,17 @@
+# Bundled presets the bundled librashader (pin: app/packaging/librashader/pin.env) rejects on
+# EVERY GL, with the reason.  gl_qualify.py expects a "[shader] <preset> failed: ..." line for
+# each; one that starts building is reported so this list only shrinks.  Paths relative to
+# the shaders/ folder beside the executable.
+#
+# slang-shaders e1d75632: these nedi presets chain vhs/shaders/vhs.slang, whose
+# `layout(set = 0, binding = 3) uniform sampler2D play;` is an LUT the presets never declare
+# in `textures = ...`, so reflection fails: FragmentSemanticError(UnknownSemantics("play")).
+# (bilateral-variant2 does not include vhs.slang and builds.)  Found by the first Linux run
+# of gl-qualification.yml (#1155); the fix belongs in the preset (declare the texture) or
+# in the bundled subset (app/cmake/VJShaders.cmake).
+slang-shaders/edge-smoothing/nedi/presets/bilateral-variant.slangp
+slang-shaders/edge-smoothing/nedi/presets/bilateral-variant3.slangp
+slang-shaders/edge-smoothing/nedi/presets/bilateral-variant4.slangp
+slang-shaders/edge-smoothing/nedi/presets/bilateral-variant5.slangp
+slang-shaders/edge-smoothing/nedi/presets/bilateral-variant6.slangp
+slang-shaders/edge-smoothing/nedi/presets/bilateral-variant7.slangp

@@ -271,11 +271,11 @@ run_one() {
         case "$(basename "${rel}" .j64)" in
             *_M|*_m) extra+=(--option virtualjaguar_bios_type=m) ;;
         esac
-        "${PROBE}" "${core}" "${VENDOR_DIR}/${rel}" --frames "${frames}" --quiet \
+        "${PROBE}" "${core}" "${VENDOR_DIR}/${rel}" --frames "${frames}" --quiet --lit-percent "${MIN_NONBLACK_PCT}" \
             "${extra[@]}" \
             >"${out}" 2>&1
     else
-        "${PROBE}" "${core}" "${VENDOR_DIR}/${rel}" --frames "${frames}" --quiet \
+        "${PROBE}" "${core}" "${VENDOR_DIR}/${rel}" --frames "${frames}" --quiet --lit-percent "${MIN_NONBLACK_PCT}" \
             >"${out}" 2>&1
     fi
     rc=$?

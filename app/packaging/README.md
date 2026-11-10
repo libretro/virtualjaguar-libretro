@@ -25,7 +25,7 @@ Same-repository `release/**` PRs share the Release push workflow's package build
 synthetic merge tree is identical to its head tree. Ordinary PRs, forks, manual app builds, and
 release PRs whose merge adds different content keep their own package builds. Native app test
 matrices and ThreadSanitizer still run on the PR; Release still builds and tests every package.
-The PR's **Verify shared Release packages** check requires all twelve package/runtime jobs and
+The PR's **Verify shared Release packages** check requires all fifteen package/runtime jobs and
 all six nonempty, unexpired `app-package-*` artifact groups from the latest Release push run for
 that exact head, branch and repository. Pending, failed, cancelled, skipped or missing package
 checks cannot pass the shared gate. A changed PR head or merge tree also fails it.
@@ -47,7 +47,7 @@ rerun the PR's shared-package verifier; no duplicate package dispatch is needed.
 | `VirtualJaguar-X.Y.Z-windows-arm64.zip`, `...-windows-arm64-setup.exe` | the same two packages, native ARM64 (clang); the arm64 installer refuses to run on x64 Windows |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | built on Ubuntu 22.04 (glibc 2.35) |
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | installs to `/usr/lib/virtualjaguar`, symlink in `/usr/bin` |
-| `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` | single-file Flatpak bundle, app id `io.github.libretro.VirtualJaguar`; see Flatpak notes |
+| `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`, `...-linux-aarch64.flatpak` | single-file Flatpak bundles, app id `io.github.libretro.VirtualJaguar`; see Flatpak notes |
 
 The `.deb`'s internal `Version:` is Debian-legal (`3.9.1`, `3.9.1~rc1`, `3.9.1~nightly.<sha>`; the version is the core's); the
 file name keeps the contract name.
@@ -85,21 +85,110 @@ macOS (Developer ID + notarization, existing Apple Developer account):
 | `APPLE_NOTARY_ISSUER_ID` | the issuer UUID shown on that page |
 | `APPLE_NOTARY_KEY_P8_BASE64` | `base64 -i AuthKey_XXXX.p8` |
 
-Windows (SignPath Foundation, **dormant until the OSS application is approved**):
+Windows (Authenticode through **Azure Artifact Signing**, [issue #1150](https://github.com/libretro/virtualjaguar-libretro/issues/1150);
+the one-time Azure setup is under "Every Windows binary is signed" below). Nothing certificate-shaped is
+stored anywhere: CI obtains a short-lived certificate from Microsoft's HSM at signing time, authenticated
+with OpenID Connect, so there is no client secret either.
 
 | Name | Kind | What |
 |---|---|---|
-| `SIGNPATH_API_TOKEN` | secret | submitter API token |
-| `SIGNPATH_ORGANIZATION_ID` | variable | organization id |
-| `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG` | variables, optional | default `virtualjaguar` / `release-signing` |
+| `AZURE_CLIENT_ID` | secret | application (client) id of the Entra app registration CI signs as |
+| `AZURE_TENANT_ID` | secret | the Entra tenant (directory) id |
+| `AZURE_SUBSCRIPTION_ID` | secret | the subscription that holds the Artifact Signing account |
+| `AZURE_SIGNING_ENDPOINT` | variable | the account's regional endpoint, e.g. `https://eus.codesigning.azure.net` |
+| `AZURE_SIGNING_ACCOUNT` | variable | the Artifact Signing account name |
+| `AZURE_SIGNING_PROFILE` | variable | the certificate profile name (Public Trust) |
 
-The SignPath steps are written to the action's documented interface but have **never run**; expect to
-adjust them against the artifact configuration SignPath gives you (they sign `virtualjaguar.exe` before
-packaging and the installer after).
+All six must exist for signing to run; a partial set skips with a `::notice::` naming what is missing,
+and the packages ship unsigned (SmartScreen then warns on first run). Variables, not secrets, for the
+last three: they are names, they appear in the job log anyway, and `release.yml`'s gate reads them to
+decide whether to expect a signature.
+
+Release key material (issue #1151; one-time setup, commands below):
+
+| Name | Kind | What |
+|---|---|---|
+| `MINISIGN_SECRET_KEY` | secret | the minisign secret key that signs `SHA256SUMS.txt` (the key file's contents) |
+| `MINISIGN_PASSWORD` | secret | its password (empty for a key generated with `-W`) |
+| `APPIMAGE_GPG_PRIVATE_KEY` | secret | armored GPG private key that signs the AppImages |
+| `APPIMAGE_GPG_PASSPHRASE` | secret | its passphrase (empty for a key without one) |
 
 Signing runs when the caller asks (`release.yml` and `app.yml` do; a manual dispatch needs the `sign`
 input) and the secrets exist. GitHub passes no secrets to a fork pull request, so those builds stay
-ad-hoc signed and the log warns.
+ad-hoc signed and the log warns. The checksum signature and the attestations are made by `release.yml`
+only (its `stage` job), never by PR runs.
+
+### Signed checksums (minisign, #1151)
+
+`release.yml`'s `stage` job writes `SHA256SUMS.txt` once for the whole release and signs it with the
+project release key: `SHA256SUMS.txt.minisig` is attached next to it on every tag, nightly and
+prerelease ([`scripts/release/sign-sums.sh`](../../scripts/release/sign-sums.sh)). The public half is
+committed as `docs/release-signing.pub` and shown on the site's Download page; the installers pin the
+same key. Without the secret the step prints a loud warning and ships no signature; once the public key
+is committed the gate below fails a tag or `release/**` build that lacks the signature.
+
+The maintainer generates the key on their own machine. `minisign` is in Homebrew and in Ubuntu 23.04+:
+
+```sh
+minisign -G -p docs/release-signing.pub -s ~/.minisign/virtualjaguar-release.key   # asks for a password
+cat docs/release-signing.pub                     # two lines; the second is the key itself
+gh secret set MINISIGN_SECRET_KEY --repo libretro/virtualjaguar-libretro < ~/.minisign/virtualjaguar-release.key
+gh secret set MINISIGN_PASSWORD   --repo libretro/virtualjaguar-libretro   # paste the password
+```
+
+Then, in one commit: `docs/release-signing.pub`, and the key's second line pasted into
+`MINISIGN_PUBKEY=` in `tools/install.sh` and `$script:MinisignPubKey` in `tools/install.ps1`
+(the Installer workflow fails if the three disagree). Keep the secret key out of the repository and
+back it up: a lost key means a new key, a new `.pub`, and every pinned copy updated.
+
+Verify a download: `minisign -Vm SHA256SUMS.txt -p docs/release-signing.pub`, then
+`sha256sum --check SHA256SUMS.txt`.
+
+### Signed AppImages (GPG, #1151)
+
+`appimagetool --sign` embeds an armored GPG signature of the image (and the public key) in the
+AppImage's `.sha256_sig` / `.sig_key` ELF sections; `app-package.yml`'s Linux jobs do that when the
+`APPIMAGE_GPG_PRIVATE_KEY` secret exists. appimagetool signs through gpgme and takes the passphrase from
+`APPIMAGETOOL_SIGN_PASSPHRASE`, so a passphrase-protected key works in CI. appimagetool ships no
+verifier: [`linux/verify-appimage.py`](linux/verify-appimage.py) re-hashes the file with the two
+sections zeroed and runs `gpg --verify`, on Linux or macOS. The public key is committed as
+`docs/release-signing-appimage.asc`; once it is, the gate requires every AppImage to be signed by it.
+
+```sh
+gpg --quick-generate-key "Virtual Jaguar release signing <releases@jaguar.provenance-emu.com>" ed25519 sign never
+gpg --armor --export  "Virtual Jaguar release signing" > docs/release-signing-appimage.asc
+gpg --armor --export-secret-keys "Virtual Jaguar release signing" \
+  | gh secret set APPIMAGE_GPG_PRIVATE_KEY --repo libretro/virtualjaguar-libretro
+gh secret set APPIMAGE_GPG_PASSPHRASE --repo libretro/virtualjaguar-libretro   # the key's passphrase
+```
+
+Verify a download: `python3 app/packaging/linux/verify-appimage.py VirtualJaguar-X.Y.Z-linux-x86_64.AppImage --pubkey docs/release-signing-appimage.asc`.
+
+### Build provenance attestations (#1151)
+
+The `stage` job also runs `actions/attest-build-provenance` over every file it stages, `SHA256SUMS.txt`
+and its signature included, so GitHub holds a signed SLSA provenance statement naming the commit and
+workflow run that produced each asset. No secret is involved (the job's OIDC token signs it). Verify
+any asset with the GitHub CLI:
+
+```sh
+gh attestation verify virtualjaguar_libretro-linux-x86_64.so --repo libretro/virtualjaguar-libretro
+```
+
+### The release gate (#1152)
+
+After staging and before anything is published, `release.yml`'s `verify-signatures` job
+([`scripts/release/verify.sh`](../../scripts/release/verify.sh), on a macOS runner) checks every asset
+against the state its class is expected to have: macOS files Developer ID signed and notarized
+(`codesign`, `spctl`, `stapler`, plus the sidecar the signing job wrote for bare Mach-O files, which
+cannot be stapled); the Windows app zips and installers Authenticode-signed whenever the six Azure values
+exist (`WINDOWS_APP_EXPECT` and `WINDOWS_EXPECT`, passed by `release.yml`), the Windows core DLLs and
+tools likewise; AppImages GPG-signed by the committed key once that key exists; `SHA256SUMS.txt` signed once its key exists; everything attested.
+The result is one table per artifact (signed, notarized, attested) in the job summary and in the
+release body. On tags and `release/**` a failed expectation fails the run and nothing is published;
+on `develop` it only warns, so a signing-service outage cannot withhold the core nightly. A
+`workflow_dispatch` of `release.yml` with **Dry run** ticked runs the whole pipeline up to the gate on
+any branch and publishes nothing.
 
 ### Every macOS build is signed (#989)
 
@@ -116,6 +205,119 @@ always deleted again, signs, submits one zip per call to `notarytool` (API key a
 | `virtualjaguar_libretro-macos-{arm64,x86_64}.dylib` | `release.yml` (tags, nightly, prerelease) | no |
 | `cue2cdi-macos-universal` | `release.yml` | no |
 | `chdman`, `jagcd-chd-check` in `jagcd-tools-macos.zip` | `chdman-tools.yml` | no |
+
+Each of these signing steps also records what it did in a `signing-status-*` artifact
+([`scripts/release/signing-status.sh`](../../scripts/release/signing-status.sh)): the release gate
+re-checks the signature on the file itself, and reads the sidecar only for whether Apple issued the
+notarization ticket, which a bare Mach-O file cannot carry.
+
+### Every Windows binary is signed (#1150)
+
+Every Windows file we ship, the app packages, the core DLLs, `cue2cdi` and the jagcd tools, carries an
+Authenticode signature (SHA-256 digest,
+RFC 3161 timestamp from `http://timestamp.acs.microsoft.com`) made with **Azure Artifact Signing**
+(formerly Trusted Signing, Basic tier). Microsoft issues a short-lived Public Trust certificate from its
+HSM for each signing session, so no certificate file or password exists in the repository or in the
+secrets, and CI authenticates with OpenID Connect. The composite action
+[`.github/actions/windows-sign`](../../.github/actions/windows-sign/action.yml) wraps `azure/login` and
+`azure/artifact-signing-action` (both pinned by commit) and then re-reads every file with
+[`windows/verify-signatures.ps1`](windows/verify-signatures.ps1) (`Get-AuthenticodeSignature`, the
+`signtool verify /pa` verdict): a file that is not `Valid` and timestamped fails the job before anything
+is packaged. SmartScreen reputation is per file hash and accrues on its own; the signature buys the named
+publisher and removes the "unknown publisher" dialog, nothing more, and an EV certificate would not either.
+
+| What | Where | Signed |
+|---|---|---|
+| `virtualjaguar.exe`, `librashader.dll`, the `software-opengl/` copy of both and the bundled Mesa DLLs, x64 and arm64 | `app-package.yml` job `windows-package`, before packaging | yes |
+| `VirtualJaguar-X.Y.Z-windows-{x64,arm64}-setup.exe` | the same job, after Inno Setup built them | yes |
+| `unins000.exe`, the uninstaller Inno embeds | no: Inno's `SignTool` hook needs a command-line signer and the action is a PowerShell module; it runs per-user, so no UAC prompt names it | no |
+| the Store MSIX (`windows-store.yml`) | Microsoft signs it during certification | not by us |
+| `virtualjaguar_libretro-windows-{x86_64,i686}.dll`, `cue2cdi-windows-x86_64.exe` | `release.yml` job `build`, Windows rows, after strip and before the upload | yes |
+| `chdman.exe`, `jagcd-chd-check.exe` in `jagcd-tools-windows-x64.zip` | `chdman-tools.yml`, before the zip | yes |
+
+How the Windows leg of `app-package.yml` is laid out, and why:
+
+* **Build on each architecture's own runner** (`windows`, x64 on `windows-latest`, arm64 on
+  `windows-11-arm`), ending in the install tree, uploaded as the intermediate `windows-stage-<arch>`
+  (never a release asset: `scripts/release/stage.sh` skips it).
+* **Sign and package both architectures in one x64 job** (`windows-package`): the signing action does
+  not run on Windows ARM runners (its signing dlib ships x64 and x86 only; "we currently do not support
+  Windows Arm runners"), and Authenticode does not care which CPU an image is for. It signs every PE file
+  in both trees, builds the portable zips and the Inno installers from the signed trees, signs the
+  installers, checks every PE inside the final zips and installers, writes the gate sidecars and uploads
+  `app-package-windows-<arch>`.
+* **Smoke-test the final packages on each architecture's native runner** (`windows-smoke`), from the
+  uploaded artifact: Authenticode re-checked on the downloaded files, the portable zip run, the installer
+  silently installed, run and uninstalled.
+* **The Mesa DLLs are signed too.** They are MSYS2's MIT-licensed build, unsigned upstream, and nothing in
+  them checks its own signature. We are the publisher of the package they ship in, the gate scans every PE
+  file inside the zip, and a tree with a mix of signed and unsigned DLLs is exactly what heuristics flag.
+  Cost: about ten extra signatures per architecture per run.
+* **Where it runs:** same-repo pull requests (`app.yml` passes the three secrets and `id-token: write`),
+  nightlies, `release/**` and tags (`release.yml`), and a dispatch with `sign` ticked. Fork pull requests
+  receive no secrets and build unsigned, with the notice. **Quota:** the Basic tier includes 5,000
+  signatures a month; one `app-package.yml` run spends about 40 (two trees of 19 PE files plus two
+  installers), and a `release.yml` run about 45 in total: the same 40 for the app packages it builds
+  plus 5 for the two core DLLs, `cue2cdi`, `chdman.exe` and `jagcd-chd-check.exe`. If pull-request
+  traffic ever threatens the quota, the lever is `sign: false` in `app.yml`'s `package` job; the
+  release lanes keep signing.
+* **The gate:** `release.yml`'s `verify-signatures` passes `WINDOWS_APP_EXPECT=signed` (app zips and
+  installers) and `WINDOWS_EXPECT=signed` (core DLLs, `cue2cdi`, the tools zip) when all six Azure
+  values exist, so a tag or `release/**` build whose Windows files lost their signature fails before
+  publication; without the values the gate expects `unsigned` and only the notice says so (the
+  v3.11.0 state).
+
+#### One-time Azure setup (the maintainer)
+
+1. **Resource provider.** On the subscription, register `Microsoft.CodeSigning`
+   (`az provider register --namespace Microsoft.CodeSigning`; `az extension add --name artifact-signing`).
+2. **Account.** Create an Artifact Signing account, SKU Basic, in a supported region; the region fixes
+   the endpoint (East US = `https://eus.codesigning.azure.net`, West US 2 = `https://wus2.codesigning.azure.net`,
+   North Europe = `https://neu.codesigning.azure.net`, ...):
+   `az artifact-signing create -n <account> -l eastus -g <resource-group> --sku Basic`.
+3. **Identity validation.** Assign yourself **Artifact Signing Identity Verifier** on the account (IAM),
+   then Objects > Identity validations > New identity > Public, type Individual (US or Canada), which reads
+   the name and address from the subscription's billing account; the validated name becomes the
+   certificate's CN. Portal only; 1 to 20 business days. This is the long pole: start it first.
+4. **Certificate profile.** Objects > Certificate profiles > Create > Public Trust, bound to that
+   validation (`az artifact-signing certificate-profile create -g <rg> --account-name <account>
+   -n <profile> --profile-type PublicTrust --identity-validation-id <id>`).
+5. **App registration** (Entra ID > App registrations > New), no client secret. Note the Application
+   (client) ID and the Directory (tenant) ID.
+6. **Role.** On the account's IAM, add the role assignment **Artifact Signing Certificate Profile
+   Signer** to the app registration's service principal (search "User, group, or service principal";
+   only users are listed by default).
+7. **Federated credentials** on the app registration (Certificates & secrets > Federated credentials >
+   Add > GitHub Actions deploying Azure resources; issuer `https://token.actions.githubusercontent.com`,
+   audience `api://AzureADTokenExchange`). The subjects CI presents, one credential each:
+   * `repo:libretro/virtualjaguar-libretro:pull_request` -- every same-repo pull request (`app.yml`);
+   * `repo:libretro/virtualjaguar-libretro:ref:refs/heads/develop` -- the nightly;
+   * `repo:libretro/virtualjaguar-libretro:ref:refs/heads/release/vX.Y.Z` and
+     `repo:libretro/virtualjaguar-libretro:ref:refs/tags/vX.Y.Z` -- the release lane and the tag. Either
+     one pair per release, added with the release branch (a missing one makes `azure/login` fail, so a
+     release can never slip out unsigned by accident), or once and for all with two *flexible* federated
+     credentials (portal or Graph only, still preview): `claims['sub'] matches
+     'repo:libretro/virtualjaguar-libretro:ref:refs/heads/release/*'` and the same for
+     `refs/tags/v*`;
+   * a `workflow_dispatch` of `app-package.yml` with `sign` presents `ref:refs/heads/<that branch>`.
+   An alternative that needs one credential for everything is `environment: windows-signing` on the
+   `windows-package` job (subject `repo:libretro/virtualjaguar-libretro:environment:windows-signing`); not
+   used because every pull-request run would then record a "deployment" on the PR.
+8. **Secrets and variables:** `gh secret set AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`;
+   `gh variable set AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`.
+9. **Prove it:** dispatch `app-package.yml` on `develop` with `sign` ticked (or open a PR that touches
+   `app/`). The `Windows sign and package` job summary carries the Authenticode table with the validated
+   name as signer and Microsoft's timestamp authority; both `Windows smoke` jobs re-check the downloaded
+   files. Then dispatch `release.yml` with **Dry run**: the gate's table must show every Windows app row
+   signed. From a downloaded asset: `signtool verify /pa /v <file>` or
+   `(Get-AuthenticodeSignature <file>).Status`. The first signed tag closes #1150.
+
+What goes wrong, and how it shows: no federated credential for this run's subject -> `azure/login`
+fails and the job is red (never an unsigned release); the role is missing -> the signing action fails
+with a 403 naming the profile; a runner whose certificate store has not yet fetched Microsoft's
+"Microsoft Identity Verification Root Certificate Authority 2020" -> the verification step reports
+`UnknownError` ("terminated in a root certificate which is not trusted"); Windows fetches that root on
+demand through the automatic root update, so a rerun normally clears it.
 
 A bare Mach-O file cannot hold a stapled ticket: it is notarized inside a zip and Gatekeeper looks the
 ticket up online the first time. iOS and tvOS dylibs are not signed here (a Developer ID does not apply
@@ -237,17 +439,27 @@ package ships it beside the executable (`Contents/Frameworks/librashader.dylib`,
 AppImage, `/usr/lib/virtualjaguar/librashader.so` in the `.deb`, `librashader.dll` next to the exe), and
 `THIRD-PARTY-NOTICES.txt` carries its licence (MPL-2.0 OR GPL-3.0-only).
 
+**`librashader/pin.env` is the single source of the runtime's version on every platform** (tag, commit, archive
+SHA-256, Rust version, Windows feature set): every package below is built from it, none takes an upstream binary.
+
 | Package | Where the library comes from |
 |---|---|
 | macOS universal (arm64 + x86_64) | **built from source in CI**, both slices, then `lipo`-merged |
 | AppImage / `.deb`, x86_64 and aarch64 | **built from source in CI** on the packaging runner (Ubuntu 22.04) |
-| Windows x64 / ARM64 | upstream's prebuilt `librashader-v0.12.0` zip (SHA-256-pinned in `app/cmake/VJShaders.cmake`) |
+| Windows x64 / ARM64 (zip, installer, Store MSIX) | **built from source in CI** (#1153): MSVC targets, OpenGL runtime only, static CRT |
 | Flatpak | see Flatpak notes |
 
 Why source: upstream's `x86_64-macos` v0.12.0 zip holds an **arm64** dylib (`lipo`-verified), so Intel Macs had no
 shader runtime, and upstream publishes no Linux binary. Building both macOS slices ourselves (instead of mixing
 upstream's arm64 with a self-built x86_64) keeps one version, one deployment target and one install name in the
-universal file.
+universal file. Upstream's Windows DLLs (v0.12.0) import `D3DX9_43.dll`, the June 2010 DirectX SDK
+redistributable that a stock Windows 10/11 does not have (`librashader-runtime-d3d9` links it with
+`kind = "raw-dylib"`), plus `VCRUNTIME140.dll` / `MSVCP140.dll` from the VC++ redistributable, so `LoadLibrary`
+fails wherever those are not installed: on GitHub's runners the v3.11.0 `shaders_library` test **skipped** on both
+Windows legs (the DLL "failed to load", reported as a skip because nothing required it) and the packages shipped a
+runtime that never worked on a clean machine. The from-source DLL is built with `--no-default-features --features
+runtime-opengl` (the app only uses the OpenGL chain; the Flatpak module does the same) and
+`RUSTFLAGS=-C target-feature=+crt-static`, so it imports nothing but Windows' own DLLs.
 
 * **The recipe** is [`.github/workflows/librashader.yml`](../../.github/workflows/librashader.yml), called by
   `app-package.yml` (job `librashader`, which the macOS and Linux jobs `need`). The pin is
@@ -258,21 +470,37 @@ universal file.
   the C headers, whose digests are pinned there (the 0.12.1 headers are byte-identical to 0.12.0's, ABI 2).
 * **Targets:** `x86_64-apple-darwin` (cross-built on the Apple-silicon runner), `aarch64-apple-darwin`,
   `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (native, `ubuntu-22.04` / `ubuntu-22.04-arm`,
-  glibc 2.35 like the packages). macOS uses `MACOSX_DEPLOYMENT_TARGET=11.0` and the install name
-  `@rpath/librashader.dylib` (cargo's default would bake the runner's absolute path in).
-* **Cache and artifacts.** Each target is cached under `librashader-<commit>-<triple>-rust<ver>-mac<min>-v1`
-  (a cold build is ~10 minutes with LTO, a hit is seconds; bump `-v1` in the workflow to force a rebuild after a
-  recipe change) and uploaded as the artifact `librashader-<triple>` (library + `BUILD-INFO.txt`). These are
-  intermediates: `release.yml` leaves `librashader-*` out of the release assets.
-* **Checks.** In `librashader.yml`: the architecture (`lipo -archs` / ELF machine), `minos`, install name, the
-  highest `GLIBC` symbol version (must be <= 2.35), only C/C++-runtime `NEEDED` entries, and (same-architecture
-  runners) a load that reads the ABI version. In `app-package.yml`: `vj_shader_tests library` with
-  `VJ_REQUIRE_LIBRASHADER=1` (a missing runtime fails instead of skipping); the macOS bundle's universal dylib
-  is loaded by an arm64 process and, under Rosetta, an x86_64 one; for the AppImage and the `.deb`,
-  `linux/check-librashader.sh` checks the file, its CPU and dependencies, and runs `vj_shader_tests probe` from the
-  package's own folder, i.e. the app's real lookup (beside the executable, `VJ_LIBRASHADER` unset).
+  glibc 2.35 like the packages), `x86_64-pc-windows-msvc` (native) and `aarch64-pc-windows-msvc` (cross-compiled
+  with Visual Studio's ARM64 tools), both on `windows-latest` with rustup's pinned toolchain, as upstream's own CI
+  builds them. macOS uses `MACOSX_DEPLOYMENT_TARGET=11.0` and the install name `@rpath/librashader.dylib` (cargo's
+  default would bake the runner's absolute path in). Windows uses the MSVC targets rather than MSYS2's Rust because
+  MSYS2's rustc follows its repository, not `pin.env`, and a DLL's C ABI is toolchain-neutral: the MinGW-built
+  `virtualjaguar.exe` loads it like any system DLL (proven by `shaders_library` on both legs).
+* **Cache and artifacts.** Each target is cached under
+  `librashader-<commit>-<triple>-rust<ver>-mac<min>-feat<features>-v2` (a cold build is ~10 minutes with LTO, a hit
+  is seconds; bump `-v2` in the workflow to force a rebuild after a recipe change) and uploaded as the artifact
+  `librashader-<triple>` (library + `BUILD-INFO.txt`). These are intermediates: `release.yml` leaves `librashader-*`
+  out of the release assets. The workflow takes a `targets` input (a JSON array of triples): `windows-store.yml` and
+  `windows-gl-test.yml` build only the Windows ones.
+* **Checks.** In `librashader.yml`: the architecture (`lipo -archs` / ELF machine / PE machine), `minos`, install
+  name, the highest `GLIBC` symbol version (must be <= 2.35), only C/C++-runtime `NEEDED` entries, on Windows an
+  import table of Windows' own DLLs only plus the exported C API
+  ([`windows/check-librashader-dll.py`](windows/check-librashader-dll.py), stdlib Python, runnable on any host),
+  and (same-architecture runners) a load that reads the ABI version. In `app-package.yml`: `vj_shader_tests library`
+  with `VJ_REQUIRE_LIBRASHADER=1` on **every** leg, Windows included (a runtime that does not load fails instead of
+  skipping, and the test prints why on both streams); the macOS bundle's universal dylib is loaded by an arm64
+  process and, under Rosetta, an x86_64 one; for the AppImage and the `.deb`, `linux/check-librashader.sh`, and for
+  the unpacked Windows zip and the silently installed Inno Setup tree, `windows/check-librashader.sh`, check the
+  file, its CPU and dependencies, load it, and run `vj_shader_tests probe` from the package's own folder, i.e. the
+  app's real lookup (beside the executable, `VJ_LIBRASHADER` unset). `windows-store.yml` runs the DLL check on the
+  install tree, the MSIX layout and the MakeAppx round-trip copy.
 * **Bumping:** change `LIBRASHADER_TAG`, `LIBRASHADER_COMMIT` and `LIBRASHADER_SHA256` together (and re-pin the header
   digests in `VJShaders.cmake` if `include/` changed; its comment says how), update `THIRD-PARTY-NOTICES.txt`.
+* **Local Windows builds** get no runtime by default (`VJ_APP_FETCH_LIBRASHADER` is OFF there since #1153; the
+  configure log says so): build one with `build-from-source.sh x86_64-pc-windows-msvc <dir>` (rustup + Visual
+  Studio, from Git Bash or MSYS2) or download the `librashader-<triple>` artifact of any recent run, then pass
+  `-DVJ_LIBRASHADER_LIB=<dir>/librashader.dll`. `-DVJ_APP_FETCH_LIBRASHADER=ON` still downloads upstream's v0.12.0
+  DLL as an explicit opt-in; it loads only with the June 2010 DirectX and VC++ redistributables installed.
 * **Without the bundled file** the Shader section of the app says why (not bundled / failed to load: reason) and
   links to the "Getting the shader runtime" section of [`app/README.md`](../README.md#getting-the-shader-runtime).
 
@@ -286,7 +514,8 @@ universal file.
   NEON implementation; CI checks that exactly one `blitter_simd_ops` is linked, and that the exe is an
   ARM64 image. The same `package.sh` and `virtualjaguar.iss` serve both architectures (`--arch arm64`,
   `/DArm64`): the arm64 installer is `ArchitecturesAllowed=arm64`, the x64 one `x64compatible` (so the
-  x64 package also installs, emulated, on ARM64 Windows). librashader's `aarch64-windows` runtime is bundled.
+  x64 package also installs, emulated, on ARM64 Windows). The `aarch64-pc-windows-msvc` librashader runtime,
+  built from source (Shader runtime above), is bundled.
   `tools/install.ps1` picks the ARM64 package on ARM64 Windows and falls back to x64 for older releases. GUI subsystem (no console window); `console_attach.cpp` re-attaches to
   the parent console so `--help`/`--version` still print.
 * Installer: **Inno Setup 6.7.3** (pinned by SHA-256). Chosen over NSIS for a maintained modern wizard,
@@ -359,12 +588,17 @@ log prints `[emu] channel=...`.
   sibling `.bin` tracks, neither of which the file-chooser portal grants; it is read-only and limited to the home
   directory. Settings, saves and states live in `~/.var/app/io.github.libretro.VirtualJaguar/data/VirtualJaguar`
   (SDL's pref path follows `XDG_DATA_HOME`, which Flatpak sets).
-* **CI:** `app-package.yml` job `flatpak` uses `flatpak/flatpak-github-actions/flatpak-builder` v6.8 (pinned by commit) in
-  the Flathub image `freedesktop-25.08`, with the action's own artifact upload disabled (it would not be named
-  `app-package-*`); the bundle is smoke-tested (install, headless frame hash) and uploaded as `app-package-flatpak`.
-  x86_64 only for now; a native aarch64 leg on `ubuntu-24.04-arm` would be a matrix entry.
+* **CI:** `app-package.yml` job `flatpak` is a matrix over `x86_64` (`ubuntu-24.04`) and `aarch64` (`ubuntu-24.04-arm`,
+  #1156), each leg NATIVE inside the multi-arch Flathub image `freedesktop-25.08` with
+  `flatpak/flatpak-github-actions/flatpak-builder` v6.8 (pinned by commit) and the action's own artifact upload disabled
+  (it would not be named `app-package-*`). The job refuses a non-native host (`uname -m` must equal the leg's arch), so
+  the Rust librashader module is never built under QEMU user-mode emulation. Each bundle is smoke-tested (install,
+  `flatpak info` arch, headless frame hash, bundled data, `librashader.so` resolves and loads through ctypes with ABI 2)
+  and uploaded as `app-package-flatpak` (x86_64, the historical name) / `app-package-flatpak-aarch64`. Each leg writes its
+  wall time and whether the flatpak-builder cache was warm to the job summary. The release signing gate
+  (`scripts/release/verify.sh`) classifies both bundles as `flatpak` by extension (attestation only, no platform signature).
 * **Install:** `flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`
-  (the runtime comes from Flathub), then `flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`.
+  (the runtime comes from Flathub), then `flatpak install --user VirtualJaguar-X.Y.Z-linux-<x86_64|aarch64>.flatpak`.
 
 ## Package managers (templates; nothing is submitted by CI)
 

@@ -25,6 +25,7 @@
 #include "paths.h"
 #include "present_util.h"
 #include "shaders.h"
+#include "software_gl.h"
 
 #ifndef VJ_SHADER_DIR
 #error VJ_SHADER_DIR must point at app/shaders
@@ -193,6 +194,8 @@ static void testPresetParsing() {
     fs::remove_all(d, ec);
 }
 
+// The Mac App Store edition ignores VJ_LIBRASHADER (code comes only from the signed bundle) and a fresh
+// chain has no search list, so steps 1 and 2 both read as "not found" there; the garbage file is never opened.
 static void testFallback() {
     STEP("fallback");
     fs::path d = makeTemp("fallback");
@@ -236,8 +239,12 @@ static void testFallback() {
         ShaderChain sc;
         CHECK(!sc.probeLibrary(), "a text file must not load as a library");
         CHECK(!sc.libraryError().empty(), "and says why: %s", sc.libraryError().c_str());
+#ifdef VJ_MAC_APP_STORE
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::NotFound, "the Store edition never consults VJ_LIBRASHADER");
+#else
         CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed, "a file that exists but cannot be used reads as a failed load");
         CHECK(!ShaderChain::builtWithHeaders() || sc.libraryError().find(ShaderChain::libraryFileName()) != std::string::npos, "and names the file");
+#endif
     }
 
     STEP("fallback-settings");
@@ -257,6 +264,115 @@ static void testFallback() {
         Config empty;
         c.loadSettings(empty, "");
         CHECK(!c.enabled && c.preset.empty(), "defaults: off");
+    }
+
+    STEP("build-default");
+    // #1154: the build default applies to a config that never chose, is never written back, a choice wins, and its
+    // failures are a log line rather than a notice.  (VJ_LIBRASHADER is still the bogus path from step 1.)
+    {
+        fs::path bd = d / "builtin";
+        write(bd / "dflt.slang", "x");
+        write(bd / "dflt.slangp", "shaders = 1\nshader0 = dflt.slang\n");
+        ShaderChain::setBuiltinPresetDir(str(bd));
+        const std::string dpath = str(bd) + "/dflt.slangp";
+        Config fresh;   // no shader keys at all
+        ShaderChain f1;
+        f1.setBuildDefault("dflt.slangp");
+        f1.loadSettings(fresh, "");
+        CHECK(f1.enabled && f1.preset == dpath && f1.usingBuildDefault(), "a fresh config starts on the build default: %s", f1.preset.c_str());
+        f1.saveSettings(fresh);
+        CHECK(!fresh.has("shader.enabled") && !fresh.has("shader.preset") && !fresh.has("shader.chosen"), "an untouched default stores nothing");
+        // 3.11 wrote shader.enabled=false / shader.preset= for everyone who never opened the picker: same as fresh.
+        Config v311;
+        v311.setBool("shader.enabled", false);
+        v311.set("shader.preset", "");
+        ShaderChain f2;
+        f2.setBuildDefault("dflt.slangp");
+        f2.loadSettings(v311, "");
+        CHECK(f2.enabled && f2.preset == dpath && f2.usingBuildDefault(), "a 3.11 config with no chosen preset gets the default");
+        f2.saveSettings(v311);
+        CHECK(!v311.has("shader.enabled") && !v311.has("shader.preset"), "and its stale keys are dropped");
+        // A stored preset is a choice, on or off: untouched.
+        Config chose;
+        chose.setBool("shader.enabled", false);
+        chose.set("shader.preset", "/their/own.slangp");
+        ShaderChain f3;
+        f3.setBuildDefault("dflt.slangp");
+        f3.loadSettings(chose, "");
+        CHECK(!f3.enabled && f3.preset == "/their/own.slangp" && !f3.usingBuildDefault(), "a stored choice wins over the default");
+        f3.saveSettings(chose);
+        CHECK(!chose.getBool("shader.enabled", true) && chose.get("shader.preset") == "/their/own.slangp", "and is written back as it was");
+        // Turning the default off is a choice: stored, and still off after a relaunch.
+        f1.enabled = false;
+        CHECK(!f1.usingBuildDefault(), "moving off the default");
+        f1.saveSettings(fresh);
+        CHECK(!fresh.getBool("shader.enabled", true) && fresh.get("shader.preset") == dpath && fresh.getBool("shader.chosen", false),
+              "the change is stored and flagged as chosen");
+        ShaderChain f4;
+        f4.setBuildDefault("dflt.slangp");
+        f4.loadSettings(fresh, "");
+        CHECK(!f4.enabled && f4.preset == dpath && !f4.usingBuildDefault(), "relaunch: stays off");
+        // "None" after the default is a choice too: the default does not come back.
+        f4.enabled = true;
+        f4.clearPreset();
+        f4.saveSettings(fresh);
+        ShaderChain f5;
+        f5.setBuildDefault("dflt.slangp");
+        f5.loadSettings(fresh, "");
+        CHECK(f5.preset.empty() && !f5.usingBuildDefault(), "none stays none");
+        // Settings > Reset erases the keys: back on the default.
+        fresh.erase("shader.enabled");
+        fresh.erase("shader.preset");
+        fresh.erase("shader.chosen");
+        f5.loadSettings(fresh, "");
+        CHECK(f5.enabled && f5.preset == dpath && f5.usingBuildDefault(), "a reset returns to the build default");
+        // A build default of off, and a default the package lost.
+        ShaderChain f6;
+        f6.setBuildDefault("off");
+        f6.loadSettings(fresh, "");
+        CHECK(!f6.enabled && f6.preset.empty() && f6.usingBuildDefault(), "default off: plain, nothing stored");
+        f6.saveSettings(fresh);
+        CHECK(!fresh.has("shader.enabled") && !fresh.has("shader.preset"), "an off default stores nothing either");
+        ShaderChain f7;
+        f7.setBuildDefault("gone.slangp");
+        f7.loadSettings(fresh, "");
+        CHECK(!f7.enabled && f7.preset.empty() && f7.usingBuildDefault(), "a missing default file: off, not an error");
+        // Fail-soft: with no runtime the default logs and draws plain; a chosen preset still gets its notice.
+        ShaderFrame fr;
+        fr.srcTex = 1;
+        fr.srcW = fr.srcH = 8;
+        fr.outW = fr.outH = 16;
+        std::string note;
+        ShaderChain f8;
+        f8.setBuildDefault("dflt.slangp");
+        f8.loadSettings(fresh, "");
+        // "Without a runtime" must not depend on VJ_LIBRASHADER alone: the Mac App Store edition ignores it and
+        // would load the runtime the build put beside this executable, then draw with no GL context.
+        f8.setLibrarySearchDirs({});
+        f3.setLibrarySearchDirs({});
+        CHECK(f8.render(fr) == 0 && !f8.takeNotice(note), "the default without a runtime: plain picture, no notice");
+        CHECK(f8.enabled, "and not switched off");
+        f8.enabled = false;
+        f8.enabled = true;   // the switch itself is not a change
+        CHECK(f8.usingBuildDefault(), "still the default");
+        f3.enabled = true;
+        CHECK(f3.render(fr) == 0 && f3.takeNotice(note) && note.find("plain picture") != std::string::npos, "a chosen preset without a runtime: a notice");
+        f8.destroyGL();
+        f3.destroyGL();
+
+        STEP("resolve-arg");
+        // --shader NAME|FILE: the bundled folder, the slang-shaders subset by its own path, or a file.
+        write(bd / "slang-shaders" / "crt" / "crt-x.slang", "x");
+        write(bd / "slang-shaders" / "crt" / "crt-x.slangp", "shaders = 1\nshader0 = crt-x.slang\n");
+        const std::string cpath = str(bd) + "/slang-shaders/crt/crt-x.slangp";
+        CHECK(ShaderChain::resolvePresetArg("dflt") == dpath, "a bare name: %s", ShaderChain::resolvePresetArg("dflt").c_str());
+        CHECK(ShaderChain::resolvePresetArg("dflt.slangp") == dpath, "a name with its extension");
+        CHECK(ShaderChain::resolvePresetArg(dpath) == dpath, "a file path");
+        CHECK(ShaderChain::resolvePresetArg("crt/crt-x") == cpath, "the subset by its own path: %s", ShaderChain::resolvePresetArg("crt/crt-x").c_str());
+        CHECK(ShaderChain::resolvePresetArg("slang-shaders/crt/crt-x.slangp") == cpath, "or with the folder");
+        CHECK(ShaderChain::resolvePresetArg("nope").empty() && ShaderChain::resolvePresetArg("").empty(), "unknown: empty");
+        CHECK(ShaderChain::resolvePresetArg(str(bd / "dflt.slang")).empty(), "a .slang is not a preset");
+        ShaderChain::setBuiltinPresetDir("");
     }
     setEnv("VJ_LIBRASHADER", nullptr);
     std::error_code ec;
@@ -364,9 +480,38 @@ static int runBundled() {
 // library
 // ---------------------------------------------------------------------------------------
 
+// Why a library-dependent mode is skipping (or, under VJ_REQUIRE_LIBRASHADER, failing), on BOTH
+// streams: CTest shows a skipped test's output to nobody, and the v3.11.0 Windows legs skipped
+// shaders_library twice with the reason lost (#1153).  Names what was probed, how the loader
+// put it, and -- on Windows, where "module could not be found" means one of the DLL's OWN
+// imports is missing, not the DLL itself -- how to find out which.
+static void explainNoLibrary(const char* mode, const ShaderChain& sc, bool required) {
+    const char* env = std::getenv("VJ_LIBRASHADER");
+    std::string msg = std::string("shader_tests ") + mode + ": " + (required ? "FAIL" : "SKIP") + " (" +
+                      (required ? "VJ_REQUIRE_LIBRASHADER is set but the runtime did not load: " : "") +
+                      sc.libraryError() + ")";
+    msg += std::string("\n  VJ_LIBRASHADER=") + (env && *env ? env : "(unset)") +
+           "; status: " + (sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed ? "found but failed to load"
+                           : sc.libraryStatus() == ShaderChain::LibraryStatus::NotFound ? "not found" : "no support");
+#ifdef _WIN32
+    if (sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed)
+        msg += "\n  hint: on Windows a 'module could not be found' error usually names a DLL the runtime itself imports "
+               "(upstream's prebuilt needs D3DX9_43.dll and the VC++ redistributable); "
+               "python app/packaging/windows/check-librashader-dll.py <dll> --arch x64|arm64 lists them";
+#endif
+    std::printf("%s\n", msg.c_str());
+    std::fprintf(stderr, "%s\n", msg.c_str());
+}
+
+static bool libraryRequired() {
+    const char* req = std::getenv("VJ_REQUIRE_LIBRASHADER");
+    return req && *req && *req != '0';
+}
+
 static int runLibrary() {
     if (!ShaderChain::builtWithHeaders()) {
         std::printf("shader_tests library: SKIP (built without librashader headers)\n");
+        std::fprintf(stderr, "shader_tests library: SKIP (built without librashader headers)\n");
         return 77;
     }
     ShaderChain sc;
@@ -374,14 +519,9 @@ static int runLibrary() {
     if (!sc.probeLibrary()) {
         // VJ_REQUIRE_LIBRASHADER=1 (CI, on the legs that ship a runtime): a runtime that does not load
         // is a failure, never a skip.
-        const char* req = std::getenv("VJ_REQUIRE_LIBRASHADER");
-        if (req && *req && *req != '0') {
-            std::printf("shader_tests library: FAIL (VJ_REQUIRE_LIBRASHADER is set but the runtime did not load: %s)\n",
-                        sc.libraryError().c_str());
-            return 1;
-        }
-        std::printf("shader_tests library: SKIP (%s)\n", sc.libraryError().c_str());
-        return 77;
+        const bool required = libraryRequired();
+        explainNoLibrary("library", sc, required);
+        return required ? 1 : 77;
     }
     std::printf("librashader %s, API version %u\n", sc.libraryPath().c_str(), sc.libraryApiVersion());
     CHECK(sc.libraryApiVersion() >= 1, "API version");
@@ -459,7 +599,9 @@ static int runGl() {
     ShaderChain sc;
     sc.setLibrarySearchDirs({});
     if (!sc.probeLibrary()) {
-        std::printf("shader_tests gl: SKIP (%s)\n", sc.libraryError().c_str());
+        // The GL mode needs a display too, so a missing runtime stays a skip even under
+        // VJ_REQUIRE_LIBRASHADER; the library mode is where that fails.
+        explainNoLibrary("gl", sc, false);
         return 77;
     }
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -483,6 +625,7 @@ static int runGl() {
     SDL_GL_MakeCurrent(win, ctx);
     if (!vj::initOpenGLLoader()) {
         std::printf("shader_tests gl: FAIL cannot load GL entry points\n");
+        if (vj::usingBundledSoftwareGL()) vj::exitWithoutUnloadingGL(1);   // exit() would unload it too (#1179)
         return 1;
     }
     std::printf("GL: %s / %s\n", (const char*)glGetString(GL_VERSION), (const char*)glGetString(GL_RENDERER));
@@ -586,6 +729,16 @@ static int runGl() {
 
 #ifdef VJ_SLANG_DIR
     // ---- the bundled slang-shaders presets that must work on this GL ----
+    // At a size the presets are written for: the 128x64 picture the pixel checks above use is
+    // below what some need (crt-royale's mask passes scale by 0.0625 of the viewport and its preset
+    // says "Safe for >= 341.333 horizontal triads at viewport size"; at 128x64 those passes are
+    // 8x4 px and the chain comes out black on llvmpipe and Apple's software renderer, while the
+    // app at 960x760 renders it; gl-qualification.yml, #1155).  Not larger: on Apple's software
+    // renderer (hosted macOS) 640x480 did not finish the ~30 presets in 10 minutes.
+    const int BW = 384, BH = 288;
+    ShaderFrame fb = f;
+    fb.outW = BW;
+    fb.outH = BH;
     {
         std::string root = VJ_SLANG_DIR;
         if (!root.empty() && root.back() != '/') root += '/';
@@ -606,13 +759,13 @@ static int runGl() {
             bool used = ex.usePreset(root + rel, e2);
             unsigned t = 0;
             for (int i = 1; used && i <= 4; i++) {
-                f.srcTex = srcTex;
-                f.frameCount = (uint64_t)i;
-                t = ex.render(f);
+                fb.srcTex = srcTex;
+                fb.frameCount = (uint64_t)i;
+                t = ex.render(fb);
             }
             long sum = 0;
             if (t) {
-                std::vector<unsigned char> o = readTexture(t, OW, OH);
+                std::vector<unsigned char> o = readTexture(t, BW, BH);
                 for (size_t i = 0; i < o.size(); i += 4) sum += o[i] + o[i + 1] + o[i + 2];
             }
             std::printf("bundled %s: %s (energy %ld)%s%s\n", rel, t && sum > 0 ? "renders" : "FAILS", sum,
@@ -647,12 +800,12 @@ static int runGl() {
             bool used = ex.usePreset(one, e2);
             unsigned t = 0;
             for (int i = 1; used && i <= 3; i++) {   // a few frames: history/feedback passes warm up
-                f.frameCount = (uint64_t)i;
-                t = ex.render(f);
+                fb.frameCount = (uint64_t)i;
+                t = ex.render(fb);
             }
             long sum = 0;
             if (t) {
-                std::vector<unsigned char> o = readTexture(t, OW, OH);
+                std::vector<unsigned char> o = readTexture(t, BW, BH);
                 for (size_t i = 0; i < o.size(); i += 4) sum += o[i] + o[i + 1] + o[i + 2];
             }
             std::printf("preset %s: %s, %zu params, output energy %ld%s%s\n", one.c_str(),
@@ -684,15 +837,33 @@ static int runGl() {
     }
     std::printf("broken shader -> %s: %s\n", accepted ? "chain build failed" : "refused up front",
                 accepted ? bad.lastError().c_str() : err.c_str());
+    // The same broken preset as the build default (#1154): plain picture, a log line instead of a notice, still on.
+    if (accepted) {
+        ShaderChain::setBuiltinPresetDir(str(d));
+        ShaderChain dflt;
+        dflt.setBuildDefault("broken.slangp");
+        Config none;
+        dflt.loadSettings(none, "");
+        dflt.setLibrarySearchDirs({});
+        CHECK(dflt.enabled && dflt.usingBuildDefault(), "the default applied");
+        CHECK(dflt.render(f) == 0 && !dflt.takeNotice(note), "a broken build default draws plain without a notice");
+        CHECK(!dflt.lastError().empty() && dflt.enabled, "records why for Settings and is not switched off");
+        dflt.destroyGL();
+        ShaderChain::setBuiltinPresetDir("");
+    }
     std::error_code ec;
     fs::remove_all(d, ec);
 
     sc.destroyGL();
     bad.destroyGL();
+    std::printf("shader_tests gl: %s\n", g_fail ? "FAIL" : "OK");
+    // Windows, the bundled Mesa (#1179): SDL_DestroyWindow / SDL_Quit would FreeLibrary it, and the x64 build's DllMain
+    // never returns (the app's #1167 hang).  The verdict is out; end the process without unloading it.  Real drivers
+    // and every other platform take the normal teardown.
+    if (vj::usingBundledSoftwareGL()) vj::exitWithoutUnloadingGL(g_fail ? 1 : 0);
     SDL_GL_DestroyContext(ctx);
     SDL_DestroyWindow(win);
     SDL_Quit();
-    std::printf("shader_tests gl: %s\n", g_fail ? "FAIL" : "OK");
     return g_fail ? 1 : 0;
 }
 
@@ -730,6 +901,9 @@ static int runProbe(const char* dir) {
 }
 
 int main(int argc, char** argv) {
+    // Unbuffered: a run that is killed (the x64 bundled Mesa never returns from SDL_Quit, #1167) must still have
+    // every verdict line in its log; the stderr [shader] lines already are.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::string mode = argc > 1 ? argv[1] : "unit";
     if (mode == "probe") return runProbe(argc > 2 ? argv[2] : nullptr);
     if (mode == "unit") return runUnit();

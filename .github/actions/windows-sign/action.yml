@@ -1,0 +1,178 @@
+name: Sign Windows binaries
+description: >-
+  Authenticode-sign Windows PE files (exe, dll) with Azure Artifact Signing (formerly Trusted
+  Signing): SHA-256 file digest, RFC 3161 timestamp from Microsoft's server, a short-lived
+  certificate from the project's certificate profile, no certificate material anywhere in the
+  repository or its secrets.  Logs in with OpenID Connect (azure/login; the job needs
+  `id-token: write`), signs, then re-reads every file with Get-AuthenticodeSignature and FAILS
+  when one is not validly signed and timestamped.  Does nothing but print a notice when `enabled`
+  is false or any Azure input is empty (fork pull requests never receive the secrets).  Needs the
+  repository checked out (app/packaging/windows/verify-signatures.ps1) and an x64 Windows runner:
+  the signing action does not support Windows ARM runners.  Issue #1150.
+
+# Composite actions cannot read `secrets` or `vars`, so the six values come in as inputs:
+#
+#   - uses: ./.github/actions/windows-sign
+#     with:
+#       files-folder: ${{ github.workspace }}\pkg      # and/or `files:` (absolute paths, one per line)
+#       files-folder-recurse: 'true'
+#       description: Virtual Jaguar 3.12.0
+#       azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+#       azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+#       azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+#       endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+#       signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+#       certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+#
+# The Azure side (account, identity validation, certificate profile, the app registration with a
+# federated credential and the "Artifact Signing Certificate Profile Signer" role) is documented
+# in app/packaging/README.md, "Every Windows binary is signed".  Used by app-package.yml (app
+# trees + installers), release.yml (Windows core DLLs + cue2cdi) and chdman-tools.yml (jagcd tools).
+
+inputs:
+  files:
+    description: "PE files to sign, absolute paths, one per line (blank lines ignored)."
+    required: false
+    default: ''
+  files-folder:
+    description: "Folder whose *.exe and *.dll files are signed."
+    required: false
+    default: ''
+  files-folder-recurse:
+    description: "'true' to sign the whole tree under files-folder."
+    required: false
+    default: 'false'
+  description:
+    description: "Text stored in the signatures (the product and version)."
+    required: false
+    default: 'Virtual Jaguar'
+  enabled:
+    description: "'false' skips signing even when the Azure inputs are set (the workflow's `sign` input)."
+    required: false
+    default: 'true'
+  azure-client-id:
+    description: "Client (application) id of the Entra app registration (secret AZURE_CLIENT_ID)."
+    required: false
+    default: ''
+  azure-tenant-id:
+    description: "Entra tenant id (secret AZURE_TENANT_ID)."
+    required: false
+    default: ''
+  azure-subscription-id:
+    description: "Subscription that holds the Artifact Signing account (secret AZURE_SUBSCRIPTION_ID)."
+    required: false
+    default: ''
+  endpoint:
+    description: "Artifact Signing endpoint of the account's region, e.g. https://eus.codesigning.azure.net (variable AZURE_SIGNING_ENDPOINT)."
+    required: false
+    default: ''
+  signing-account-name:
+    description: "Artifact Signing account name (variable AZURE_SIGNING_ACCOUNT)."
+    required: false
+    default: ''
+  certificate-profile-name:
+    description: "Certificate profile name, Public Trust (variable AZURE_SIGNING_PROFILE)."
+    required: false
+    default: ''
+
+outputs:
+  signed:
+    description: "'true' when signing ran (a signing or verification failure fails the job before this is read), 'false' when it was skipped."
+    value: ${{ steps.cfg.outputs.enabled }}
+
+runs:
+  using: composite
+  steps:
+    - name: Decide whether signing can run
+      id: cfg
+      shell: pwsh
+      env:
+        VJ_ENABLED: ${{ inputs.enabled }}
+        VJ_CLIENT_ID: ${{ inputs.azure-client-id }}
+        VJ_TENANT_ID: ${{ inputs.azure-tenant-id }}
+        VJ_SUBSCRIPTION_ID: ${{ inputs.azure-subscription-id }}
+        VJ_ENDPOINT: ${{ inputs.endpoint }}
+        VJ_ACCOUNT: ${{ inputs.signing-account-name }}
+        VJ_PROFILE: ${{ inputs.certificate-profile-name }}
+      run: |
+        $missing = @()
+        if ([string]::IsNullOrWhiteSpace($env:VJ_CLIENT_ID)) { $missing += 'secret AZURE_CLIENT_ID' }
+        if ([string]::IsNullOrWhiteSpace($env:VJ_TENANT_ID)) { $missing += 'secret AZURE_TENANT_ID' }
+        if ([string]::IsNullOrWhiteSpace($env:VJ_SUBSCRIPTION_ID)) { $missing += 'secret AZURE_SUBSCRIPTION_ID' }
+        if ([string]::IsNullOrWhiteSpace($env:VJ_ENDPOINT)) { $missing += 'variable AZURE_SIGNING_ENDPOINT' }
+        if ([string]::IsNullOrWhiteSpace($env:VJ_ACCOUNT)) { $missing += 'variable AZURE_SIGNING_ACCOUNT' }
+        if ([string]::IsNullOrWhiteSpace($env:VJ_PROFILE)) { $missing += 'variable AZURE_SIGNING_PROFILE' }
+        $requested = ($env:VJ_ENABLED -eq 'true')
+        $enabled = $requested -and ($missing.Count -eq 0)
+        if ($enabled) {
+          Write-Host "Azure Artifact Signing: account $env:VJ_ACCOUNT, profile $env:VJ_PROFILE, endpoint $env:VJ_ENDPOINT"
+        } elseif (-not $requested) {
+          Write-Host "::notice title=Windows signing skipped::Azure Artifact Signing not requested (the workflow's sign input is false): the Windows binaries stay UNSIGNED."
+        } else {
+          Write-Host ("::notice title=Windows signing skipped::Azure Artifact Signing is not configured for this run " +
+            "(missing: $($missing -join ', ')): the Windows binaries stay UNSIGNED. Fork pull requests never receive " +
+            "the secrets; the maintainer's one-time setup is in app/packaging/README.md, 'Every Windows binary is signed'.")
+        }
+        Add-Content -Path $env:GITHUB_OUTPUT -Value "enabled=$($enabled.ToString().ToLower())"
+
+    # OIDC: no client secret anywhere.  The app registration's federated credential must match
+    # this run's subject (see the README section above).  azure/login clears the CLI session in
+    # its post step.
+    - name: Azure login (OpenID Connect)
+      if: steps.cfg.outputs.enabled == 'true'
+      uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    # The dlib authenticates through DefaultAzureCredential; everything but the Azure CLI
+    # credential (which azure/login just established) is excluded so a misconfiguration fails
+    # fast instead of walking the whole chain.  Dependencies are never cached: GitHub caches are
+    # not a security boundary and these dependencies are executable code (the action's own note).
+    - name: Sign with Azure Artifact Signing
+      if: steps.cfg.outputs.enabled == 'true'
+      uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82  # v2.0.0
+      with:
+        endpoint: ${{ inputs.endpoint }}
+        signing-account-name: ${{ inputs.signing-account-name }}
+        certificate-profile-name: ${{ inputs.certificate-profile-name }}
+        files: ${{ inputs.files }}
+        files-folder: ${{ inputs.files-folder }}
+        files-folder-filter: exe,dll
+        files-folder-recurse: ${{ inputs.files-folder-recurse }}
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+        description: ${{ inputs.description }}
+        description-url: https://jaguar.provenance-emu.com/
+        exclude-environment-credential: true
+        exclude-workload-identity-credential: true
+        exclude-managed-identity-credential: true
+        exclude-shared-token-cache-credential: true
+        exclude-visual-studio-credential: true
+        exclude-visual-studio-code-credential: true
+        exclude-azure-cli-credential: false
+        exclude-azure-powershell-credential: true
+        exclude-azure-developer-cli-credential: true
+        exclude-interactive-browser-credential: true
+        cache-dependencies: false
+
+    # Re-read every file the action was pointed at: Valid under the Authenticode policy (the
+    # same verdict as `signtool verify /pa`) and timestamped, or the job fails here, before
+    # anything is packaged or uploaded.
+    - name: Verify the signatures
+      if: steps.cfg.outputs.enabled == 'true'
+      shell: pwsh
+      env:
+        VJ_FILES: ${{ inputs.files }}
+        VJ_FOLDER: ${{ inputs.files-folder }}
+        VJ_RECURSE: ${{ inputs.files-folder-recurse }}
+        VJ_DESCRIPTION: ${{ inputs.description }}
+      run: |
+        $files = @($env:VJ_FILES -split '[\r\n]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $folders = @(if (-not [string]::IsNullOrWhiteSpace($env:VJ_FOLDER)) { $env:VJ_FOLDER.Trim() })
+        $p = @{ Expect = 'signed'; Title = "Authenticode after signing: $env:VJ_DESCRIPTION"; Path = $files; Folder = $folders }
+        if ($env:VJ_RECURSE -eq 'true') { $p.Recurse = $true }
+        & (Join-Path $env:GITHUB_WORKSPACE 'app/packaging/windows/verify-signatures.ps1') @p
+        exit $LASTEXITCODE

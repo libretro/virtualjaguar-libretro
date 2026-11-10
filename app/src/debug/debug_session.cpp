@@ -445,8 +445,8 @@ void DebugSession::registerPlaceholderTools() {
         const char* label;
     } kTools[] = {
         {"memory", "Memory viewer..."}, {"clut", "Palette (CLUT)..."}, {"scanner", "Cheat scanner..."},
-        {"cpu", "CPU debugger..."},     {"objects", "Object list..."}, {"blitter", "Blitter log..."},
-        {"textures", "Textures..."},     {"scope", "Audio scope..."},
+        {"cpu", "CPU debugger..."},     {"symbols", "Symbols..."},     {"objects", "Object list..."},
+        {"blitter", "Blitter log..."},  {"textures", "Textures..."},   {"scope", "Audio scope..."},
     };
     for (const auto& t : kTools) {
         if (findTool(t.id)) continue;   // a real window got there first

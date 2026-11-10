@@ -11,7 +11,7 @@
     {
       "name": "release",
       "displayName": "Release (dev channel)",
-      "description": "Optimised local build: emulation thread off by default, like a release",
+      "description": "Optimised local build: emulation thread on by default, like a release (--emu-thread off runs inline)",
       "inherits": "base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },

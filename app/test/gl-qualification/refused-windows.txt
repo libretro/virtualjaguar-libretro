@@ -1,0 +1,3 @@
+# Presets the Windows legs (bundled MSYS2 Mesa: llvmpipe or the d3d12 Gallium driver) may
+# refuse.  None: both drivers expose GL_ARB_arrays_of_arrays.  A "[shader] ... refused" line
+# on these legs fails the job.

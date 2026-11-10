@@ -14,7 +14,7 @@ name: App packages
 #   VirtualJaguar-X.Y.Z-macos-universal.zip
 #   VirtualJaguar-X.Y.Z-windows-x64.zip              VirtualJaguar-X.Y.Z-windows-x64-setup.exe
 #   VirtualJaguar-X.Y.Z-windows-arm64.zip            VirtualJaguar-X.Y.Z-windows-arm64-setup.exe
-#   VirtualJaguar-X.Y.Z-linux-x86_64.flatpak         (single-file Flatpak bundle)
+#   VirtualJaguar-X.Y.Z-linux-x86_64.flatpak         VirtualJaguar-X.Y.Z-linux-aarch64.flatpak   (single-file Flatpak bundles)
 #   VirtualJaguar-X.Y.Z-linux-x86_64.AppImage        VirtualJaguar-X.Y.Z-linux-aarch64.AppImage
 #   virtualjaguar_X.Y.Z_amd64.deb                    virtualjaguar_X.Y.Z_arm64.deb
 #
@@ -22,8 +22,14 @@ name: App packages
 #   macOS    APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD,
 #            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64
 #            (same-repo PRs, nightlies and tags all pass them; fork PRs get none, see macos-sign)
-#   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub until
-#            the SignPath Foundation application is approved
+#   Windows  AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC, no client secret) plus the
+#            repository variables AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE:
+#            Azure Artifact Signing of every exe/dll and both installers (#1150, composite action
+#            .github/actions/windows-sign; same-repo PRs, nightlies and tags; fork PRs get none)
+#   Linux    APPIMAGE_GPG_PRIVATE_KEY (+ APPIMAGE_GPG_PASSPHRASE): embedded GPG signature in both
+#            AppImages (#1151), verifiable with app/packaging/linux/verify-appimage.py
+# Every signing step also writes a sidecar (scripts/release/signing-status.sh, artifact
+# signing-status-app-*) that release.yml's verify-signatures gate reads (#1152).
 # Details: app/packaging/README.md.
 
 on:
@@ -48,7 +54,15 @@ on:
         required: false
       APPLE_NOTARY_KEY_P8_BASE64:
         required: false
-      SIGNPATH_API_TOKEN:
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_SUBSCRIPTION_ID:
+        required: false
+      APPIMAGE_GPG_PRIVATE_KEY:
+        required: false
+      APPIMAGE_GPG_PASSPHRASE:
         required: false
   workflow_dispatch:
     inputs:
@@ -66,7 +80,7 @@ permissions:
 
 env:
   # The frame hash of the in-tree public ROM after 300 frames (app/cmake/VJSmokeTests.cmake).
-  SMOKE_HASH: f4c30ea3
+  SMOKE_HASH: e33e2c61
   SMOKE_ROM: test/roms/yarc.j64
   # Discord Rich Presence (#833): the CMake default is the project's application ID.  The repository variable
   # DISCORD_APP_ID, when set, overrides it (each configure below passes it only when non-empty, so an unset
@@ -129,10 +143,11 @@ jobs:
           echo "label=$label short=$short deb=$deb app_version=$proj run=$run"
 
   # ------------------------------------------------------------------------------------------
-  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for Intel macOS, Apple
-  # silicon macOS, and Linux x86_64 + aarch64: upstream's x86_64-macos zip holds an arm64 dylib
-  # and it publishes no Linux binary (#950).  Windows keeps upstream's DLLs.  Artifacts
-  # `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
+  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for every package: Intel and
+  # Apple silicon macOS, Linux x86_64 + aarch64, Windows x64 + arm64.  Upstream's x86_64-macos zip
+  # holds an arm64 dylib, it publishes no Linux binary (#950), and its Windows DLLs import
+  # D3DX9_43.dll + the VC++ redistributable, so they never loaded on a stock Windows (#1153).
+  # Artifacts `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
   # ------------------------------------------------------------------------------------------
   librashader:
     name: librashader runtime
@@ -316,6 +331,15 @@ jobs:
           rm -rf "$t"
           ls -la out
 
+      # What the gate cannot re-derive from the zip on its own: whether Apple issued the ticket.
+      - name: Record the signing outcome for the release gate
+        run: bash scripts/release/signing-status.sh "VirtualJaguar-${LABEL}-macos-universal.zip" "${{ steps.devid.outputs.signed || 'false' }}" "${{ steps.devid.outputs.notarized || 'false' }}" developer-id signing-status
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-macos
+          path: signing-status/
+          retention-days: 14
+
       - uses: actions/upload-artifact@v7
         with:
           name: app-package-macos-universal
@@ -326,17 +350,27 @@ jobs:
   # ------------------------------------------------------------------------------------------
   # Windows x64 (MinGW-w64, the core's own Windows toolchain) and Windows ARM64 (the same MinGW-w64
   # environment in its CLANGARM64 flavour: clang + libc++ + lld on a native windows-11-arm runner):
-  # portable zip + Inno Setup installer each.
+  # portable zip + Inno Setup installer each, every PE file Authenticode-signed (#1150).  Three
+  # stages per architecture:
+  #
+  #   windows          build, test, install tree -> intermediate artifact windows-stage-<arch>
+  #   windows-package  ONE x64 job for both architectures: sign every exe/dll in both trees with
+  #                    Azure Artifact Signing (.github/actions/windows-sign), build the portable
+  #                    zips and the Inno Setup installers, sign the installers, verify, upload
+  #                    app-package-windows-<arch>.  Not done in the build job because the signing
+  #                    action runs on x64 runners only ("We currently do not support Windows Arm
+  #                    runners", Azure/artifact-signing-action; its signing dlib ships x64/x86).
+  #   windows-smoke    the FINAL packages on each architecture's native runner: Authenticode
+  #                    re-checked on the DOWNLOADED artifact, portable zip run, silent
+  #                    install / run / uninstall.
   # ------------------------------------------------------------------------------------------
   windows:
     name: Windows ${{ matrix.arch }}
-    needs: [meta]
+    needs: [meta, librashader]
     if: needs.meta.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
-    # arm64 is new in v3.8.1: a failure there skips its package instead of
-    # holding back every app asset (release.yml attaches app packages only
-    # when this whole workflow succeeds).
-    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    # Both legs are required (the arm64 continue-on-error of v3.8.1 went with #1153: a red arm64
+    # package now holds the release like every other asset).
     strategy:
       fail-fast: false
       matrix:
@@ -344,6 +378,7 @@ jobs:
           - arch: x64
             os: windows-latest
             msystem: MINGW64
+            triple: x86_64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-x86_64-gcc
@@ -355,6 +390,7 @@ jobs:
           - arch: arm64
             os: windows-11-arm
             msystem: CLANGARM64
+            triple: aarch64-pc-windows-msvc
             pkgs: >-
               zip
               mingw-w64-clang-aarch64-clang
@@ -370,9 +406,17 @@ jobs:
       LABEL: ${{ needs.meta.outputs.label }}
       SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
       ARCH: ${{ matrix.arch }}
-      SIGNPATH_ENABLED: ${{ inputs.sign && secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v7
+
+      # The shader runtime, built from the pinned source for this CPU (librashader.yml; the MSVC-target
+      # DLL loads into the MinGW-built exe through the plain C ABI).  Lands beside the executable, in
+      # the portable zip and in the installer.
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-${{ matrix.triple }}
+          path: librashader
 
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
@@ -384,8 +428,10 @@ jobs:
       - name: Configure and build (GUI subsystem, static runtime)
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
+            -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$(cygpath -m "$PWD")/librashader/librashader.dll" \
             ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"} \
             ${{ matrix.cmake_extra }}
           grep -E 'librashader|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER:' build/CMakeCache.txt | head
@@ -402,8 +448,19 @@ jobs:
           echo "blitter_simd_ops definitions: $n"
           [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
 
+      # The runtime must load here (shaders_library FAILS instead of skipping: VJ_REQUIRE_LIBRASHADER,
+      # #1153; on the v3.11.0 tag it skipped on both legs because upstream's DLL could not be loaded).
+      # shaders_gl needs an OpenGL 3.3 context, which the hosted runners' GDI driver does not give;
+      # Windows GL rendering is qualified by windows-gl-test.yml (#1155).
       - name: Smoke tests (GUI-subsystem exe, output through pipes)
-        run: ctest --test-dir build --output-on-failure ${{ matrix.arch == 'arm64' && '-E shaders_gl' || '' }}
+        run: VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
+
+      - name: The shader runtime beside the executable loads (ABI 2) and parses the bundled presets
+        run: |
+          set -eu
+          test -f build/librashader.dll
+          python app/packaging/windows/check-librashader-dll.py build/librashader.dll --arch "$ARCH" --require-load
+          VJ_REQUIRE_LIBRASHADER=1 VJ_LIBRASHADER="$(cygpath -m "$PWD/build/librashader.dll")" build/vj_shader_tests.exe library
 
       - name: The exe must import only Windows system DLLs
         run: |
@@ -422,41 +479,143 @@ jobs:
           "$OBJDUMP" -f build/virtualjaguar.exe | tee machine.txt
           if [ "$ARCH" = arm64 ]; then grep -qiE 'aarch64|arm64' machine.txt; else grep -qiE 'x86-64|i386:x86-64' machine.txt; fi
 
+      # The install sweep must carry every data directory the build staged (the smoke job later
+      # checks the PACKAGES against this tree).  stage-tests/ carries the shader test binary the
+      # smoke job runs against the packaged DLL; it is not part of the install prefix.
       - name: Install tree
         run: |
+          set -eu
           cmake --install build --prefix "$PWD/stage"
           python app/packaging/windows/stage-software-gl.py stage
+          bash app/packaging/check-payload.sh build stage/bin virtualjaguar.exe
+          mkdir -p stage-tests && cp build/vj_shader_tests.exe stage-tests/
+          find stage -type f \( -iname '*.exe' -o -iname '*.dll' \) | LC_ALL=C sort | sed 's/^/PE: /'
 
-      # ---- SignPath (stub): runs only with the `sign` input and SIGNPATH_API_TOKEN; the SignPath
-      # Foundation application is not approved yet, so this is dormant. -----------------------
-      - name: SignPath - upload the unsigned exe
-        id: sp_up_exe
-        if: env.SIGNPATH_ENABLED == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: signpath-unsigned-exe-${{ matrix.arch }}
-          path: stage/bin/virtualjaguar.exe
-          retention-days: 1
-      - name: SignPath - sign the exe
-        if: env.SIGNPATH_ENABLED == 'true'
-        uses: signpath/github-action-submit-signing-request@v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'virtualjaguar' }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
-          github-artifact-id: ${{ steps.sp_up_exe.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed-exe
-      - name: SignPath - put the signed exe in the install tree
-        if: env.SIGNPATH_ENABLED == 'true'
+      # #1179: the two GL test programs on the bundled Mesa must come back on their own.  They load it
+      # in-process through SDL_OPENGL_LIBRARY, and on x64 the FreeLibrary in SDL_Quit never returned
+      # (Mesa's DllMain, the hang of #1167); each now ends itself without unloading it once its verdict
+      # is out.  Run the way gl-qualification.yml (#1160) runs them: the context probe from inside
+      # software-opengl/ (the folder the fallback child runs from), shaders_gl from build/ with that
+      # folder on PATH, llvmpipe pinned so the proof does not depend on the runner's D3D12 adapter.
+      # Bounded: 124 = killed by timeout = the hang is back.  Hosted x64 runners have no OpenGL 3.3
+      # of their own, so this is also the only Windows x64 leg where shaders_gl renders at all.
+      - name: The GL test programs exit on the bundled Mesa (#1179)
         run: |
           set -eu
-          cp signed-exe/virtualjaguar.exe stage/bin/virtualjaguar.exe
-          # The intermediate artifact must not reach a release (the release job flattens every artifact).
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ steps.sp_up_exe.outputs.artifact-id }}" || true
-        env:
-          GH_TOKEN: ${{ github.token }}
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          export VJ_LIBRASHADER="$(cygpath -m "$PWD/build/librashader.dll")"
+          out="$RUNNER_TEMP/gl-test-exit"; rm -rf "$out"; mkdir -p "$out"
+          run_bounded() {   # name budget-seconds verdict-regex exe [args...]: the program must end by itself, verdict written
+            local name="$1" budget="$2" verdict="$3"; shift 3
+            SECONDS=0
+            set +e
+            timeout "$budget" "$@" >"$out/$name.txt" 2>&1
+            local code=$?
+            set -e
+            echo "$name: exit $code after $SECONDS s"
+            tail -n 40 "$out/$name.txt"
+            [ "$code" -ne 124 ] || { echo "::error::$name did not exit within $budget s: the Mesa unload hang is back (#1179)"; return 1; }
+            grep -q 'renderer=llvmpipe' "$out/$name.txt" || { echo "::error::$name did not render on the bundled Mesa"; return 1; }
+            grep -qE "$verdict" "$out/$name.txt" || { echo "::error::$name ended (exit $code) without its verdict line"; return 1; }
+          }
+          command cp -f build/vj_gl_context_integration.exe stage/bin/software-opengl/
+          run_bounded gl-context-integration 120 '^PASS GL loader' stage/bin/software-opengl/vj_gl_context_integration.exe
+          command rm -f stage/bin/software-opengl/vj_gl_context_integration.exe
+          # shaders_gl's own verdict is reported, not gated: at the 128x64 picture this tree renders the bundled
+          # presets with, crt-royale comes out black on llvmpipe (its mask passes scale by 1/16 of the viewport),
+          # which #1160 fixes by rendering that loop larger.  What this step proves is the exit.
+          run_bounded shaders-gl 600 '^shader_tests gl: (OK|FAIL)$' build/vj_shader_tests.exe gl
+          grep -q '^shader_tests gl: OK' "$out/shaders-gl.txt" \
+            || echo "::warning::shaders_gl FAILED on the bundled Mesa (it did exit, which is what #1179 is about): $(grep -c 'shader_tests: FAIL' "$out/shaders-gl.txt") check(s), see the step log"
+
+      # Intermediate (never a release asset: scripts/release/stage.sh skips windows-stage-*).
+      - name: Upload the unsigned install tree
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-stage-${{ matrix.arch }}
+          path: |
+            stage
+            stage-tests
+          if-no-files-found: error
+          retention-days: 3
+
+  # ------------------------------------------------------------------------------------------
+  # Sign and package both Windows architectures (#1150).  One x64 job: the Azure signing action
+  # does not run on Windows ARM runners, and Authenticode does not care which CPU a PE image is
+  # for.  Signing runs when the caller asks (`sign`) and the three AZURE_* secrets plus the three
+  # AZURE_SIGNING_* variables exist; otherwise the composite action prints a notice and the
+  # packages are built unsigned, exactly as before (fork PRs, dispatches without `sign`, and every
+  # run until the maintainer finishes the Azure setup in app/packaging/README.md).
+  #
+  # What gets signed, in order: every exe and dll in both install trees -- virtualjaguar.exe,
+  # librashader.dll, the software-opengl/ fallback copy of the app and the bundled Mesa DLLs
+  # (MSYS2's MIT-licensed build, unsigned upstream: we are the publisher of the package they ship
+  # in, nothing in them checks its own signature, and the release gate scans every PE file in
+  # the zip; roughly ten signatures per architecture of the Basic tier's 5,000/month) -- then,
+  # once Inno Setup has packed the signed tree, the two installers.  The uninstaller Inno embeds
+  # (unins000.exe) is not signed: Inno's SignTool hook needs a command-line signer, which the
+  # action's PowerShell module is not.
+  # ------------------------------------------------------------------------------------------
+  windows-package:
+    name: Windows sign and package
+    needs: [meta, windows]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write   # azure/login OIDC (no client secret); harmless when signing is skipped
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      SIGN: ${{ inputs.sign }}
+    outputs:
+      signed: ${{ steps.sign-tree.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up MSYS2 (zip for the portable packages)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: zip
+
+      - name: Get both install trees
+        uses: actions/download-artifact@v8
+        with:
+          pattern: windows-stage-*
+          path: pkg
+
+      - name: Check the trees
+        run: |
+          set -eu
+          rm -rf pkg/*/stage-tests   # the smoke jobs fetch their own copy; nothing to sign there
+          for a in x64 arm64; do
+            test -f "pkg/windows-stage-$a/stage/bin/virtualjaguar.exe"
+            test -f "pkg/windows-stage-$a/stage/bin/librashader.dll"
+            test -f "pkg/windows-stage-$a/stage/bin/software-opengl/opengl32.dll"
+          done
+          find pkg -type f \( -iname '*.exe' -o -iname '*.dll' \) | LC_ALL=C sort | sed 's/^/to sign: /'
+
+      - name: Sign every PE file in both install trees (Azure Artifact Signing)
+        id: sign-tree
+        uses: ./.github/actions/windows-sign
+        with:
+          files-folder: ${{ github.workspace }}\pkg
+          files-folder-recurse: 'true'
+          description: Virtual Jaguar ${{ needs.meta.outputs.label }}
+          enabled: ${{ inputs.sign }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
 
       - name: Install Inno Setup (pinned, digest-verified)
         shell: pwsh
@@ -472,54 +631,203 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
           "Inno Setup: $iscc"
 
-      - name: Package (portable zip + installer)
+      # The same package.sh and virtualjaguar.iss serve both architectures (--arch, /DArm64); the
+      # arm64 installer only needs ISCC, which is an x86 program wherever it runs.
+      - name: Package (portable zip + installer), both architectures
         run: |
           set -eu
-          bash app/packaging/windows/package.sh stage "$LABEL" out --arch "$ARCH" \
-            --installer "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          for a in x64 arm64; do
+            bash app/packaging/windows/package.sh "pkg/windows-stage-$a/stage" "$LABEL" out --arch "$a" \
+              --installer "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          done
+          ls -l out/ | sed 's/^/package: /'
 
-      - name: SignPath - upload the unsigned installer
-        id: sp_up_setup
-        if: env.SIGNPATH_ENABLED == 'true'
-        uses: actions/upload-artifact@v7
+      - name: Sign the installers (Azure Artifact Signing)
+        id: sign-setup
+        uses: ./.github/actions/windows-sign
         with:
-          name: signpath-unsigned-setup-${{ matrix.arch }}
-          path: out/VirtualJaguar-${{ needs.meta.outputs.label }}-windows-${{ matrix.arch }}-setup.exe
-          retention-days: 1
-      - name: SignPath - sign the installer (request)
-        if: env.SIGNPATH_ENABLED == 'true'
-        uses: signpath/github-action-submit-signing-request@v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'virtualjaguar' }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
-          github-artifact-id: ${{ steps.sp_up_setup.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed-setup
-      - name: SignPath - replace the installer
-        if: env.SIGNPATH_ENABLED == 'true'
-        run: |
-          set -eu
-          cp signed-setup/*.exe "out/VirtualJaguar-${LABEL}-windows-${ARCH}-setup.exe"
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ steps.sp_up_setup.outputs.artifact-id }}" || true
+          files: |
+            ${{ github.workspace }}\out\VirtualJaguar-${{ needs.meta.outputs.label }}-windows-x64-setup.exe
+            ${{ github.workspace }}\out\VirtualJaguar-${{ needs.meta.outputs.label }}-windows-arm64-setup.exe
+          description: Virtual Jaguar ${{ needs.meta.outputs.label }} Setup
+          enabled: ${{ inputs.sign }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+
+      # The shipped files, as shipped: every PE file inside both zips and both installers must be
+      # validly signed and timestamped when signing ran (the job fails otherwise); a report only
+      # when it did not.
+      - name: Authenticode on the final packages
+        shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.sign-tree.outputs.signed == 'true' && steps.sign-setup.outputs.signed == 'true' }}
+        run: |
+          $expect = if ($env:SIGNED -eq 'true') { 'signed' } else { 'report' }
+          $files = @(Get-ChildItem out -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*-setup.exe' } | ForEach-Object { $_.FullName })
+          & app/packaging/windows/verify-signatures.ps1 -Expect $expect -Path $files -Title "Authenticode on the final Windows packages ($expect)"
+          exit $LASTEXITCODE
 
       - name: Warn when unsigned
-        if: env.SIGNPATH_ENABLED != 'true'
-        run: echo "::warning::Windows binaries are NOT code signed (SignPath not configured or not requested). SmartScreen will warn on first run."
+        if: steps.sign-tree.outputs.signed != 'true'
+        run: echo "::warning::Windows binaries are NOT code signed (Azure Artifact Signing not configured or sign not requested). SmartScreen will warn on first run."
+
+      # The gate re-derives Authenticode from the files; the sidecar records what this job did.
+      - name: Record the signing outcome for the release gate
+        env:
+          SIGNED: ${{ steps.sign-tree.outputs.signed == 'true' && steps.sign-setup.outputs.signed == 'true' }}
+          ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          set -eu
+          method=none; detail="AZURE_* secrets/variables not configured or sign not requested"
+          if [ "$SIGNED" = true ]; then method=azure-artifact-signing; detail="Azure Artifact Signing, account $ACCOUNT, profile $PROFILE"; fi
+          for a in x64 arm64; do
+            for f in "VirtualJaguar-${LABEL}-windows-${a}.zip" "VirtualJaguar-${LABEL}-windows-${a}-setup.exe"; do
+              test -f "out/$f"
+              bash scripts/release/signing-status.sh "$f" "$SIGNED" false "$method" signing-status "$detail"
+            done
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-windows
+          path: signing-status/
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-windows-x64
+          path: out/*-windows-x64*
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-windows-arm64
+          path: out/*-windows-arm64*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------
+  # Smoke-test the FINAL Windows packages on each architecture's own runner, from the uploaded
+  # artifacts: the signature check from the downloaded files (an in-job check proves nothing
+  # about what was uploaded), the portable zip, and the installer (silent install, run, silent
+  # uninstall).  The reference install tree is only used for the payload comparison and the
+  # shader test binary.
+  # ------------------------------------------------------------------------------------------
+  windows-smoke:
+    name: Windows smoke ${{ matrix.arch }}
+    needs: [meta, windows-package]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+            msystem: MINGW64
+            pkgs: unzip mingw-w64-x86_64-python
+          - arch: arm64
+            os: windows-11-arm
+            msystem: CLANGARM64
+            pkgs: unzip mingw-w64-clang-aarch64-python
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      ARCH: ${{ matrix.arch }}
+      SIGNED: ${{ needs.windows-package.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: false
+          install: ${{ matrix.pkgs }}
+
+      - name: Get the packages
+        uses: actions/download-artifact@v8
+        with:
+          name: app-package-windows-${{ matrix.arch }}
+          path: out
+
+      - name: Get the reference install tree
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-stage-${{ matrix.arch }}
+          path: ref
+
+      - name: Authenticode on the downloaded packages
+        shell: pwsh
+        run: |
+          $expect = if ($env:SIGNED -eq 'true') { 'signed' } else { 'report' }
+          $files = @(Get-ChildItem out -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*-setup.exe' } | ForEach-Object { $_.FullName })
+          & app/packaging/windows/verify-signatures.ps1 -Expect $expect -Path $files -Title "Authenticode on the downloaded windows-$env:ARCH packages ($expect)"
+          exit $LASTEXITCODE
 
       - name: Smoke-test the PORTABLE zip
         run: |
           set -eu
+          ls -l out/ | sed 's/^/package: /'
           t="$RUNNER_TEMP/portable"; rm -rf "$t"; mkdir -p "$t"
           unzip -q "out/VirtualJaguar-${LABEL}-windows-${ARCH}.zip" -d "$t"
           cd "$t/VirtualJaguar"
           ./virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
           test -f portable.txt   # --headless uses a temp data dir, so portable mode itself cannot be observed here
           cd "$GITHUB_WORKSPACE"
-          bash app/packaging/check-payload.sh build "$t/VirtualJaguar" virtualjaguar.exe
+          bash app/packaging/check-payload.sh ref/stage/bin "$t/VirtualJaguar" virtualjaguar.exe
+          # The shader runtime in the zip: right CPU, Windows-only imports, loads with ABI 2, and the
+          # app's own lookup (beside the executable, VJ_LIBRASHADER unset) finds it (#1153).
+          bash app/packaging/windows/check-librashader.sh "$t/VirtualJaguar" "$ARCH" ref/stage-tests/vj_shader_tests.exe
+
+      # #1167: the copy relaunched beside the bundled Mesa must come back on its own (the x64 package
+      # of v3.11.0 never did: Mesa's DllMain hung the process while unloading llvmpipe).  Windowed, 20
+      # UI frames to a screenshot, from the PORTABLE zip.  First the child started exactly as
+      # retrySoftwareOpenGL() starts it (SDL_OPENGL_LIBRARY + VJ_SOFTWARE_OPENGL_RETRY, llvmpipe), so
+      # the check holds whatever OpenGL the runner itself offers; then the real path, the top-level
+      # exe, which on a runner without OpenGL 3.3 (GDI Generic 1.1, the hosted images) relaunches
+      # itself and must return the child's status.  124 = killed by timeout = the hang is back.
+      - name: The bundled-Mesa fallback exits on its own (#1167)
+        run: |
+          set -eu
+          t="$RUNNER_TEMP/portable/VirtualJaguar"
+          out="$RUNNER_TEMP/fallback-exit"; rm -rf "$out"; mkdir -p "$out"
+          run_bounded() {   # name data-dir exe [VAR=value...]: a bounded windowed launch; fails unless it exited 0 with its screenshot
+            local name="$1" data="$2" exe="$3"; shift 3
+            SECONDS=0
+            set +e
+            env "$@" timeout 120 "$exe" --data-dir "$data" --screenshot "$out/$name.png" --screenshot-frame 20 \
+              >"$out/$name.txt" 2>&1
+            local code=$?
+            set -e
+            echo "$name: exit $code after $SECONDS s"
+            cat "$out/$name.txt"
+            test -s "$out/$name.png" || { echo "::error::$name: no screenshot was written (the boot itself failed)"; return 1; }
+            [ "$code" -eq 0 ] || { echo "::error::$name: exit $code (124 = did not exit within 120 s, #1167)"; return 1; }
+          }
+          run_bounded child "$out/child-data" "$t/software-opengl/virtualjaguar.exe" \
+            SDL_OPENGL_LIBRARY="$(cygpath -w "$t/software-opengl/opengl32.dll")" VJ_SOFTWARE_OPENGL_RETRY=1 \
+            GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=true
+          grep -q 'renderer=llvmpipe' "$out/child.txt" || { echo "::error::the child did not render on llvmpipe"; exit 1; }
+          run_bounded parent "$out/parent-data" "$t/virtualjaguar.exe"
+          if grep -q 'renderer=GDI Generic' "$out/parent.txt"; then
+            grep -q 'automatically retrying with bundled Mesa OpenGL' "$out/parent.txt" || { echo "::error::no automatic retry after GDI Generic"; exit 1; }
+            grep -qE 'renderer=(llvmpipe|D3D12)' "$out/parent.txt" || { echo "::error::the relaunched copy did not render on the bundled Mesa"; exit 1; }
+          else
+            echo "::warning::this runner has an OpenGL 3.3 driver of its own: the automatic relaunch was not exercised; the direct child launch above still proves the exit"
+          fi
+          # The user-visible symptom: a start after the previous one is instance 1 again (a lingering
+          # copy would still hold instance-1.lock in the same data folder).
+          run_bounded again "$out/parent-data" "$t/virtualjaguar.exe"
+          if grep -q '\[app\] instance' "$out/again.txt" || [ -e "$out/parent-data/saves/instance-2" ]; then
+            echo "::error::the second start on the same data folder was not instance 1: the previous copy is still running (#1167)"; exit 1
+          fi
 
       - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
         run: |
@@ -531,35 +839,46 @@ jobs:
           test -f /c/vjtest/virtualjaguar.exe
           test ! -f /c/vjtest/portable.txt || { echo "::error::installer must not ship portable.txt"; exit 1; }
           /c/vjtest/virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          bash app/packaging/check-payload.sh ref/stage/bin /c/vjtest virtualjaguar.exe
+          du -sk /c/vjtest | sed 's/^/installed tree KiB: /'
+          bash app/packaging/windows/check-librashader.sh /c/vjtest "$ARCH" ref/stage-tests/vj_shader_tests.exe
           /c/vjtest/unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           sleep 5
           test ! -f /c/vjtest/virtualjaguar.exe || { echo "::error::uninstall left the program behind"; exit 1; }
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: app-package-windows-${{ matrix.arch }}
-          path: out/*
-          if-no-files-found: error
-          retention-days: 14
-
   # ------------------------------------------------------------------------------------------
-  # Flatpak (x86_64): one self-contained .flatpak bundle (the runtime comes from Flathub when the
-  # user installs it).  Built OFFLINE from app/packaging/flatpak/*.yml, whose every dependency is a
-  # hash-pinned manifest source, inside the Flathub CI image for the manifest's runtime.  Never
-  # submitted to Flathub from here.  aarch64 is not built yet (see app/packaging/README.md).
+  # Flatpak (x86_64 and aarch64, #1156): one self-contained .flatpak bundle per CPU (the runtime
+  # comes from Flathub when the user installs it).  Built OFFLINE from app/packaging/flatpak/*.yml,
+  # whose every dependency is a hash-pinned manifest source, inside the Flathub CI image for the
+  # manifest's runtime.  Both legs build NATIVELY: the image is multi-arch (amd64 + arm64) and the
+  # aarch64 leg runs on GitHub's hosted ubuntu-24.04-arm runner, so the Rust librashader module is
+  # compiled by the aarch64 Rust SDK extension, not under QEMU user-mode emulation.  Never
+  # submitted to Flathub from here.
   # ------------------------------------------------------------------------------------------
   flatpak:
-    name: Flatpak x86_64
+    name: Flatpak ${{ matrix.arch }}
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
-    runs-on: ubuntu-24.04
-    # New in v3.8.1: non-blocking, like the arm64 Windows leg above.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-24.04
+            artifact: app-package-flatpak
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+            artifact: app-package-flatpak-aarch64
+    # Non-blocking since v3.8.1 (the Windows arm64 leg lost its continue-on-error with #1153; both
+    # Flatpak legs keep it: the Flathub image and the hosted arm runner are outside our control).
     continue-on-error: true
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
     env:
       LABEL: ${{ needs.meta.outputs.label }}
+      ARCH: ${{ matrix.arch }}
       APP_ID: io.github.libretro.VirtualJaguar
     steps:
       - uses: actions/checkout@v7
@@ -574,25 +893,77 @@ jobs:
           sed -i "s|^\(      - -DVJ_BUILD_CHANNEL=\)release$|\1$CHANNEL|" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
           grep -qx "      - -DVJ_BUILD_CHANNEL=$CHANNEL" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
 
+      - name: Note the start time and the host
+        id: t0
+        run: |
+          set -eu
+          echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+          # The leg must be native: an emulated build would be a silent order-of-magnitude slowdown.
+          echo "host: $(uname -m), $(nproc) CPUs, $(sed -n 's/^PRETTY_NAME=//p' /etc/os-release)"
+          test "$(uname -m)" = "$ARCH" || { echo "::error::runner is $(uname -m), expected a native $ARCH host"; exit 1; }
+
+      - name: Look up the flatpak-builder cache (for the job summary only)
+        # The same lookup the action makes inside the build step (its primary key is <cache-key>-<arch>,
+        # its fallback the prefix flatpak-builder-<arch>), without restoring anything: the summary can
+        # then say whether the wall time below is a cold or a warm figure.  File mtimes cannot tell
+        # (extracted sources keep their archive dates, so a cold aarch64 run once read "warm").
+        id: cachelookup
+        uses: actions/cache/restore@v6
+        with:
+          path: .flatpak-builder
+          key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}-${{ matrix.arch }}
+          restore-keys: flatpak-builder-${{ matrix.arch }}
+          lookup-only: true
+
       - name: Build the bundle
         # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
         # own artifact would be named app-<arch>.flatpak and not app-package-*, and the release
         # jobs attach every artifact they find; the final file is uploaded below.
+        id: build
         uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3
         with:
-          bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
+          bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
           manifest-path: app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
-          arch: x86_64
-          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}
           upload-artifact: false
+
+      - name: Record the build time in the job summary (#1156)
+        # Per leg, success or failure.  "cold" = no flatpak-builder cache existed for this leg (the
+        # from-scratch figure the issue asks for); "warm" = the action restored the exact key, so the
+        # app module and much of the Rust build came from cache; "partial" = an older key matched.
+        if: always() && steps.t0.outcome == 'success'
+        env:
+          START: ${{ steps.t0.outputs.start }}
+          OUTCOME: ${{ steps.build.outcome }}
+          RUNNER: ${{ matrix.os }}
+          CACHE_HIT: ${{ steps.cachelookup.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.cachelookup.outputs.cache-matched-key }}
+        run: |
+          set -eu
+          secs=$(( $(date +%s) - START ))
+          if [ "$CACHE_HIT" = true ]; then cache="warm (\`$CACHE_KEY\`)"
+          elif [ -n "$CACHE_KEY" ]; then cache="partial (\`$CACHE_KEY\`)"
+          else cache=cold; fi
+          {
+            echo "### Flatpak $ARCH"
+            echo
+            echo "| Leg | Runner | flatpak-builder cache | Build | Wall time |"
+            echo "|---|---|---|---|---|"
+            echo "| \`$ARCH\` | \`$RUNNER\` (native $(uname -m), $(nproc) CPUs) | $cache | $OUTCOME | $((secs / 60)) min $((secs % 60)) s |"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "flatpak $ARCH: build $OUTCOME in ${secs}s (cache $cache)"
 
       - name: Smoke-test the bundle (install, run headless against the public ROM)
         run: |
           set -eu
-          f="VirtualJaguar-${LABEL}-linux-x86_64.flatpak"
+          f="VirtualJaguar-${LABEL}-linux-${ARCH}.flatpak"
           ls -la "$f"
           flatpak install --user -y --noninteractive "./$f"
           flatpak info --user "$APP_ID"
+          # The bundle must be for this leg's CPU (a cross-labelled bundle would still install here).
+          flatpak info --user "$APP_ID" | grep -E "^[[:space:]]*Arch:[[:space:]]+$ARCH\$"
           # The sandbox only sees the repository because it is passed in here, read-only.
           flatpak run --user --filesystem="$GITHUB_WORKSPACE:ro" "$APP_ID" \
             --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
@@ -601,16 +972,18 @@ jobs:
             'ls /app/bin/cheats | head -3 && ls "/app/bin/libretro-db" && test -d /app/bin/shaders/slang-shaders && ls /app/share/metainfo'
           # The shader runtime (#951): librashader.so must be in /app/lib, resolve all its libraries and
           # speak the ABI the app was built against (LIBRASHADER_CURRENT_ABI 2).  The app finds it through
-          # LD_LIBRARY_PATH=/app/lib, so load it by bare name exactly as src/shaders.cpp does.
+          # LD_LIBRARY_PATH=/app/lib, so load it by bare name exactly as src/shaders.cpp does.  Same check
+          # on both legs: on aarch64 it proves the Rust module cross-built nothing and loads natively.
           flatpak run --user --command=sh "$APP_ID" -c \
             'ls -l /app/lib/librashader.so && ls /app/share/licenses/io.github.libretro.VirtualJaguar && ! ldd /app/lib/librashader.so | grep "not found"'
-          flatpak run --user --command=python3 "$APP_ID" -c \
-            'import ctypes; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2'
+          flatpak run --user --env=VJ_EXPECT_ARCH="$ARCH" --command=python3 "$APP_ID" -c \
+            'import ctypes, os, platform; m = platform.machine(); print("sandbox", m); assert m == os.environ["VJ_EXPECT_ARCH"], m; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2, a' \
+            || { echo "::error::librashader ABI check failed on $ARCH"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         with:
-          name: app-package-flatpak
-          path: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
+          name: ${{ matrix.artifact }}
+          path: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
           if-no-files-found: error
           retention-days: 14
 
@@ -681,12 +1054,65 @@ jobs:
           appstreamcli validate --no-net "$RUNNER_TEMP"/inst/share/metainfo/*.metainfo.xml | tee "$RUNNER_TEMP/appstream.txt" || true
           if grep -q '^E:' "$RUNNER_TEMP/appstream.txt"; then echo "::error::appstream metadata has errors"; exit 1; fi
 
+      # The AppImage signing key (#1151).  With the `sign` input and the APPIMAGE_GPG_PRIVATE_KEY
+      # secret, the armored private key goes into a throwaway GNUPGHOME and make-appimage.sh passes
+      # `--sign --sign-key <fingerprint>` to appimagetool, which signs through gpgme and takes the
+      # passphrase from APPIMAGETOOL_SIGN_PASSPHRASE (loopback pinentry).  Without the secret the
+      # AppImage is built unsigned, as before, and the log says so.
+      - name: Import the AppImage signing key
+        id: gpgkey
+        if: inputs.sign
+        env:
+          APPIMAGE_GPG_PRIVATE_KEY: ${{ secrets.APPIMAGE_GPG_PRIVATE_KEY }}
+        run: |
+          set -eu
+          if [ -z "$APPIMAGE_GPG_PRIVATE_KEY" ]; then
+            echo "::warning::AppImage is NOT signed: the APPIMAGE_GPG_PRIVATE_KEY secret is not configured (app/packaging/README.md, Signed AppImages)."
+            echo "fingerprint=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+          printf 'allow-loopback-pinentry\n' > "$GNUPGHOME/gpg-agent.conf"
+          printf '%s\n' "$APPIMAGE_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1=="fpr"{print $10; exit}')
+          [ -n "$fpr" ] || { echo "::error::APPIMAGE_GPG_PRIVATE_KEY did not import a secret key"; exit 1; }
+          # The committed public key must be this key, or every AppImage would fail the gate.
+          if [ -f docs/release-signing-appimage.asc ]; then
+            pub=$(gpg --batch --with-colons --import-options show-only --import docs/release-signing-appimage.asc | awk -F: '$1=="fpr"{print $10}')
+            case " $pub " in *" $fpr "*) ;; *) echo "::error::the APPIMAGE_GPG_PRIVATE_KEY secret ($fpr) is not the key committed as docs/release-signing-appimage.asc ($pub)"; exit 1 ;; esac
+          else
+            echo "::warning::docs/release-signing-appimage.asc is not committed; the gate cannot require AppImage signatures until it is."
+          fi
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "fingerprint=$fpr" >> "$GITHUB_OUTPUT"
+          echo "AppImage signing key: $fpr"
+
       - name: Package
+        env:
+          VJ_APPIMAGE_SIGN_KEY: ${{ steps.gpgkey.outputs.fingerprint }}
+          APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGE_GPG_PASSPHRASE }}
         run: |
           set -eu
           mkdir -p out
           bash app/packaging/linux/make-appimage.sh build "out/VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage" "${{ matrix.arch }}"
           bash app/packaging/linux/make-deb.sh build "out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb" "${{ matrix.debarch }}" "$DEB_VERSION"
+
+      - name: Record the signing outcome for the release gate
+        env:
+          FPR: ${{ steps.gpgkey.outputs.fingerprint }}
+        run: |
+          set -eu
+          f="VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage"
+          if [ -n "$FPR" ]; then
+            python3 app/packaging/linux/verify-appimage.py "out/$f" ${{ hashFiles('docs/release-signing-appimage.asc') != '' && '--pubkey docs/release-signing-appimage.asc' || '' }}
+            bash scripts/release/signing-status.sh "$f" true false gpg signing-status "$FPR"
+          else
+            bash scripts/release/signing-status.sh "$f" false false none signing-status "APPIMAGE_GPG_PRIVATE_KEY not configured or sign not requested"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signing-status-app-linux-${{ matrix.arch }}
+          path: signing-status/
+          retention-days: 14
 
       - name: Smoke-test the AppImage
         run: |

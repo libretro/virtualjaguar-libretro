@@ -52,6 +52,28 @@ public:
     void loadSettings(const Config& cfg, const std::string& dataRoot);
     void saveSettings(Config& cfg) const;
 
+    // ---- the build default (#1154) ------------------------------------------------------
+    // The preset a config that never chose one starts on: a file name inside the bundled
+    // shaders/ folder ("vj-scanlines.slangp"), or "off".  The app passes VJ_SHADER_DEFAULT_PRESET
+    // (app/CMakeLists.txt's VJ_SHADER_DEFAULT); the tests set theirs.  Must precede loadSettings().
+    void setBuildDefault(const std::string& presetOrOff) { buildDefault_ = presetOrOff; }
+    const std::string& buildDefault() const { return buildDefault_; }
+    // True while the switch and preset are what loadSettings() took from the build default and the
+    // user has not moved them.  saveSettings() then writes no shader.enabled / shader.preset, so a
+    // later build can move the default under people who never chose; the first change the user
+    // makes stores their choice (with shader.chosen) and it wins from then on.
+    bool usingBuildDefault() const { return defaultApplied_ && enabled == loadedEnabled_ && preset == loadedPreset_; }
+    // Re-runs usePreset on the current preset (Settings > Reset re-read the config under us).
+    void reloadPreset();
+    // The bundled presets: shaders/ beside the executable (ours plus the slang-shaders subset).
+    // The tests point it at a temporary folder.
+    static std::string builtinPresetDir();
+    static void setBuiltinPresetDir(const std::string& dir);
+    // A --shader argument as a full path: a .slangp file path, or a name inside the bundled folder
+    // with or without .slangp ("vj-scanlines", "slang-shaders/crt/crt-easymode", "crt/crt-easymode").
+    // "" when nothing matches.
+    static std::string resolvePresetArg(const std::string& arg);
+
     // ---- the librashader library ----------------------------------------------------
     // Directories searched, in order, before the system loader path.  The env var
     // VJ_LIBRASHADER (a file, or a directory) is tried first; setting it to a
@@ -124,6 +146,10 @@ public:
 private:
     std::unique_ptr<Impl> impl_;
     std::vector<std::string> dirs_;
+    std::string buildDefault_ = "off";
+    bool defaultApplied_ = false;   // loadSettings() used the build default (nothing stored had chosen)
+    bool loadedEnabled_ = false;    // the switch and preset loadSettings() produced (usingBuildDefault compares)
+    std::string loadedPreset_;
     std::string libPath_, libErr_;
     LibraryStatus libStatus_ = LibraryStatus::NotFound;
     unsigned apiVersion_ = 0;
@@ -140,6 +166,10 @@ private:
     unsigned glsl_ = 330;       // GLSL version librashader generates (the context's once probed)
 
     void setNotice(const std::string& s);
+    // A failure's one-line message: a toast for a preset the user chose; for the build default
+    // one stderr line (#1154: a missing runtime or a preset this GL cannot build must not nag
+    // people who never asked for a shader; Settings > Video > Shader still says why).
+    void notify(const std::string& s);
 };
 
 // ---- UI (shaders_ui.cpp) ------------------------------------------------------------------

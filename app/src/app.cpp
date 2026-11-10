@@ -2,6 +2,11 @@
 #include "app.h"
 #include "build_channel.h"
 #include "gl_context.h"
+#include "startup_screen.h"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include "imgui_impl_opengl3_loader.h"
 #include "devices_ui.h"
 #include "fonts_imgui.h"
 #include "ui_scale.h"
@@ -10,6 +15,7 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
 #include "platform/platform.h"
+#include "software_gl.h"
 #include "platform/viewports.h"
 #include "theme_style.h"
 #include "tv/tv_app_host.h"
@@ -31,6 +37,11 @@
 // is for a build that compiles app.cpp outside CMake only; keep it equal to the option's default.
 #ifndef VJ_TV_DEFAULT_SETTING
 #define VJ_TV_DEFAULT_SETTING "auto"
+#endif
+// app/CMakeLists.txt's VJ_SHADER_DEFAULT (#1154): the preset a config that never chose one starts on, a file in the
+// bundled shaders/ folder or "off".  Stored only once the user moves away from it (ShaderChain::usingBuildDefault).
+#ifndef VJ_SHADER_DEFAULT_PRESET
+#define VJ_SHADER_DEFAULT_PRESET "vj-scanlines.slangp"
 #endif
 
 namespace vj {
@@ -235,7 +246,17 @@ void App::applySettingsFromConfig() {
     present.aspectOverride = cfg.getFloat("video.aspect", 0.0f);
     vsync = cfg.getBool("video.vsync", true);
     pacingDisplay = cfg.get("video.pacing", "jaguar") == "display";
+    video.shader.setBuildDefault(VJ_SHADER_DEFAULT_PRESET);
     video.shader.loadSettings(cfg, paths.root);
+    if (!shaderCli_.empty()) {   // --shader: this run only (saveConfig skips the shader keys)
+        if (shaderCli_ == "off") {
+            video.shader.enabled = false;
+        } else {
+            std::string err;
+            if (video.shader.usePreset(shaderCli_, err)) video.shader.enabled = true;
+            else shaderCliErr_ = err;   // a usage error (run() exits 2), not a plain picture with a toast
+        }
+    }
     volume = cfg.getFloat("audio.volume", 1.0f);
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
@@ -317,7 +338,7 @@ void App::saveConfig() {
     cfg.setBool("video.vsync", vsync);
     if (pacingFromCli_ < 0 || pacingDisplay != (pacingFromCli_ == 1))   // (--pacing is for this run only)
         cfg.set("video.pacing", pacingDisplay ? "display" : "jaguar");
-    video.shader.saveSettings(cfg);
+    if (shaderCli_.empty()) video.shader.saveSettings(cfg);   // (--shader is for this run only)
     cfg.setFloat("audio.volume", volume);
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
@@ -423,7 +444,7 @@ bool App::initWindow() {
     w = std::max(320, w);
     h = std::max(240, h);
     const std::string firstTitle = "Virtual Jaguar" + instanceTitleSuffix(paths.instance);
-    SDL_WindowFlags wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+    SDL_WindowFlags wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;
     if (!lowDpi_) wflags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;   // --low-dpi: a 1x framebuffer, for screenshots of a standard display
     if (simDensity_) { w *= (int)simDensity_; h *= (int)simDensity_; }   // --pixel-density: the window holds N pixels per point
     window_ = SDL_CreateWindow(firstTitle.c_str(), w, h, wflags);
@@ -498,7 +519,10 @@ bool App::initImGui() {
 #else
     const char* glsl = "#version 330 core";
 #endif
-    if (!ImGui_ImplSDL3_InitForOpenGL(window_, gl_)) return false;
+    if (!ImGui_ImplSDL3_InitForOpenGL(window_, gl_)) {
+        ImGui::DestroyContext();
+        return false;
+    }
     // The backend submits no pad state: the library's popups get ImGui gamepad nav fed with our intents (deskPadBeforeNewFrame).
     ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
     if (simDensity_) {   // --pixel-density: the multi-viewport path asks the platform handler too
@@ -506,13 +530,71 @@ bool App::initImGui() {
             return ImVec2(g_simDensity, g_simDensity);
         };
     }
-    if (!ImGui_ImplOpenGL3_Init(glsl)) return false;
+    if (!ImGui_ImplOpenGL3_Init(glsl)) {
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+        return false;
+    }
     imguiUp_ = true;
+    // Compile the plain UI program now: a context alone does not qualify a driver.
+    if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
+        SDL_SetError("Could not create the interface renderer.");
+        return false;
+    }
     if (!video.init()) return false;
     return true;
 }
 
+// No core calls or game shader: also safe from the startup load's emu wait hook,
+// before the interactive loop has begun any ImGui frame.
+bool App::startupFrame(const char* status) {
+    if (startupStatus_ != status) {
+        std::fprintf(stderr, "[startup] %s (%.0f ms)\n", status, (now() - startupStarted_) * 1000.0);
+        startupStatus_ = status;
+    }
+    // Leave file-open, controller and input events queued for the normal loop.
+    // In particular, swallowing an OS drop event here would lose a Finder launch.
+    SDL_PumpEvents();
+    SDL_Event e;
+    while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0) quit = true;
+    while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_EVENT_WINDOW_CLOSE_REQUESTED,
+                         SDL_EVENT_WINDOW_CLOSE_REQUESTED) > 0) {
+        if (e.window.windowID == SDL_GetWindowID(window_)) quit = true;
+    }
+    if (quit) return true; // cancellation is not a graphics failure
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    simulateDensity();
+    ImGui::NewFrame();
+    drawStartupScreen(status, now() - startupStarted_);
+    ImGui::Render();
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(window_, &w, &h);
+    glViewport(0, 0, w, h);
+    glClearColor(0.025f, 0.03f, 0.04f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    // Force lazy driver/JIT work before declaring the renderer ready.
+    unsigned char pixel[4] = {};
+    if (!startupFrames_) glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    const GLenum error = glGetError();
+    if (error != 0 /* GL_NO_ERROR */) {
+        SDL_SetError("Startup frame failed (OpenGL error 0x%x).", (unsigned)error);
+        std::fprintf(stderr, "[startup] %s\n", SDL_GetError());
+        startupFailed_ = true;
+        return false;
+    }
+    if (!SDL_GL_SwapWindow(window_)) {
+        std::fprintf(stderr, "[startup] swap failed: %s\n", SDL_GetError());
+        startupFailed_ = true;
+        return false;
+    }
+    ++startupFrames_;
+    return true;
+}
+
 void App::shutdown() {
+    contentServers.stop();
     beginQuit();   // a hosted halt ends within one pump wait; the auto-save and the unload below need the core out of it
     // Quitting: keep where the game was -- but never wait on a core that is still halted after beginQuit's bounded wait, and
     // never past 1.5 s (the save's give-up polls the clock): the unload below and the join are the backstop.
@@ -554,6 +636,12 @@ void App::shutdown() {
         SDL_GL_DestroyContext(gl_);
         gl_ = nullptr;
     }
+    // A copy running on the bundled Mesa (Windows, #1167; the fallback child, or a launch with SDL_OPENGL_LIBRARY naming
+    // it, #1179): SDL_DestroyWindow and SDL_Quit would FreeLibrary that Mesa, and the x64 build's DllMain never returns
+    // from winding down llvmpipe's rasterizer threads.  Everything that must outlive the process is done above (config,
+    // SRAM, the emulation thread); end the process here, before the GL library is unloaded.  A copy whose graphics never
+    // started keeps the normal path: main() still shows its error.
+    if (window_ && graphicsStartupError.empty() && usingBundledSoftwareGL()) exitWithoutUnloadingGL(exitCode_);
     if (window_) {
         SDL_DestroyWindow(window_);
         window_ = nullptr;
@@ -790,6 +878,7 @@ void App::startEmuThread() {
 // The emulation thread is busy with a call() the UI waits on (#967): keep the window alive and say so.  Called by
 // EmuThread::call() on this thread -- possibly in the middle of an ImGui frame -- so: no ImGui, no call(), no event
 // dispatch (SDL_PumpEvents only queues them), no read of a field only a call() writes (CoreHost counts those).
+// Startup is the exception: no ImGui frame is open yet and startupFrame only handles window close, never core input.
 void App::busyFrame(double waited, unsigned tick) {
     if (tick == 0) std::fprintf(stderr, "[emu] busy: a call has taken over 250 ms\n");
     if (!window_ || !imguiUp_) return;
@@ -798,6 +887,10 @@ void App::busyFrame(double waited, unsigned tick) {
         explicit UiWaiting(CoreHost& host) : h(host) { h.setUiWaiting(true); }
         ~UiWaiting() { h.setUiWaiting(false); }
     } waiting(host);
+    if (startupStatus_) {
+        if (!startupFrame(startupStatus_)) quit = true;
+        return;
+    }
     SDL_PumpEvents();
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(window_, &w, &h);
@@ -2532,7 +2625,20 @@ int App::run(const CliArgs& a) {
         themeFromCli_ = true;
         applyThemeChoice(a.theme);
     }
+    if (!a.shader.empty()) {
+        shaderCli_ = a.shader == "off" ? std::string("off") : ShaderChain::resolvePresetArg(a.shader);
+        if (shaderCli_.empty()) {
+            std::fprintf(stderr, "--shader: no preset '%s' (a name in the bundled shaders folder such as vj-scanlines or "
+                                 "slang-shaders/crt/crt-easymode, a .slangp file, or off)\n", a.shader.c_str());
+            return 2;
+        }
+        std::fprintf(stderr, "[shader] this run: %s (--shader)\n", shaderCli_.c_str());
+    }
     loadConfig();
+    if (!shaderCliErr_.empty()) {   // the file resolved but is not a usable preset (checked by loadConfig)
+        std::fprintf(stderr, "--shader %s: %s\n", shaderCli_.c_str(), shaderCliErr_.c_str());
+        return 2;
+    }
     // The emulation thread (#967) is decided once per run: switching it live would move the core between threads.
     // Headless runs stay inline unless asked (the smoke tests' hashes are inline hashes), whatever the setting says.
     emuThreadThisRun_ = a.emuThread >= 0 ? a.emuThread == 1 : (!a.headless && emuThreadWanted());
@@ -2575,6 +2681,7 @@ int App::run(const CliArgs& a) {
     int rc = a.headless ? (a.tvTestScript.empty() ? runHeadless(a) : runTvScript(a)) : runInteractive(a);
 
     saveConfig();
+    exitCode_ = rc;   // the bundled-Mesa child ends the process inside shutdown() (#1167)
     shutdown();
     if (!headlessTmp_.empty()) {
         std::error_code ec;
@@ -2588,11 +2695,21 @@ int App::runInteractive(const CliArgs& a) {
     lowDpi_ = a.lowDpi || a.pixelDensity > 1;   // --pixel-density builds its own density on a 1x window
     simDensity_ = a.pixelDensity > 1 ? std::min(4u, a.pixelDensity) : 0;
     g_simDensity = simDensity_ ? (float)simDensity_ : 1.0f;
-    if (!initWindow() || !initImGui()) {
+    startupStarted_ = now();
+    if (!initWindow() || !initImGui() || !startupFrame("Checking graphics")) {
         graphicsStartupError = SDL_GetError();
         if (graphicsStartupError.empty()) graphicsStartupError = "Could not initialize the graphics renderer.";
         return 1;
     }
+    if (quit) return 0;
+    std::fprintf(stderr, "[startup] renderer qualified: interface draw and swap passed\n");
+    if (!SDL_ShowWindow(window_)) {
+        graphicsStartupError = SDL_GetError();
+        return 1;
+    }
+    // Present into the visible window before potentially slow device/content work.
+    if (!startupFrame("Preparing audio and controls")) return 1;
+    if (quit) return 0;
     desktopInit();
     if (!a.font.empty()) {
         if (!fonts::applySpec(a.font, fontSettings)) std::fprintf(stderr, "--font: cannot read '%s'\n", a.font.c_str());
@@ -2613,7 +2730,7 @@ int App::runInteractive(const CliArgs& a) {
     // G1 gate drivers (#967): --show-window tools opens every Tools window; --perf-halt re-opens them while halted.  The
     // same open test as openDebugWindow (a second toggle would CLOSE the window).
     auto openAllTools = [this](const char* suffix) {
-        for (const char* id : {"memory", "clut", "scanner", "cpu", "objects", "blitter", "textures", "scope"}) {
+        for (const char* id : {"memory", "clut", "scanner", "cpu", "symbols", "objects", "blitter", "textures", "scope"}) {
             DebugTool* t = debug.findTool(id);
             if (t && t->toggle && !(t->isOpen && t->isOpen())) t->toggle();
             std::fprintf(stderr, "[app] tool %s open=%d%s\n", id, (t && t->isOpen && t->isOpen()) ? 1 : 0, suffix);
@@ -2652,20 +2769,28 @@ int App::runInteractive(const CliArgs& a) {
         toast("Instance " + std::to_string(paths.instance) + ": game saves go to saves/instance-" +
                   std::to_string(paths.instance) + "/, and settings changes are not kept (except window size and controllers)",
               7.0);
+    if (!startupFrame(a.noContent || !a.content.empty() ? "Loading game" : "Opening library")) return 1;
+    if (quit) return 0;
     if (a.noContent) openNoContent();
     else if (!a.content.empty()) openContent(a.content[0]);
+    if (startupFailed_) return 1;
+    if (quit) return 0;
     library.createTexture = &VideoOut::createTextureRGBA;
     library.destroyTexture = &VideoOut::destroyTexture;
     ach.images.createTexture = &VideoOut::createTextureRGBA;   // RetroAchievements avatar / icons / badges
     ach.images.destroyTexture = &VideoOut::destroyTexture;
     // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
     library.start(paths, cfg, !host.isLoaded() && !homeLibrary && !tvMode.active());   // (TV mode's Library is the TV screen, never this window)
+    contentServers.init(cfg, paths.root, paths.instance <= 1);
+    if (a.showWindow == "server-library") contentServers.show = true;
     if (a.showWindow == "library") library.show = true;
 
     // dev: drive the TV menu from a script (a screenshot of it).  A script that cannot start ends the run through the normal teardown.
     const bool scriptFailed = !a.tvTestScript.empty() && !tvScriptBegin(a, true);
     if (scriptFailed) quit = true;
 
+    startupStatus_ = nullptr;
+    std::fprintf(stderr, "[startup] ready (%.0f ms, %u frames)\n", (now() - startupStarted_) * 1000.0, startupFrames_);
     lastTick_ = now();
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
@@ -2774,15 +2899,27 @@ int App::runInteractive(const CliArgs& a) {
         ImGui::NewFrame();
         if (a.verbose && !densityLogged_ && ++densityFrames_ >= 5) logDensity();
         bool capKb = false;
-        drawUi(*this, capKb);
+        // Developer screenshot/animation preview, using the same geometry as startup.
+        if (a.showWindow == "startup") drawStartupScreen("Loading game", now() - startupStarted_);
+        else drawUi(*this, capKb);
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Ui);
         tvScriptFrameEnd();   // the script's `shot`: this frame's TV drawing is in the buffer, not yet swapped
-        if (!a.screenshot.empty() && ++uiFrames == a.screenshotFrame) {
-            saveWindowScreenshot(a.screenshot);
-            quit = true;
+        // --screenshot: after N UI frames and (--screenshot-emu-frames M) once the core has shown M frames, so the
+        // capture is the game's picture whatever the host's speed.  A core that never gets there (no content, a
+        // halt) is captured 600 UI frames later anyway, with a line saying so.
+        if (!a.screenshot.empty() && ++uiFrames >= a.screenshotFrame) {
+            const bool emuReady = video.emuFrames() >= a.screenshotEmuFrames;
+            const bool gaveUp = !emuReady && uiFrames >= a.screenshotFrame + 600;
+            if (emuReady || gaveUp) {
+                if (gaveUp)
+                    std::fprintf(stderr, "[shot] the core showed %llu frame(s) in %u UI frames, wanted %u: capturing anyway\n",
+                                 (unsigned long long)video.emuFrames(), uiFrames, a.screenshotEmuFrames);
+                saveWindowScreenshot(a.screenshot);
+                quit = true;
+            }
         }
         presentViewports();
         guardSwap();   // before the timestamps: the latch must not see it as swap time
@@ -3242,7 +3379,7 @@ int App::runHeadless(const CliArgs& a) {
         double hlCpu0 = Perf::cpuSeconds();
         if (threaded()) {
             retroTicks_.store(0);
-            if (ach.mockMode() || !neuroCliUrl.empty()) {
+            if (ach.mockMode() || neuroCliOn()) {
                 // RetroAchievements steps and pokes are frame-numbered and Neuro plays in real time: one frame at a
                 // time, in the inline loop's order (the steps, Neuro's tick and wait, then the frame --
                 // rc_client_do_frame runs after it, on the emulation thread, and the replica runs in the core's poll

@@ -21,6 +21,7 @@
 #include "cheat_store.h"
 #include "cheats.h"
 #include "config.h"
+#include "content_server_browser.h"
 #include "core_host.h"
 #include "debug/debug_session.h"
 #include "display_lock.h"
@@ -74,8 +75,10 @@ struct CliArgs {
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
+    unsigned screenshotEmuFrames = 0;   // dev: ... and not before the core has shown this many frames (--screenshot-emu-frames; 0 = UI frames only)
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage|-interface][:FILTER], states, about, cheats, library, login, achievements, keypad
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
+    std::string shader;             // --shader NAME|FILE|off: the shader preset for this run (not saved); "" = the setting (#1154)
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
     unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
@@ -95,6 +98,7 @@ struct CliArgs {
     std::string cheatsDir;                    // extra folder of .cht files
     std::string cheatSet;                     // select this cheat set (file stem) for the game
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
+    std::vector<std::string> cheatOnceCodes;  // one-shot RAM writes, never persisted
     std::vector<std::string> cheatCodes;      // add these manual codes
     bool cheatsCommunityInstall = false;      // headless: fetch the community cheat store and install the loaded cartridge's pack (#1071)
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
@@ -175,6 +179,7 @@ public:
     // virtualjaguar_pN_device = pad_pro (devices.h lockedCoreOptionFor) on the emulation thread: atomic.
     std::array<std::atomic<bool>, 2> proPorts{{false, false}};
     LibraryService library;   // optional game library (#838); idle until start()ed
+    ContentServerBrowser contentServers;
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
@@ -248,6 +253,9 @@ public:
     neuro::AgentPlayer agentPlayer_;   // the replica of Neuro's queue: emulation thread only (the input poll)
     neuro::WatchFeed neuroWatch;     // the profile's RAM watches as one DebugViews request (UI thread)
     double neuroCfgAt = -1e9;
+    bool neuroCliOn() const { return !neuroCliUrl.empty(); }
+#else
+    bool neuroCliOn() const { return false; }   // a VJ_APP_NEURO=OFF build has no --neuro
 #endif
 
     // ---- state ----------------------------------------------------------------
@@ -311,6 +319,9 @@ public:
     bool tvHintShownThisRun_ = false; // the one-time TV mode hint (ui.tv_hint_shown) was shown, or tried, in this run
     unsigned toastCount_ = 0;         // toast() calls since start (the TV script counts them: osd_ is capped)
     bool tvFromCli_ = false;          // --tv was given: this run's TV state is not remembered (ui.tv_manual_on)
+    std::string shaderCli_;           // --shader, resolved: "off" or a .slangp path; this run's choice, never written to config.ini
+    std::string shaderCliErr_;        // --shader named a file that is not a usable preset: run() exits 2 with this
+    bool shaderHintShownThisRun_ = false;   // the one-time build-default filter hint (shader.hint_shown) was shown in this run
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
@@ -427,6 +438,11 @@ private:
     bool initSdl(const CliArgs& a);
     bool initWindow();
     bool initImGui();
+    bool startupFrame(const char* status);
+    const char* startupStatus_ = nullptr; // non-null only before the interactive frame loop
+    double startupStarted_ = 0.0;
+    unsigned startupFrames_ = 0;
+    bool startupFailed_ = false;
     void shutdown();
     void loadConfig();
     void wireHost();
@@ -476,6 +492,7 @@ private:
     bool headless_ = false;
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;
+    int exitCode_ = 1;                // run()'s result, for the bundled-Mesa child's early exit in shutdown() (#1167)
     SDL_Window* window_ = nullptr;
     uint64_t displayPeriodNs();                  // the window's display refresh period, cached; 0 when unknown
     uint64_t displayPeriodNs_ = 0;

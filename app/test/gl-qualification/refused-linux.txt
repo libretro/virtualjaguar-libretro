@@ -1,0 +1,2 @@
+# Presets the Linux leg (Mesa llvmpipe, OpenGL 4.5 core) may refuse.  None: llvmpipe has
+# GL_ARB_arrays_of_arrays.  A "[shader] ... refused" line on this leg fails the job.

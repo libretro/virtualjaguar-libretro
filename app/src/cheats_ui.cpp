@@ -85,19 +85,81 @@ void drawCheatRows(CheatManager& cm, const ChtSet& set, CheatOrigin origin) {
         ImGui::PushID((int)i);
         bool on = cm.isEnabled(c, origin);
         ImGui::BeginDisabled(!c.supported);
-        std::string label = c.desc + (c.parts > 1 ? "  (" + std::to_string(c.parts) + " parts)" : std::string());
+        std::string label = c.desc;
+        if (!c.value.choices.empty()) {
+            label.erase(label.rfind('('));
+            while (!label.empty() && label.back() == ' ') label.pop_back();
+        }
+        if (c.parts > 1) label += "  (" + std::to_string(c.parts) + " parts)";
         // A checkbox label cannot wrap, so the description is a wrapped text beside an empty-label box;
         // clicking the text toggles too.
-        if (ImGui::Checkbox("##on", &on)) cm.setEnabled(c, on, origin);
+        if (ImGui::Checkbox("Keep applied", &on)) cm.setEnabled(c, on, origin);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write every frame. Use Apply once to change the value without freezing it.");
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextWrapped("%s", label.c_str());
         if (ImGui::IsItemClicked()) cm.setEnabled(c, !on, origin);
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            if (c.supported) ImGui::SetTooltip("%s", c.code.c_str());
+            if (c.supported) ImGui::SetTooltip("%s\n%s", c.desc.c_str(), cm.effectiveCode(c, origin).c_str());
             else ImGui::SetTooltip("Not supported: %s", c.note.c_str());
         }
+        ImGui::BeginDisabled(!c.supported);
+        ui::Flow valueRow;
+        if (c.value.bytes) {
+            uint32_t value = cm.valueOf(c, origin);
+            const uint64_t count = c.value.hasRange ? ((uint64_t)c.value.maximum - c.value.minimum) / c.value.step + 1 : 0;
+            if (!c.value.choices.empty() || (count && count <= 16)) {
+                std::string preview = std::to_string(value);
+                for (const auto& choice : c.value.choices)
+                    if (choice.value == value) preview = choice.label;
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18);
+                if (ImGui::BeginCombo("Value", preview.c_str())) {
+                    if (!c.value.choices.empty()) {
+                        for (const auto& choice : c.value.choices) {
+                            ImGui::PushID((int)choice.value);
+                            if (ImGui::RadioButton(choice.label.c_str(), value == choice.value)) {
+                                cm.setValue(c, choice.value, origin);
+                                ImGui::CloseCurrentPopup();
+                            }
+                            ImGui::PopID();
+                        }
+                    } else {
+                        for (uint64_t i = 0; i < count; ++i) {
+                            uint32_t v = (uint32_t)(c.value.minimum + i * c.value.step);
+                            if (ImGui::RadioButton(std::to_string(v).c_str(), value == v)) {
+                                cm.setValue(c, v, origin);
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            } else {
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12);
+                char buffer[32];
+                std::snprintf(buffer, sizeof buffer, "%u", value);
+                if (ImGui::InputText("Value", buffer, sizeof buffer, ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    if ((!parseCheatValue(buffer, value) || !cm.setValue(c, value, origin)) && cm.warn)
+                        cm.warn("Value is outside the allowed range or step.");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u to %u, step %u. Decimal or 0x hex; Enter to save. %s",
+                    c.value.minimum, c.value.maximum, c.value.step,
+                    c.value.hasRange ? "Range supplied by the cheat file." : "Storage limits only; valid game values may be narrower.");
+            }
+            valueRow.next(ui::Flow::buttonW("Default"));
+            if (ImGui::SmallButton("Default")) cm.setValue(c, c.value.initial, origin);
+        }
+        if (c.value.bytes) valueRow.next(ui::Flow::buttonW("Apply once"));
+        const bool canOnce = canApplyCheatOnce(cm.effectiveCode(c, origin));
+        ImGui::BeginDisabled(!canOnce);
+        if (ImGui::SmallButton("Apply once")) cm.applyOnce(c, origin);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", canOnce ? "Write now and turn off this freeze. Other enabled cheats may overwrite it."
+                                           : "Apply once supports main RAM writes only.");
+        ImGui::EndDisabled();
+        ImGui::Spacing();
         ImGui::PopID();
     }
 }
@@ -266,6 +328,10 @@ void drawUserCheats(App& app) {
         if (ImGui::Checkbox("##on", &on)) cm.setUserEnabled(i, on);
         ImGui::SameLine();
         if (ImGui::SmallButton("remove")) removeIdx = (int)i;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!canApplyCheatOnce(list[i].code));
+        if (ImGui::SmallButton("Apply once")) cm.applyUserOnce(i);
+        ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextWrapped("%s  %s", list[i].desc.c_str(), list[i].code.c_str());

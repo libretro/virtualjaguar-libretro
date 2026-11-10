@@ -56,19 +56,42 @@ or endorsed by Atari. Atari and Jaguar names belong to their respective owners.
 
 Jaguar; Atari Jaguar; Jaguar CD; emulator; retro; gamepad; save states
 
-## Certification notes (draft; qualify before sending)
+## Certification notes (paste into Partner Center after candidate qualification)
 
-This is a native Win32 SDL3/OpenGL desktop emulator packaged as MSIX, not a PWA
-or Xbox console app. The runFullTrust capability supports ordinary desktop game
-file/folder selection, controllers, OpenGL and optional networking. There is no
-installer, elevation request or app self-updater inside the package. App code
-updates are delivered by Microsoft Store.
+Virtual Jaguar is a native Windows desktop emulator distributed as MSIX. No
+account, controller, or external BIOS file is required for this cartridge test.
+The app package does not include games. Download the optional test cartridge
+separately from its author's project:
 
-Use File > Open or the library's folder selection to import test content.
-Keyboard/gamepad controls and current limitations are documented at the project
-website. Supply a verified redistributable test ROM and exact steps with the
-final candidate; do not give reviewers private ROM corpus paths. Do not claim
-that Store installation or GUI qualification passed until recorded evidence exists.
+https://raw.githubusercontent.com/42Bastian/JaguarDemos/1954a05fafd1489bcd3273012df6ca8fc731785d/yarc/yarc.j64
+
+1. Save the file as `yarc.j64`. Launch Virtual Jaguar from Start.
+2. Press **Ctrl+O** (or choose **File > Open...**) and select `yarc.j64`.
+3. Confirm that the demo shows an animated picture in the game view. If audio
+   is enabled, the demo also plays music.
+4. On a candidate with shader support, choose **View > Shader** to toggle the
+   filter. Confirm the picture changes and the demo keeps running.
+5. If a step fails, please include the step number, app version, device and
+   Windows build, and any visible error or screenshot in the certification
+   report.
+
+YARC (Yet Another Rotating Cube) is by 42Bastian. Its music is *Cream of the
+Earth* by Romeo Knight / Red Sector Inc., adapted for Jaguar. The link points
+to the author's published copy.
+
+### Maintainer verification before submitting
+
+- Run the steps on the exact Store MSIX candidate on clean Windows x64 and
+  ARM64. Record the package version and Windows build. Keep step 4 only if
+  that candidate exposes it and it passes.
+- Expected SHA-256 for the author-hosted cartridge (byte-identical to the CI
+  fixture) is `ea24adaf33265727cdada00f6f2b9d3869d69bb9c86335a9f81152a540b7e1c5`.
+- The [upstream license](https://github.com/42Bastian/JaguarDemos/blob/1954a05fafd1489bcd3273012df6ca8fc731785d/LICENSE)
+  grants redistribution of the project's software. The
+  [demo credits](https://github.com/42Bastian/JaguarDemos/blob/1954a05fafd1489bcd3273012df6ca8fc731785d/yarc/README.md)
+  identify third-party music. Use the author-hosted download until permission
+  covering the embedded music is documented. A website ZIP can instead use an
+  original test cartridge with cleared assets.
 
 ## Remaining before certification
 

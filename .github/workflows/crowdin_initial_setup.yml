@@ -13,6 +13,9 @@ name: Crowdin Translations Initial Setup
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   upload_source_file:
     runs-on: ubuntu-latest

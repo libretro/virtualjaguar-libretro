@@ -134,8 +134,6 @@ no longer slow the game down.
 ## Known limitations
 
 - Doom's attract-demo timing and the other emulation limitations documented for v3.9.1 remain.
-- Windows signing depends on the signing service's availability and approval, so not every
-  Windows package may be signed.
 
 ## Downloads and upgrading
 

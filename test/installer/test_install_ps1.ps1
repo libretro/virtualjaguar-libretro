@@ -63,6 +63,40 @@ New-Release "$New/latest/download" '4.0.0' 'new-latest'
 New-Release "$New/download/v4.0.0" '4.0.0' 'new-latest'
 New-Release "$New/download/nightly" 'nightly' 'nightly-one'
 
+# Fake verification tools (#1151), first on PATH for every run so the suite never calls the
+# real gh / minisign (a real `gh attestation verify` would hit GitHub).  PowerShell resolves a
+# bare command name to a .ps1 on PATH on every platform.
+#   minisign -Vm <file> -x <sig> -P <key>: succeeds when the key is the test key and the
+#            signature file says GOOD.
+#   gh attestation verify ...: behaves as gh.mode says (ok | 404 | auth | bad); 404 by
+#            default, like a release that predates attestations.
+$FB = Join-Path $T 'fakebin'
+New-Item -ItemType Directory -Force -Path $FB | Out-Null
+Set-Content -LiteralPath (Join-Path $FB 'minisign.ps1') -Value @'
+$key = ''; $sig = ''
+for ($i = 0; $i -lt $args.Count; $i++) {
+  if ($args[$i] -eq '-P') { $key = $args[$i + 1] }
+  if ($args[$i] -eq '-x') { $sig = $args[$i + 1] }
+}
+if ($key -ne 'RWTtestkey') { 'Signature verification failed'; exit 1 }
+if ((Get-Content -LiteralPath $sig -Raw) -match '(?m)^GOOD') { exit 0 }
+exit 1
+'@
+Set-Content -LiteralPath (Join-Path $FB 'gh.ps1') -Value @'
+$mode = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'gh.mode') -Raw).Trim()
+if ($args[0] -ne 'attestation') { "fake gh: unexpected $args"; exit 2 }
+switch ($mode) {
+  'ok'   { 'Verification succeeded!'; exit 0 }
+  '404'  { 'Error: HTTP 404: Not Found (https://api.github.com/repos/x/y/attestations/sha256:0)'; exit 1 }
+  'auth' { 'To get started with GitHub CLI, please run:  gh auth login'; exit 4 }
+  default { 'Error: Verification failed: signature does not match'; exit 1 }
+}
+'@
+Set-Content -LiteralPath (Join-Path $FB 'gh.mode') -Value '404'
+$sep = [IO.Path]::PathSeparator
+$env:PATH = "$FB$sep$env:PATH"
+$script:PubKey = ''
+
 $RA = Join-Path $T 'ra'
 New-Item -ItemType Directory -Force -Path (Join-Path $RA 'cores') | Out-Null
 New-PeStub (Join-Path $RA 'retroarch.exe') 'x64' 'fake-ra'
@@ -80,6 +114,7 @@ function Invoke-Vj([string]$Base, [string[]]$ScriptArgs) {
   $env:VJ_INSTALL_RETROARCH = (Join-Path $RA 'retroarch.exe')
   $env:VJ_INSTALL_NO_TTY = '1'
   $env:VJ_INSTALL_ALLOW_ANY_OS = '1'
+  $env:VJ_INSTALL_MINISIGN_PUBKEY = $script:PubKey
   $env:LOCALAPPDATA = Join-Path $T 'localappdata'
   $env:APPDATA = Join-Path $T 'appdata'
   # Windows PowerShell 5.1 turns the first stderr line of a native process into a
@@ -200,6 +235,44 @@ New-PeStub (Join-Path $RA 'retroarch.exe') 'x64' 'fake-ra'
 $AD3 = Join-Path $T 'apps3'; $CD3 = Join-Path $T 'cores3'; New-Item -ItemType Directory -Force -Path $CD3 | Out-Null
 $r = Invoke-Vj $New @('-What', 'both', '-Yes', '-Channel', 'v4.0.0', '-CoreDir', $CD3, '-AppDest', $AD3, '-NoShortcut')
 Check 'both installs' ($r.Rc -eq 0 -and (Test-Path (Join-Path $CD3 'virtualjaguar_libretro.dll')) -and (Test-Path (Join-Path $AD3 'virtualjaguar.exe'))) $r.Out
+
+# --- the checksum list's own signature / provenance (#1151) ---------------------
+# So far: no pinned key and the fake gh answers 404 -> warned, installed anyway.
+Check 'no attestation (older release): warns and goes on' ($r.Out -like '*no build attestation*') $r.Out
+$Signed = Join-Path $T 'signed'
+Copy-Item -LiteralPath $New -Destination $Signed -Recurse
+Set-Content -LiteralPath "$Signed/download/nightly/SHA256SUMS.txt.minisig" -Value "untrusted comment: test`nGOOD"
+Set-Content -LiteralPath "$Signed/download/v4.0.0/SHA256SUMS.txt.minisig" -Value "untrusted comment: test`nBAD"
+$script:PubKey = 'RWTtestkey'
+$AD5 = Join-Path $T 'apps5'; $CD5 = Join-Path $T 'cores5'; New-Item -ItemType Directory -Force -Path $CD5 | Out-Null
+$r = Invoke-Vj $Signed @('-What', 'app', '-Channel', 'nightly', '-DryRun', '-AppDest', $AD5)
+Check 'signed checksums: dry run ok' ($r.Rc -eq 0) $r.Out
+Check 'minisign signature verified' ($r.Out -like '*SHA256SUMS.txt signature verified (project release key)*') $r.Out
+$r = Invoke-Vj $Signed @('-What', 'core', '-Channel', 'nightly', '-Yes', '-CoreDir', $CD5)
+Check 'core path verifies the signature too' ($r.Out -like '*SHA256SUMS.txt signature verified*' -and $r.Out -like '*SHA-256 matches*') $r.Out
+$r = Invoke-Vj $Signed @('-What', 'app', '-DryRun', '-AppDest', $AD5)
+Check 'channel without .minisig: warns, still ok' ($r.Rc -eq 0 -and $r.Out -like '*has no SHA256SUMS.txt.minisig*') $r.Out
+$r = Invoke-Vj $Signed @('-What', 'app', '-Channel', 'v4.0.0', '-Yes', '-AppDest', $AD5, '-NoShortcut')
+Check 'bad checksum signature: refused' ($r.Rc -eq 1 -and $r.Out -like '*does NOT verify with the project release key*' -and -not (Test-Path $AD5)) $r.Out
+Check 'bad signature: points at -NoVerify' ($r.Out -like '*-NoVerify skips this check*') $r.Out
+$r = Invoke-Vj $Signed @('-What', 'app', '-Channel', 'v4.0.0', '-Yes', '-AppDest', $AD5, '-NoShortcut', '-NoVerify')
+Check '-NoVerify installs despite the bad signature' ($r.Rc -eq 0 -and $r.Out -like '*signature check skipped (-NoVerify)*' -and $r.Out -like '*SHA-256 matches SHA256SUMS.txt*') $r.Out
+$env:VJ_NOVERIFY = '1'
+$r = Invoke-Vj $Signed @('-What', 'app', '-Channel', 'v4.0.0', '-DryRun', '-AppDest', $AD5)
+Check 'VJ_NOVERIFY=1 is the env form of -NoVerify' ($r.Rc -eq 0 -and $r.Out -like '*signature check skipped*') $r.Out
+Remove-Item Env:VJ_NOVERIFY
+# No pinned key -> the attestation path through gh.
+$script:PubKey = ''
+foreach ($mode in 'ok', 'auth', 'bad') {
+  Set-Content -LiteralPath (Join-Path $FB 'gh.mode') -Value $mode
+  $r = Invoke-Vj $Signed @('-What', 'app', '-Channel', 'nightly', '-DryRun', '-AppDest', $AD5)
+  switch ($mode) {
+    'ok'   { Check 'gh attestation ok: proceeds' ($r.Rc -eq 0 -and $r.Out -like '*provenance verified (GitHub build attestation)*') $r.Out }
+    'auth' { Check 'gh not logged in: proceeds with a note' ($r.Rc -eq 0 -and $r.Out -like '*gh is not logged in*') $r.Out }
+    'bad'  { Check 'bad attestation: refused' ($r.Rc -eq 1 -and $r.Out -like '*did NOT verify*') $r.Out }
+  }
+}
+Set-Content -LiteralPath (Join-Path $FB 'gh.mode') -Value '404'
 
 # --- Start-menu shortcut (Windows only: WScript.Shell) ---------------------------
 if ($env:OS -eq 'Windows_NT') {

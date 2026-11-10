@@ -18,10 +18,12 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   bump:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7

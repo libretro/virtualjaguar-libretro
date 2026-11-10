@@ -63,8 +63,8 @@ test('select only the newest exact-head push from this branch and repository', (
   ].map((change, i) => ({ ...f.run, id: 100 + i, ...change })), { ...f.run, id: 43 }];
   assert.equal(selectRun(runs, f.pr, 'libretro/vj').id, 43);
 });
-test('all twelve package/runtime checks and all six artifacts pass', async () => {
-  const f = fixture(); assert.equal(PACKAGE_JOBS.length, 12); assert.equal(ARTIFACTS.length, 6);
+test('all fifteen package/runtime checks and all six artifacts pass', async () => {
+  const f = fixture(); assert.equal(PACKAGE_JOBS.length, 15); assert.equal(ARTIFACTS.length, 6);
   await waitForPackages(f.options); assert.equal(f.state.outputs.run_id, '42'); assert.equal(f.state.sleeps, 0);
 });
 test('a queued package check does not approve artifacts already uploaded', async () => {

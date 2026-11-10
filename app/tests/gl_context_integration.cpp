@@ -5,10 +5,17 @@
 #define NOMINMAX
 #endif
 #include "imgui_impl_opengl3_loader.h"
+#include "software_gl.h"
+#include <cstdio>
 #include <cstring>
 
 int main(int argc, char** argv) {
+    // Unbuffered: when this probe hangs inside the driver (the x64 MSYS2 Mesa never returned on the
+    // hosted runner, gl-qualification.yml #1155), the lines before the hang must already be in the log.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
     if (!SDL_Init(SDL_INIT_VIDEO)) return 77;
+    std::printf("SDL video ready\n");
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -16,7 +23,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #endif
     SDL_Window* window = SDL_CreateWindow("GL loader regression", 32, 32, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    std::printf("window %s\n", window ? "created" : "NOT created");
     SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
+    std::printf("context %s\n", context ? "created" : "NOT created");
     if (!context) {
         std::fprintf(stderr, "SKIP no test GL context: %s\n", SDL_GetError());
         if (window) SDL_DestroyWindow(window);
@@ -46,9 +55,16 @@ int main(int argc, char** argv) {
         std::printf("GL pixel=%u,%u,%u; version=%s\n", pixel[0], pixel[1], pixel[2], glGetString(GL_VERSION));
     }
     if (loaded) imgl3wShutdown();
-    SDL_GL_DestroyContext(context);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
     std::puts(passed ? "PASS GL loader and real framebuffer readback" : "FAIL GL loader or framebuffer readback");
+    // Windows, the bundled Mesa (#1179): SDL_DestroyWindow / SDL_Quit would FreeLibrary it, and the x64 build's DllMain
+    // never returns (the app's #1167 hang).  The verdict is out; end the process without unloading it.  Real drivers
+    // and every other platform take the normal teardown.
+    if (vj::usingBundledSoftwareGL()) vj::exitWithoutUnloadingGL(passed ? 0 : 1);
+    SDL_GL_DestroyContext(context);
+    std::printf("context destroyed\n");
+    SDL_DestroyWindow(window);
+    std::printf("window destroyed\n");
+    SDL_Quit();
+    std::printf("SDL quit; exiting %d\n", passed ? 0 : 1);
     return passed ? 0 : 1;
 }

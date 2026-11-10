@@ -7,15 +7,19 @@
  *
  *   CARTPROBE rom="<path>" frames=<rendered> w=<W> h=<H> pc_valid=<0|1> \
  *       pc=$<FINALPC> \
- *       nonblack_max_pct=<peak %% of any frame lit> lit_frames=<frames >1%% lit> \
+ *       nonblack_max_pct=<peak %% of any frame lit> lit_frames=<frames meeting --lit-percent (default 1)> \
  *       motion=<distinct sampled frame hashes> \
  *       audio_nonsilent=<samples> audio_onset=<frame|-1> \
  *       bios_ran=<0|1> handoff=<frame|-1> final_op=$<WORD> halt_frames=<n> \
  *       scored_from=<frame> scored_frames=<n> scored_lit_frames=<n> \
  *       scored_motion=<n> scored_audio_nonsilent=<samples> \
- *       trap_frames=<n> trap_pc=$<PC> trap_handler=$<PC>
+ *       trap_frames=<n> trap_pc=$<PC> trap_handler=$<PC> \
+ *       size=<bytes> crc32=$<CRC> hdr_byte0=$<XX> filedb=<0|1> \
+ *       [filedb_flags=$<FLAGS> filedb_name="<name>" filedb_verified_sibling=$<CRC>]
  *
- * The first block of fields covers the whole run.  The second block is the
+ * The first block of fields covers the whole run.  The last block is the
+ * image's identity (probe_identity below, issue #976); the sweep copies it
+ * into the row's `<!-- id: ... -->` stamp for the site generator.  The second block is the
  * BOOT-ROM-RELATIVE view (issue #852): under --bios the Jaguar boot ROM plays
  * a ~490-frame logo animation + jingle before it hands the 68K to the cart,
  * and that animation is identical for every title, so scoring it as the
@@ -72,6 +76,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../harness/harness.h"
+#include "../../src/core/filedb.h"   /* struct RomIdentifier: the identity fields (#976) */
 
 /* src/m68000/m68kinterface.h: D0-D7, A0-A7, then PC.  The enum is part of
  * the UAE core's stable interface; 16 is M68K_REG_PC.  (Same pattern as
@@ -118,15 +123,19 @@ typedef struct {
     probe_video_state scored;
 } probe_video_pair;
 
+/* The demo suite supplies its configured visibility threshold. Cartridge
+ * matrix callers retain the default one-percent criterion. */
+static double probe_lit_percent = 1.0;
+
 static void probe_video_track(probe_video_state *st, unsigned width,
                               unsigned height, unsigned nonblack,
                               uint32_t hash)
 {
-    /* Scale the sampled count back up to an approximate full-frame count. */
-    st->last_nonblack = nonblack * 16u;
+    st->last_nonblack = nonblack;
     if (st->last_nonblack > st->max_nonblack)
         st->max_nonblack = st->last_nonblack;
-    if (st->last_nonblack * 100u > width * height)
+    if (nonblack && (double)nonblack * 100.0 >=
+        (double)width * height * probe_lit_percent)
         st->lit_frames++;
     st->frames++;
     st->last_w = width;
@@ -143,7 +152,7 @@ static void probe_video_cb(void *userdata, const void *data,
     probe_video_pair *pair = (probe_video_pair *)userdata;
     const uint8_t *rows;
     uint32_t hash;
-    unsigned nonblack, x, y, step;
+    unsigned nonblack, x, y;
 
     if (!data || !width || !height)
         return;
@@ -151,12 +160,12 @@ static void probe_video_cb(void *userdata, const void *data,
     rows = (const uint8_t *)data;
     hash = 2166136261u;
     nonblack = 0;
-    /* Sample every 4th pixel of every 4th row: cheap, and plenty to tell
-     * "black screen" from "rendering" and frame A from frame B. */
-    step = 4;
-    for (y = 0; y < height; y += step) {
+    /* Inspect every pixel: a fixed sampling grid can land entirely on dark
+     * stripes (tj_julia after the visible-window shift) and report a black
+     * screen even while the picture animates. Respect the frontend pitch. */
+    for (y = 0; y < height; y++) {
         const uint32_t *px = (const uint32_t *)(rows + y * pitch);
-        for (x = 0; x < width; x += step) {
+        for (x = 0; x < width; x++) {
             uint32_t v = px[x] & 0x00FFFFFFu;
             if (v != 0)
                 nonblack++;
@@ -342,11 +351,81 @@ static bool probe_frame_cb(void *userdata, unsigned frame)
     return true;
 }
 
+/* Identity of the image under test (issue #976), read from the core right
+ * after the load so the site generator can say WHY the boot ROM rejected
+ * a file instead of "not yet verified":
+ *
+ *   size          bytes of the image the core kept (a prepended copier
+ *                 header, when the loader strips one, is not counted)
+ *   crc32         the core's jaguarMainROMCRC32 -- the CRC filedb is keyed
+ *                 on (whole image, or image minus a universal header)
+ *   hdr_byte0     the byte at $800000 as the boot ROM sees it: $F6..$FE
+ *                 is the negated RSA boot-block count of a signed
+ *                 cartridge ($F6 = Atari's 10-block header, $F7..$FE the
+ *                 2..9-block jagcrypt carts; see JaguarCartNeedsBIOS in
+ *                 src/core/file.c, issues #784/#785); anything else is an
+ *                 image the boot ROM cannot authenticate (an Alpine image
+ *                 reads the loader's $FF fill, a RAM-loaded executable
+ *                 the untouched slot, $00)
+ *   filedb        1 when the CRC is in src/core/filedb.c, then
+ *   filedb_flags  its FileFlags (FF_BAD_DUMP $40, FF_VERIFIED $80, ...),
+ *   filedb_name   its name (quoted; filedb names carry no quotes), and
+ *   filedb_verified_sibling  the CRC of a verified filedb entry of the
+ *                 same name ($00000000 when there is none)
+ *
+ * Every field is omitted when the core does not export the symbols (a
+ * core built without TEST_EXPORTS=1 exports none of them). */
+typedef struct {
+    int have;
+    uint32_t size;
+    uint32_t crc32;
+    unsigned hdr_byte0;
+    const struct RomIdentifier *entry;
+    uint32_t sibling_crc;
+} probe_identity_t;
+
+static void probe_identity(harness_config *cfg, probe_identity_t *id)
+{
+    const uint32_t *crc_p = (const uint32_t *)harness_dlsym(cfg, "jaguarMainROMCRC32");
+    const uint32_t *size_p = (const uint32_t *)harness_dlsym(cfg, "jaguarROMSize");
+    const uint8_t *memspace = (const uint8_t *)harness_dlsym(cfg, "jagMemSpace");
+    const struct RomIdentifier *(*find_rom)(uint32_t) =
+        (const struct RomIdentifier *(*)(uint32_t))harness_dlsym(cfg, "FindRomIdentifier");
+    const struct RomIdentifier *(*find_verified)(const struct RomIdentifier *) =
+        (const struct RomIdentifier *(*)(const struct RomIdentifier *))
+        harness_dlsym(cfg, "FindVerifiedRomVariant");
+    const struct RomIdentifier *sib;
+
+    if (!crc_p || !size_p || !memspace)
+        return;
+    id->have = 1;
+    id->size = *size_p;
+    id->crc32 = *crc_p;
+    id->hdr_byte0 = memspace[PROBE_CART_LO];
+    id->entry = find_rom ? find_rom(id->crc32) : NULL;
+    sib = (id->entry && find_verified) ? find_verified(id->entry) : NULL;
+    id->sibling_crc = sib ? sib->crc32 : 0;
+}
+
+static void probe_print_identity(const probe_identity_t *id)
+{
+    if (!id->have)
+        return;
+    printf(" size=%lu crc32=$%08lX hdr_byte0=$%02X filedb=%d",
+           (unsigned long)id->size, (unsigned long)id->crc32,
+           id->hdr_byte0, id->entry ? 1 : 0);
+    if (id->entry)
+        printf(" filedb_flags=$%03lX filedb_name=\"%s\" filedb_verified_sibling=$%08lX",
+               (unsigned long)id->entry->flags, id->entry->name,
+               (unsigned long)id->sibling_crc);
+}
+
 int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     probe_video_pair vpair;
     probe_boot_state boot;
+    probe_identity_t ident;
     probe_video_state *vstate = &vpair.whole;
     probe_video_state *sstate = &vpair.scored;
     unsigned int (*get_reg)(void *, int) = NULL;
@@ -358,16 +437,33 @@ int main(int argc, char **argv)
 
     memset(&vpair, 0, sizeof(vpair));
     memset(&boot, 0, sizeof(boot));
+    memset(&ident, 0, sizeof(ident));
     boot.handoff = -1;
 
     cfg.frames = 600;
     cfg.quiet = 1;
     if (!harness_init_from_args(&cfg, argc, argv))
         return 2;
-    /* The harness skips flags it does not know; --post-handoff is ours. */
-    for (i = 1; (int)i + 1 < argc; i++)
+    /* The harness skips flags it does not know. */
+    for (i = 1; (int)i < argc; i++) {
         if (strcmp(argv[i], "--post-handoff") == 0)
-            boot.post_handoff = (unsigned)strtoul(argv[i + 1], NULL, 10);
+            boot.post_handoff = (int)i + 1 < argc
+                ? (unsigned)strtoul(argv[i + 1], NULL, 10) : 0;
+        else if (strcmp(argv[i], "--lit-percent") == 0) {
+            char *end;
+            double value;
+            if ((int)i + 1 >= argc) {
+                fprintf(stderr, "--lit-percent requires a percentage in (0, 100]\n");
+                return 2;
+            }
+            value = strtod(argv[++i], &end);
+            if (*end || !(value > 0.0 && value <= 100.0)) {
+                fprintf(stderr, "--lit-percent requires a percentage in (0, 100]\n");
+                return 2;
+            }
+            probe_lit_percent = value;
+        }
+    }
     cfg.video_callback = probe_video_cb;
     cfg.video_callback_data = &vpair;
 
@@ -390,6 +486,12 @@ int main(int argc, char **argv)
         cfg.frame_callback_data = &boot;
     }
 
+    /* harness_load_rom above ran retro_load_game, and the core loads the
+     * image inside it (libretro.c retro_load_game -> JaguarLoadFile), so
+     * the CRC, size and cart slot are final here; harness_run only steps
+     * frames. */
+    probe_identity(&cfg, &ident);
+
     harness_run(&cfg);
 
     if (get_reg) {
@@ -409,7 +511,7 @@ int main(int argc, char **argv)
            "bios_ran=%d handoff=%d final_op=$%04X halt_frames=%u "
            "scored_from=%u scored_frames=%u scored_lit_frames=%u "
            "scored_motion=%u scored_audio_nonsilent=%u "
-           "trap_frames=%u trap_pc=$%06lX trap_handler=$%06lX\n",
+           "trap_frames=%u trap_pc=$%06lX trap_handler=$%06lX",
            cfg.rom_path, cfg.video.total_frames_rendered,
            vstate->last_w, vstate->last_h, pc_valid, final_pc,
            nonblack_pct, vstate->lit_frames, vstate->distinct_hashes,
@@ -419,6 +521,8 @@ int main(int argc, char **argv)
            sstate->distinct_hashes,
            cfg.audio.total_nonsilent - boot.audio_base,
            boot.trap_frames, boot.trap_pc, boot.trap_handler);
+    probe_print_identity(&ident);
+    printf("\n");
 
     res.status = "INFO";
     res.name = "cart_boot_probe";

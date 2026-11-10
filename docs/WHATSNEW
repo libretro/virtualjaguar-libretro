@@ -1,3 +1,30 @@
+Virtual Jaguar v3.12.0 libretro
+------------------------------
+
+Qualified graphics startup, mild CRT filtering by default, editable cheats,
+and an Emulation Server library browser. Core options and v17 savestates carry over.
+Full notes: docs/RELEASE_NOTES_v3.12.0.md
+
+* Qualify graphics before opening the main window, with an animated startup
+  screen; improve bundled Mesa startup and shutdown on Windows (#1183, #1167).
+* Enable the mild vj-scanlines filter for users without a saved shader choice;
+  preserve explicit choices and fall back to the plain picture on failure (#1159).
+* Build the Windows shader runtime from pinned source on x64 and ARM64;
+  add ARM64 Flatpak packages with shader support (#1161, #1168).
+* Edit cheat values, select labeled choices and small explicit ranges, and
+  apply a cheat once without freezing it; retain hardcore restrictions and
+  fix the queued permission-check race (#1186, #1190).
+* Browse and launch games from an Emulation Server (#1188).
+* Fix Mac App Store library bookmark configuration and font-worker checking
+  (#1176, #1175).
+* Show the whole visible line instead of clipping the left edge: the standard
+  NTSC frame grows from 326 to 352 pixels wide, 345 on PAL (#1191).
+* Add a debugger Symbols window: search .cof and .abs symbols and set breakpoints
+  from the list (#1195).
+* Add Windows signing, release provenance verification and cloud windowed
+  GL/shader qualification; publish artifact verification results with releases.
+* Add RISC pipeline measurement tests; no timing-model changes (#1158).
+
 Virtual Jaguar v3.11.0 libretro
 ------------------------------
 

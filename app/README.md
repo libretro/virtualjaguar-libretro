@@ -15,6 +15,32 @@ found in your keychain on macOS, a `.pfx` or store certificate on Windows, optio
 gitignored `.env`), run `bash app/packaging/local-package.sh --sign [--notarize] [--build-dir DIR]`: see
 "Signing locally" in [`packaging/README.md`](packaging/README.md).
 
+## Startup
+
+The main window stays hidden until the OpenGL context, interface program, and a
+complete interface draw/readback/swap succeed. On Windows, a failed native GL
+check can hand off once to bundled Mesa; both probes stay hidden, avoiding the
+brief black-window restart. CPU capability overrides are unchanged.
+
+A quiet animated startup screen then reports audio/control setup and game or
+library opening. It uses plain interface rendering, with no game filter or
+external assets, and disappears as soon as startup finishes (no minimum intro
+time). Threaded game loads keep animating via the existing wait pump. A blocking
+OS/driver call or an inline game load can still pause animation; this is not a
+watchdog for a hung driver. Optional game filters retain their existing fail-soft
+behavior and only run after the interface renderer has qualified.
+
+To check the real window path on a desktop or under Xvfb:
+
+```sh
+python3 app/tests/startup_smoke.py /path/to/virtualjaguar test/roms/yarc.j64
+```
+
+For a visual preview, use `--show-window startup` (also works with `--screenshot`).
+
+The test covers an empty launch, animated threaded loading, and the headless
+bypass. It requires a working OpenGL display, not SDL's dummy video driver.
+
 ## Build
 
 You need CMake 3.20+, a C99/C++17 toolchain and, on Linux, the SDL3 desktop dev
@@ -302,13 +328,17 @@ a failure.
   or folder; a path that does not exist means "missing"), next to the executable
   (and `../Frameworks` in a macOS bundle), in `<data folder>/librashader/`, and
   then the system library path (Homebrew's `/opt/homebrew/lib` included).
-  The release packages (macOS universal, Windows, AppImage, `.deb`) ship it:
-  Windows and Apple-silicon dev builds download upstream's pinned prebuilt
-  (`-DVJ_APP_FETCH_LIBRASHADER=OFF` for offline builds), while the **macOS (both
-  architectures) and Linux libraries are built from source in CI**
-  ([`librashader.yml`](../.github/workflows/librashader.yml), pinned commit and
-  archive SHA-256 in `app/packaging/librashader/pin.env`), because upstream's
-  Intel-macOS zip holds an arm64 dylib and it publishes no Linux binary. Any
+  The release packages (macOS universal, Windows zip / installer / Store MSIX,
+  AppImage, `.deb`) ship it, **every one built from source in CI** from the one pin
+  in `app/packaging/librashader/pin.env` ([`librashader.yml`](../.github/workflows/librashader.yml);
+  commit and archive SHA-256 verified): upstream's Intel-macOS zip holds an arm64
+  dylib, it publishes no Linux binary, and its Windows DLLs import `D3DX9_43.dll`
+  (the June 2010 DirectX redistributable) and the VC++ redistributable, so they do
+  not load on a stock Windows (#1153). Apple-silicon dev builds still download
+  upstream's pinned prebuilt by default (`-DVJ_APP_FETCH_LIBRASHADER=OFF` for
+  offline builds); on Windows that download is an explicit opt-in and a plain dev
+  build bundles no runtime (see
+  [packaging/README.md](packaging/README.md#shader-runtime-librashader)). Any
   build can be given a library it built itself with `-DVJ_LIBRASHADER_LIB=<file>`;
   it is copied beside the executable and installed by `cmake --install`.
   When no library can be used, **Settings > Video > Shader** says why: *not
@@ -340,7 +370,28 @@ a failure.
   4.60 elsewhere). macOS's OpenGL 4.1 cannot build presets with arrays of arrays (CRT-Geom,
   CRT-Hyllian and 13 others in the bundle); the list greys them out and says why. Details:
   [packaging/README.md](packaging/README.md#macos-notes).
-- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
+- **On by default.** A config that never chose a preset starts on the build default, the
+  first-party `vj-scanlines` (a mild CRT: one soft scanline per source line, brightness
+  compensated, RGB mask off; its sliders are under Preset parameters). `-DVJ_SHADER_DEFAULT=<file
+  in app/shaders/ | off>` picks it per build. Like the TV mode default, nothing is written to
+  `config.ini` until you change it (turn it off, pick another preset, or None), so a later build can
+  move the default for people who never chose; a stored choice always wins, and Settings > Reset of
+  the Video group returns to the build default. A config from 3.11 or earlier that never picked a
+  preset counts as never chose. When the runtime is missing or the default cannot compile on this GL,
+  the picture is drawn plain, one line goes to stderr, and Settings > Video > Shader says why; no
+  message is shown and the switch is not turned off, so a repaired install filters again. The first
+  time the default actually draws a frame a one-line hint says how to change it (`shader.hint_shown`).
+- **`--shader NAME|FILE|off`** sets the preset for one run without saving it: a name in the bundled
+  folder (`vj-scanlines`, `vj-sharp-bilinear`), a preset of the slang-shaders subset by its own path
+  (`crt/crt-easymode`, with or without `slang-shaders/` and `.slangp`), a `.slangp` file, or `off`.
+  An unknown name, or a file that is not a usable preset, is an argument error (exit 2). The stderr
+  line `[shader] this run: ...` names what was used, and once the chain is built or fails the app
+  prints one line `[shader] <preset path> built: GLSL 410 on OpenGL 4.1`, `... refused: ...` (the
+  GL-version limit: arrays of arrays on macOS) or `... failed: ...`, which the GL qualification
+  workflow (#1155) reads; it passes `--shader` on every launch so a build's default never moves
+  its reference pictures.
+- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`, `shader.chosen` (the user
+  moved away from the build default), `shader.hint_shown`.
 
 ### Getting the shader runtime
 
@@ -371,7 +422,12 @@ the system library path, or point `VJ_LIBRASHADER` at the file.
   ```
 
   This is exactly what CI runs (`cargo xtask build --profile optimized --target <triple> -- --locked`
-  inside upstream's tree). Upstream's `README.md` documents the same command.
+  inside upstream's tree; on Windows with `--no-default-features --features runtime-opengl` and a
+  static CRT, so the DLL needs no redistributable). Upstream's `README.md` documents the same command.
+- **Windows.** Use the `*-pc-windows-msvc` triples (rustup + Visual Studio's C++ tools, from Git Bash
+  or an MSYS2 shell), or take the `librashader-x86_64-pc-windows-msvc` / `-aarch64-pc-windows-msvc`
+  artifact of any recent CI run; `app/packaging/windows/check-librashader-dll.py <dll> --arch x64|arm64`
+  tells whether a DLL will load on a stock Windows (imports, exports, ABI).
 - **macOS.** The release `.app` already includes a universal library. For a source
   build on Apple silicon the default configure downloads upstream's arm64 library;
   on an Intel Mac, or to avoid the download, build it as above with
@@ -383,8 +439,15 @@ the system library path, or point `VJ_LIBRASHADER` at the file.
 `vj_shader_tests` (CTest `shaders_unit`, `shaders_bundled`, `shaders_library`, `shaders_gl`) covers
 the pure logic and the missing-library fallback anywhere; the other two need the
 library (and a display, for the GL one) and report **skipped**, not passed,
-without them. Point `VJ_LIBRASHADER` at the library, and optionally
+without them, printing the reason (what was probed, whether it was missing or
+failed to load) on stdout and stderr. `VJ_REQUIRE_LIBRASHADER=1` turns a skip of
+`shaders_library` into a failure; every packaging leg, Windows included, runs it
+that way. Point `VJ_LIBRASHADER` at the library, and optionally
 `VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
+The per-PR builds exclude `shaders_gl` (`-E shaders_gl`: no display); the
+[GL qualification](../.github/workflows/gl-qualification.yml) workflow runs it on a real context on
+every desktop OS, where a skip is a failure, then renders every bundled preset through `--shader`
+([docs/agent/testing.md](../docs/agent/testing.md), "GL qualification").
 
 ## Game library
 
@@ -697,6 +760,39 @@ single instance.
   same game and choose Netplay > Join with address `127.0.0.1` and the same port. Two copies that both
   host need different ports (the window offers 42171-42174).
 
+## Emulation Server libraries
+
+Choose **File > Server library...** or **Servers...** in the game library. Enter an
+Emulation Server origin such as `http://192.168.1.10:8473`, then paste a device or
+guest access token with read permission. A server that admits your LAN connection
+can accept an empty token. **Connect** saves the server address and lists the
+libraries you can read.
+
+Select a library and **Jaguar cartridges** or **Jaguar CD**, search by title, and
+use **Load more** for additional pages. Select a game and choose **Download and
+play**. The transfer runs in the background, shows progress, and can be cancelled.
+A download can contain up to 512 files and 8 GiB.
+Completed files go under `<data>/content-server/`; the normal loader opens the
+local cartridge, CHD, CDI, CUE or playlist. **Open recent** can launch that local
+copy later. Each completed version has its own cache folder, so another download
+can coexist with a running game.
+Launch filenames include a stable game identifier to keep saves and states for
+different server games separate.
+
+Managed items verify the manifest's SHA-256 hashes. Indexed CUE/BIN sources stage
+the descriptor and its companions together, preserving their relative layout.
+Unsafe paths, missing companions, unsupported images, incomplete transfers and
+hash mismatches stop the launch. CUE `FILE` entries must use quoted, portable
+paths with forward slashes. Multi-disc playlists need a managed item containing
+all required disc files.
+
+**Remember token in credential store** uses Keychain on macOS, Credential Manager
+on Windows and Secret Service on Linux. If the store is unavailable, the token
+stays in memory for that session. The settings file keeps server addresses.
+**Forget server** removes its saved address and token. Downloads use the app's
+existing WinHTTP backend on Windows and libcurl on Linux and macOS. The server
+URL should identify the origin itself, with its port and no `/ui` suffix.
+
 ## Where files go
 
 | | |
@@ -716,6 +812,34 @@ game, with a toggle each, plus manual codes (hex `ADDRESS:VALUE`, `+` to join
 several). What is on is remembered per game (`<data>/cheats/games/<key>.ini`, keyed
 by the cartridge CRC32; discs by the core's title row or file name) and sent to the
 core again after every load and state restore.
+
+**Values and one-shot writes.** Single-value cheats have a value editor. A complete
+numbered choice list in the description, such as Wolfenstein's weapon list, becomes
+a dropdown containing mutually exclusive radio buttons. Values are decimal (or
+explicitly `0x`-prefixed hexadecimal); ambiguous prose is left as a description.
+Other scalar cheats accept a numeric value (press Enter to save), bounded by the
+storage width. That bound is not a promise that every value is meaningful to the
+game. Compound/multipart cheats keep their original grouped code, rather than
+exposing a misleading single value. **Default** restores the supplied value.
+Edits are saved per game without modifying the downloaded files; editing an off
+cheat does not enable it.
+
+**Keep applied** writes every frame. **Apply once** turns off that entry's freeze,
+writes once on the emulation thread, and does not replay after a reset, state load,
+or restart. Other enabled cheats can still overwrite the same address. One-shot
+writes support main RAM only and obey revision and hardcore restrictions. Manual
+codes also have Apply once; `--cheat-once ADDRESS:VALUE` is its nonpersistent CLI
+counterpart.
+
+Legacy RetroArch entries do not carry game-specific ranges. Authors can supply
+optional VJ metadata on a scalar entry: `cheatN_vj_value_min`,
+`cheatN_vj_value_max`, and `cheatN_vj_value_step` (default 1). Bounds are inclusive;
+the original value must be in range and on the step grid. Small explicit ranges
+(up to 16 values) become radio choices; larger ranges use the numeric editor.
+Malformed metadata disables editing while preserving the original cheat.
+BigPEmu's source API supports bounded integer settings, but the current source
+converter emits those as separate fixed-value entries; it does not yet emit these
+range extensions. Values are never inferred from neighboring memory addresses.
 
 The cheat files are not committed to this repository (the libretro database is
 CC BY-SA 4.0), but they are **bundled with builds**: configure downloads the 41

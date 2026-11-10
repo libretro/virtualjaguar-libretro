@@ -182,3 +182,22 @@ cart_classify_mode() {
     [ -n "$sigs" ] && notes="$notes; $sigs"
     echo "GAME_CODE|$notes"
 }
+
+cart_identity_stamp() {
+    # usage: cart_identity_stamp <logfile>
+    # Echoes the row's `<!-- id: ... -->` identity stamp (issue #976) built
+    # from the probe's identity fields (size= onward, the tail of the
+    # CARTPROBE line), or nothing when the probe printed none (an old probe,
+    # a core without the symbols, a LOAD_FAIL).  The site generator reads
+    # it to say why the boot ROM rejected an image; matrix_diff.py strips
+    # it like the build stamp.  Identity does not depend on the boot mode,
+    # so the sweep takes it from the HLE log.
+    local line ident
+    line="$(grep -m1 '^CARTPROBE ' "$1" 2>/dev/null || true)"
+    ident="$(printf '%s' "$line" | grep -oE ' size=[0-9]+ crc32=\$[0-9A-Fa-f]{8} hdr_byte0=\$[0-9A-Fa-f]{2} filedb=[01].*$' || true)"
+    [ -z "$ident" ] && return 0
+    # An HTML comment cannot contain "--"; nothing the probe prints does,
+    # but a filedb name is free text, so refuse rather than corrupt the row.
+    case "$ident" in *--*) return 0;; esac
+    printf '<!-- id:%s -->' "$ident"
+}
