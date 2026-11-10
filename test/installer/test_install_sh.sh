@@ -19,6 +19,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$HERE/../../tools/install.sh"
 T=$(mktemp -d 2>/dev/null || mktemp -d -t vjinst)
 trap 'command rm -rf "$T"' EXIT
+# Keep the fixture's verification paths independent of the production key.
+sed 's/^MINISIGN_PUBKEY=.*/MINISIGN_PUBKEY=""/' "$SCRIPT" > "$T/install.sh" || exit 1
+SCRIPT="$T/install.sh"
+
 
 PASS=0; FAIL=0
 pass() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
