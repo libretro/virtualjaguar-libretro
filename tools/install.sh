@@ -96,7 +96,7 @@ RAW="https://raw.githubusercontent.com/$REPO/master/tools/install.sh"
 # app/packaging/README.md, "Signed checksums"); empty means the signature
 # check is skipped with a note.  Pinned here on purpose: a key fetched from
 # the same place as the files would prove nothing.
-MINISIGN_PUBKEY=""
+MINISIGN_PUBKEY="RWRhK6qHY9zXq99Dq9Oz/T5da7oWwgkFe/j3Cb9UcZTx7ydUsZDiKcvp"
 [ -z "${VJ_INSTALL_MINISIGN_PUBKEY:-}" ] || MINISIGN_PUBKEY=$VJ_INSTALL_MINISIGN_PUBKEY
 BASE="${VJ_INSTALL_BASE_URL:-https://github.com/$REPO/releases}"
 BASE="${BASE%/}"
