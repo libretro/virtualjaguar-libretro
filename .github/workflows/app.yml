@@ -378,7 +378,7 @@ jobs:
               '',
               '> Downloading an artifact needs a GitHub login. macOS: Developer ID signed and notarized (PRs from forks get',
               '> no signing secrets and stay ad-hoc signed: right-click > Open, or `xattr -dr com.apple.quarantine "Virtual Jaguar.app"`).',
-              '> Windows: not code-signed yet, SmartScreen may warn. Linux AppImage: `chmod +x` it.',
+              '> Windows packages use Azure Artifact Signing when configured for the run. Check the package job log for the signing result. Linux AppImage: `chmod +x` it.',
               '',
               `<sub>Updated by CI at ${new Date().toISOString()}</sub>`,
             ].join('\n');
