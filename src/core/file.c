@@ -488,6 +488,19 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    return JST_NONE;
 }
 
+/* Standalone IPS preflight uses the same cartridge classification as the loader. */
+bool JaguarIsHeaderlessCartridge(uint8_t *buffer, size_t size)
+{
+   uint32_t type;
+
+   if (size < CART_UNIVERSAL_MARKER_OFFSET + 8 || size > JGD_ROM_SIZE
+         || DetectPrependedHeaderSize(buffer, (uint32_t)size) != 0)
+      return false;
+
+   type = ParseFileType(buffer, (uint32_t)size);
+   return type == JST_ROM || (type == JST_ALPINE && size <= JGD_AUTO_THRESHOLD - 0x2000);
+}
+
 /* Cartridge address decode (issue #851).
  *
  * The cart slot decodes $800000-$DFFEFF, but a ROM only drives the address

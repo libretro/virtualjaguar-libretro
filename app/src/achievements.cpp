@@ -340,8 +340,11 @@ void Achievements::beginLoad() {
         applyHardcore();
         loading_ = true;
         gameKnown_ = false;
-        rc_client_begin_identify_and_load_game(client_, consoleId(path), path.c_str(), nullptr, 0, &AchCallbacks::loadDone,
-                                               nullptr);
+        const auto* cartridge = host.suppliedCartridge();
+        rc_client_begin_identify_and_load_game(client_, consoleId(path), path.c_str(),
+                                               cartridge ? cartridge->data() : nullptr,
+                                               cartridge ? cartridge->size() : 0,
+                                               &AchCallbacks::loadDone, nullptr);
     });
 }
 

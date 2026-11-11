@@ -167,6 +167,31 @@ Gamepads use SDL's standard layout (South/East/West = B/A/C, Back = Pause,
 Start = Option); the left stick also drives the D-pad. Controller types per
 Jaguar port (Team Tap, rotary, ...) are under **Settings > Input > Devices & players**.
 
+### IPS cartridge patches
+
+Choose an `.ips` file with **File > Open**, or drop it onto the window. A drop
+on a uniquely identified library cartridge uses that cartridge. Otherwise the
+dialog starts with the controller-focused or running cartridge if one is available. Use **Choose base
+cartridge** to select a different local `.j64`, `.jag`, `.rom`, or `.bin` file.
+
+Check the displayed base path and SHA-256. If the patch author supplies SHA-256
+values, enter them in the corresponding fields to check them before proceeding.
+The base hash covers the whole file. IPS offsets start at the cartridge payload
+when the loader detects a 512-byte copier header, and the patched output contains
+only the payload.
+
+- **Boot patched** runs the patched bytes in memory. Restart uses the same bytes.
+- **Save patched copy** writes an `IPS-<SHA-256>.j64` file in the selected folder.
+  Open it normally to play. Keep its filename to reuse the patched saves and states.
+- **Replace original** asks for confirmation and writes an adjacent
+  `<original filename>.ips-original` recovery copy before replacing the cartridge.
+  Keep that recovery file beside the replacement so the app can recognize the
+  patched save identity on later opens. To restore the original, close the game
+  and copy the recovery file over the cartridge.
+
+Patched SRAM and save states use the patched SHA-256 as their filename identity.
+CD images and archives are outside IPS cartridge support.
+
 ### Controls and the keypad
 
 **Settings > Input** edits the bindings: pick a device (the keyboard, every

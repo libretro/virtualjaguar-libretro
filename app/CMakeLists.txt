@@ -409,6 +409,8 @@ set(VJ_APP_SOURCES
     src/cheat_store.cpp
     src/cheats_core.cpp
     src/cheats_ui.cpp
+    src/ips.cpp
+    src/ips_ui.cpp
     src/sha256.cpp
     src/achievements.cpp
     src/ach_event.cpp
@@ -619,6 +621,7 @@ if(VJ_APP_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter)   # gdb_threaded_halt (VJEmuThreadTests.cmake) drives a gdb client from Python
     include(VJSmokeTests)
+    include(VJIpsTests)
     include(VJContentServerTests)
     include(VJAchTests)
     include(VJCheatTests)

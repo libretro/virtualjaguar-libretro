@@ -106,7 +106,7 @@ std::string joinExtensions(const std::string& pipeList) {
 }
 
 // SDL's dialog filters must stay valid until the callback runs.
-std::string g_filterName = "Atari Jaguar games and discs";
+std::string g_filterName = "Atari Jaguar games, discs and IPS patches";
 std::string g_filterPattern;
 SDL_DialogFileFilter g_filters[2];
 std::string g_lastDir;
@@ -1580,13 +1580,20 @@ void App::applyBios() {
     host.setBootTarget(bootTarget_);
 }
 
-bool App::openContent(const std::string& pathIn) {
+bool App::openContent(const std::string& path) {
+    return openContentImpl(path, {});
+}
+
+bool App::openContentImpl(const std::string& pathIn, const std::shared_ptr<const ips::Cartridge>& transient) {
     if (haltedNow() && !threaded()) {   // inline, the call would run inside retro_run; threaded, it detaches first
         toast(kHaltedToast, 2.5, 2);
         return false;
     }
     syncHardcoreLock();   // the load below settles which options are locked
     const std::string path = absolutePath(pathIn);
+    ips::Bytes replaced;
+    const std::string identity = transient ? ips::identity(transient->outputHash) : ips::replacedIdentity(path, replaced);
+    const ips::Bytes* cartridge = transient ? &transient->output : replaced.empty() ? nullptr : &replaced;
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
@@ -1602,9 +1609,10 @@ bool App::openContent(const std::string& pathIn) {
     std::vector<std::string> overrideErrors;
     // Everything that touches the core runs where the core lives: on the emulation thread at a frame boundary when
     // threaded (this thread waits), right here otherwise.
-    const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors); }, giveUp);
+    const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors, cartridge, identity); }, giveUp);
     debug.rearmBreakpoints();   // the list is per game (a no-op after the swap); back in the core if the old game stayed
     if (!ok && err.empty()) err = "the debugger halted the game again";
+    if (!ok && !host.isLoaded()) transientCart_.reset();
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
@@ -1620,8 +1628,11 @@ bool App::openContent(const std::string& pathIn) {
     swapGrid_.restart();
     lastTick_ = now();
     controlsOverlayOnLoad(*this);
-    addRecent(path);
-    library.noteLaunched(path);   // the library's recently played (library_lists.h)
+    transientCart_ = transient;
+    if (!transient) {
+        addRecent(path);
+        library.noteLaunched(path);
+    }
     invalidateThumbs();
     debug.requestRefresh();
     discordNoteGameStarted(*this);
@@ -1632,7 +1643,8 @@ bool App::openContent(const std::string& pathIn) {
 }
 
 // The part of openContent that touches the core, and what feeds it (#967: the emulation thread runs it).
-bool App::openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors) {
+bool App::openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors,
+                            const ips::Bytes* cartridge, const std::string& identity) {
     if (testSlowCallMs_) SDL_Delay(testSlowCallMs_);   // VJ_TEST_SLOW_CALL_MS (smoke_busy_threaded)
     host.setDirectories(paths.system, paths.saves);
     applyBios();
@@ -1642,7 +1654,7 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     runFrames_.store(0);
     pendingStateAt_ = emu.framesRun() + 2;
     gdbStubOn_.store(false);
-    if (!host.loadContent(path, err)) {
+    if (!host.loadContent(path, err, cartridge, identity)) {
         ach.onContentClosed();
         cheatsOnClose(*this);
         return false;
@@ -1660,7 +1672,7 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     applyAudioSettings();
     audio.clear();
     audio.setPaused(false);
-    input.setContent(contentIdentity(path));   // selects the per-game control overrides
+    input.setContent(identity.empty() ? contentIdentity(path) : identity);   // selects the per-game control overrides
     applyPortDevices(*this);                   // before the first frame: the controller types chosen in Settings
     ach.onContentLoaded();                     // identify the game, look up its achievements
     cheatsAfterLoad(*this);                    // the core drops its cheat list on every unload
@@ -1688,6 +1700,7 @@ bool App::openNoContent() {
     const bool ok = emu.call([&] { return openNoContentOnCore(err); }, giveUp);
     debug.rearmBreakpoints();   // see openContent
     if (!ok && err.empty()) err = "the debugger halted the game again";
+    if (ok || !host.isLoaded()) transientCart_.reset();
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
@@ -1787,7 +1800,7 @@ bool App::reloadContent() {
         return false;
     }
     reloading_ = true;   // a deliberate restart: neither keeps nor resumes an auto-save
-    bool ok = openContent(p);
+    bool ok = openContentImpl(p, transientCart_);
     reloading_ = false;
     return ok;
 }
@@ -1823,6 +1836,7 @@ void App::closeContent() {
         toast(kHaltedToast, 2.5, 2);
         return;
     }
+    transientCart_.reset();
     host.pinSnapshot();
     if (threaded()) adoptFrameEpoch();
     debug.requestRefresh();
@@ -1944,7 +1958,7 @@ void App::openBiosSettings() {
 
 void App::showOpenDialog() {
     if (!window_) return;
-    g_filterPattern = joinExtensions(CoreHost::validExtensions()) + ";m3u";   // multi-disc playlists: the app reads them (m3u.h)
+    g_filterPattern = joinExtensions(CoreHost::validExtensions()) + ";m3u;ips";
     g_filters[0].name = g_filterName.c_str();
     g_filters[0].pattern = g_filterPattern.c_str();
     g_filters[1].name = "All files";
@@ -2082,7 +2096,9 @@ void App::openAndLoadState(const std::string& pathIn, int slot, const std::strin
     }
     if (slot >= 0) stateSlot = slot;
     // The running game: the disc in the tray, or what was opened (an .m3u, or the disc before a swap).
-    auto running = [&] { return host.isLoaded() && (host.contentPath() == path || host.loadedPath() == path); };
+    auto running = [&] {
+        return !transientCart_ && host.isLoaded() && (host.contentPath() == path || host.loadedPath() == path);
+    };
     // States remain named for their mounted disc. Reopen the playlist, then select that disc before loading one.
     auto selectStateDisc = [&] {
         if (stateDisc.empty() || host.contentPath() == stateDisc) return true;
@@ -2119,6 +2135,10 @@ void App::showImportBiosDialog() {
 
 void App::handleDrop(const std::string& path) {
     if (path.empty()) return;
+    if (pathExt(path) == "ips") {
+        openIpsPatch(path);
+        return;
+    }
     // A boot ROM or CD BIOS dropped on the window (or picked with File > Open) is a BIOS to import, not a game:
     // running it as a cartridge only shows garbage.
     if (bios::importRole(path) != bios::None) {
@@ -2389,13 +2409,27 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_DROP_FILE:
         if (!e.drop.data) break;
         {
-            // A PNG dropped on a library tile is that tile's cover; anything else opens as before.
+            // A library tile can receive a cover image or supply the base for an IPS patch.
             files::remember(e.drop.data);
             const std::string path = e.drop.data;
-            if (imguiUp_ && (homeVisible() || library.show) && pathExt(path) == "png") {
+            const std::string ext = pathExt(path);
+            if (imguiUp_ && (homeVisible() || library.show) && (ext == "png" || ext == "ips")) {
                 const float x = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.x : dropX_;
                 const float y = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.y : dropY_;
                 const LibraryService::CoverTile* t = library.tileAt(x + ImGui::GetMainViewport()->Pos.x, y + ImGui::GetMainViewport()->Pos.y, ImGui::GetFrameCount());
+                if (t && ext == "ips") {
+                    std::string base;
+                    for (const auto& entry : library.entries()) {
+                        if (!ips::cartridgePath(entry.file.path) || lib::coverKey(entry) != t->key) continue;
+                        if (!base.empty()) {
+                            base.clear();   // A shared cover key cannot disambiguate cartridge files.
+                            break;
+                        }
+                        base = entry.file.path;
+                    }
+                    openIpsPatch(path, base);
+                    break;
+                }
                 if (t) {
                     library.setCoverKey(t->key, path);
                     break;
@@ -2432,6 +2466,10 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             suppressResume_ = e.user.data2 != nullptr;   // a TV launch starts fresh: the resume prompt needs a mouse
             handleDrop(p);
             suppressResume_ = false;
+        } else if (e.user.code == 0x56495053) {   // IPS native file dialog
+            const char* picked = static_cast<const char*>(e.user.data1);
+            ipsDialogResult(static_cast<int>(reinterpret_cast<intptr_t>(e.user.data2)), picked ? picked : "");
+            SDL_free(e.user.data1);
         } else if (e.user.code == 0x56414A53 && e.user.data1) {   // 'VAJS': the library's "load this state"
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
@@ -2772,6 +2810,7 @@ int App::runInteractive(const CliArgs& a) {
     if (!startupFrame(a.noContent || !a.content.empty() ? "Loading game" : "Opening library")) return 1;
     if (quit) return 0;
     if (a.noContent) openNoContent();
+    else if (!a.content.empty() && pathExt(a.content[0]) == "ips") openIpsPatch(a.content[0]);
     else if (!a.content.empty()) openContent(a.content[0]);
     if (startupFailed_) return 1;
     if (quit) return 0;
