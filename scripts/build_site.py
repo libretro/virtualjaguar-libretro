@@ -1393,9 +1393,10 @@ def _verify_note(app_only):
                 'from the first release after the key is published; the '
                 'public key will be shown here.')
     gate = ('The macOS app, cores and tools are Developer ID signed and '
-            'notarized%s. The Windows app, installer and cores are not '
-            'code-signed yet (<a href="%s/issues/1150">#1150</a>), so '
-            'SmartScreen may warn. The Linux AppImages carry an embedded GPG '
+            'notarized%s. Windows packages use Azure Artifact Signing when '
+            'configured. Check the signing table for the build you download '
+            '(<a href="%s/releases/tag/v3.12.0">v3.12.0</a> shipped unsigned '
+            'on Windows). The Linux AppImages carry an embedded GPG '
             'signature (<code>app/packaging/linux/verify-appimage.py</code>). '
             'Every release body lists each file\'s signing state in a table '
             'generated from the files.'
