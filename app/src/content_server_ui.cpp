@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "app.h"
 #include "imgui.h"
 #include "ui_util.h"
@@ -5,53 +7,51 @@
 
 namespace vj {
 
-void drawContentServers(App& app) {
-    ContentServerBrowser& browser = app.contentServers;
-    browser.pump();
-    if (browser.launchReady) {
-        browser.launchReady = false;
-        if (app.openContent(browser.readyPath)) browser.show = false;
-    }
-    if (!browser.show) return;
-    ui::nextWindow(68.0f, 38.0f, 26.0f, 20.0f);
-    const bool expanded = ui::beginWindow("Server library", &browser.show);
-    ui::keepOnScreen();
-    if (!expanded) { ImGui::End(); return; }
+namespace {
+
+void drawServerTab(App& app, ContentServerBrowser& manager, ContentServerTab& browser) {
+    ImGui::TextUnformatted(browser.origin.c_str());
     ImGui::BeginDisabled(browser.busy);
-    if (ImGui::BeginCombo("Saved servers", browser.address)) {
-        for (size_t i = 0; i < browser.servers.size(); ++i)
-            if (ImGui::Selectable(browser.servers[i].c_str())) browser.selectServer(i);
-        ImGui::EndCombo();
-    }
     ImGui::SetNextItemWidth(ui::fitWidth(0.7f, 14, 42));
-    if (ImGui::InputText("Server address", browser.address, sizeof browser.address)) browser.addressEdited();
-    ImGui::SetNextItemWidth(ui::fitWidth(0.7f, 14, 42));
-    if (ImGui::InputText("Access token", browser.token, sizeof browser.token, ImGuiInputTextFlags_Password)) browser.tokenEdited();
+    ImGui::InputText("Access token", browser.token, sizeof browser.token, ImGuiInputTextFlags_Password);
     ImGui::Checkbox("Remember token in credential store", &browser.rememberToken);
     if (!browser.credentialNotice.empty()) ImGui::TextWrapped("%s", browser.credentialNotice.c_str());
-    ui::hint("Paste a device or guest token from Emulation Server, or leave it empty for an admitted LAN connection.");
-    if (ImGui::Button("Connect")) browser.connect();
-    ImGui::SameLine();
-    if (ImGui::Button("Forget server")) browser.forget();
+    if (browser.protocol == ecs::Protocol::RomM)
+        ui::hint("Use a RomM client API token with platforms.read and roms.read.");
+    else
+        ui::hint("Use an Emulation Server device or guest token. Admitted LAN clients can leave it empty.");
+    if (ImGui::Button("Connect / refresh server")) {
+        manager.saveToken(browser);
+        browser.connect();
+    }
     ImGui::EndDisabled();
     ImGui::Separator();
 
     ImGui::BeginDisabled(browser.busy || browser.libraries.empty());
     const char* selected = browser.selectedLibrary >= 0 && size_t(browser.selectedLibrary) < browser.libraries.size()
         ? browser.libraries[size_t(browser.selectedLibrary)].name.c_str() : "Choose a library";
-    if (ImGui::BeginCombo("Library", selected)) {
+    if (browser.protocol == ecs::Protocol::Ecs && ImGui::BeginCombo("Library", selected)) {
         for (size_t i = 0; i < browser.libraries.size(); ++i) {
             ImGui::PushID(int(i));
-            if (ImGui::Selectable(browser.libraries[i].name.c_str(), int(i) == browser.selectedLibrary)) browser.browse(int(i));
+            if (ImGui::Selectable(browser.libraries[i].name.c_str(), int(i) == browser.selectedLibrary)) {
+                browser.browse(int(i));
+                manager.save();
+            }
             ImGui::PopID();
         }
         ImGui::EndCombo();
     }
     const char* systems[] = {"Jaguar cartridges", "Jaguar CD"};
-    if (ImGui::Combo("System", &browser.system, systems, 2)) browser.browse(browser.selectedLibrary);
+    if (ImGui::Combo("System", &browser.system, systems, 2)) {
+        browser.browse(browser.selectedLibrary);
+        manager.save();
+    }
     ImGui::SetNextItemWidth(ui::fitWidth(0.7f, 12, 40));
     const bool enter = ImGui::InputText("Search games", browser.search, sizeof browser.search, ImGuiInputTextFlags_EnterReturnsTrue);
-    if (ImGui::Button("Search / refresh") || enter) browser.browse(browser.selectedLibrary);
+    if (ImGui::Button("Search / refresh") || enter) {
+        browser.browse(browser.selectedLibrary);
+        manager.save();
+    }
     ImGui::EndDisabled();
     if (!browser.message.empty()) ImGui::TextWrapped("%s", browser.message.c_str());
     if (browser.busy) {
@@ -65,14 +65,36 @@ void drawContentServers(App& app) {
     }
     ImGui::BeginDisabled(browser.busy);
     ImGui::BeginChild("##server-games", ImVec2(0, -ui::em(3)), ImGuiChildFlags_Borders);
-    for (size_t i = 0; i < browser.games.size(); ++i) {
-        ImGui::PushID(int(i));
-        if (ImGui::Selectable(browser.games[i].name.c_str(), browser.selectedGame == int(i))) browser.selectedGame = int(i);
-        ImGui::PopID();
+    const float rowHeight = ui::em(3);
+    ImGuiListClipper clipper;
+    clipper.Begin(int(browser.games.size()), rowHeight + ImGui::GetStyle().ItemSpacing.y);
+    while (clipper.Step()) {
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+            const auto& game = browser.games[size_t(i)];
+            ImGui::PushID(i);
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable("##game", browser.selectedGame == i, 0, ImVec2(0, rowHeight)))
+                browser.selectedGame = i;
+            auto* draw = ImGui::GetWindowDrawList();
+            const ArtView cover = browser.cover(game, app.library);
+            if (cover.tex) {
+                const float scale = rowHeight / float(std::max(cover.w, cover.h));
+                const float w = scale * cover.w, h = scale * cover.h;
+                const ImVec2 topLeft(pos.x + (rowHeight - w) / 2, pos.y + (rowHeight - h) / 2);
+                draw->AddImage(ImTextureRef((ImTextureID)(intptr_t)cover.tex), topLeft,
+                               ImVec2(topLeft.x + w, topLeft.y + h));
+            }
+            draw->AddText(ImVec2(pos.x + rowHeight + ImGui::GetStyle().ItemSpacing.x,
+                                pos.y + (rowHeight - ImGui::GetTextLineHeight()) / 2),
+                          ImGui::GetColorU32(ImGuiCol_Text), game.name.c_str());
+            ImGui::PopID();
+        }
     }
     ImGui::EndChild();
     ui::Flow actions;
-    ImGui::BeginDisabled(browser.selectedGame < 0);
+    const bool launchPending = std::any_of(manager.tabs.begin(), manager.tabs.end(),
+        [](const auto& tab) { return tab->downloading; });
+    ImGui::BeginDisabled(browser.selectedGame < 0 || launchPending);
     if (ImGui::Button("Download and play")) browser.download(browser.selectedGame);
     ImGui::EndDisabled();
     if (!browser.nextCursor.empty()) {
@@ -81,12 +103,61 @@ void drawContentServers(App& app) {
     }
     if (!browser.readyPath.empty()) {
         actions.next(ui::Flow::buttonW("Play downloaded game"));
+        ImGui::BeginDisabled(launchPending);
         if (ImGui::Button("Play downloaded game")) {
-            if (app.openContent(browser.readyPath)) browser.show = false;
+            if (app.openContent(browser.readyPath)) manager.show = false;
         }
+        ImGui::EndDisabled();
     }
     ImGui::EndDisabled();
+}
+
+} // namespace
+
+void drawContentServers(App& app) {
+    ContentServerBrowser& manager = app.contentServers;
+    for (auto& tab : manager.tabs) {
+        tab->pump();
+        if (tab->launchReady) {
+            tab->launchReady = false;
+            if (app.openContent(tab->readyPath)) manager.show = false;
+        }
+    }
+    if (!manager.show) return;
+    ui::nextWindow(68.0f, 38.0f, 26.0f, 20.0f);
+    const bool expanded = ui::beginWindow("Server library", &manager.show);
+    ui::keepOnScreen();
+    int remove = -1;
+    bool add = false;
+    if (expanded && ImGui::BeginTabBar("##server-tabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_AutoSelectNewTabs)) {
+        for (size_t i = 0; i < manager.tabs.size(); ++i) {
+            auto& tab = *manager.tabs[i];
+            std::string label = tab.name;
+            std::replace(label.begin(), label.end(), '#', ' ');
+            label += "###" + tab.credentialKey();
+            if (!ImGui::BeginTabItem(label.c_str())) continue;
+            if (!tab.opened) tab.connect();
+            ImGui::BeginDisabled(tab.busy);
+            const bool forget = ImGui::Button("Forget server");
+            ImGui::EndDisabled();
+            if (forget) remove = int(i);
+            else drawServerTab(app, manager, tab);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Add server")) {
+            const char* protocols[] = {"Emulation Server", "RomM"};
+            ImGui::Combo("Server type", &manager.protocol, protocols, 2);
+            ImGui::InputText("Name", manager.name, sizeof manager.name);
+            ImGui::InputText("Server address", manager.address, sizeof manager.address);
+            if (!manager.message.empty()) ImGui::TextWrapped("%s", manager.message.c_str());
+            add = ImGui::Button("Add server");
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
     ImGui::End();
+    if (remove >= 0) manager.forget(size_t(remove));
+    if (add) manager.add();
 }
 
 } // namespace vj

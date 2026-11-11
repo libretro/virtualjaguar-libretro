@@ -12,6 +12,8 @@
 
 namespace vj::ecs {
 
+enum class Protocol { Ecs, RomM };
+
 struct Library {
     std::string id, name;
 };
@@ -19,6 +21,7 @@ struct Library {
 struct Game {
     std::string id, name, entityType, systemId;
     neuro::Json payload;
+    std::string artwork = {};
 };
 
 struct Page {
@@ -35,7 +38,8 @@ using Transport = std::function<bool(const std::string&, http::Response&, uint64
 
 class Client {
 public:
-    Client(std::string origin, std::string token, Transport transport = http::get);
+    Client(std::string origin, std::string token, Transport transport = http::get,
+           Protocol protocol = Protocol::Ecs);
     std::vector<Library> libraries(const std::atomic<bool>* cancel = nullptr) const;
     Page games(const std::string& library, const std::string& search, const std::string& system,
                const std::string& cursor, const std::atomic<bool>* cancel = nullptr) const;
@@ -43,10 +47,13 @@ public:
     std::string download(const Game& game, const std::string& cacheRoot, const std::atomic<bool>* cancel,
                          const std::function<void(uint64_t, uint64_t)>& progress = {}) const;
 
+    std::vector<unsigned char> artwork(const Game& game, const std::atomic<bool>* cancel) const;
+
 private:
     neuro::Json json(const std::string& path, const std::atomic<bool>* cancel) const;
     std::string origin_, token_;
     Transport transport_;
+    Protocol protocol_;
 };
 
 } // namespace vj::ecs

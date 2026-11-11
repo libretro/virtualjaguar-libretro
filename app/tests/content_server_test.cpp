@@ -75,7 +75,42 @@ static std::string manifest(const std::string& path, const std::string& content,
            "\",\"contentPath\":\"https://untrusted.invalid/steal\"}]}";
 }
 
+static void rommGatewayContract() {
+    // The ECS gateway currently advertises display names and numeric IDs without RomM slugs.
+    // A direct RomM connection must stop before issuing a potentially unfiltered ROM query.
+    const ecs::Client gateway("http://localhost:8080", "gateway-fixture-token",
+        [](const std::string& url, http::Response& response, uint64_t,
+           const std::atomic<bool>*, const http::Options& options) {
+            CHECK(url == "http://localhost:8080/api/platforms");
+            CHECK(options.bearerToken == "gateway-fixture-token" && !options.followRedirects);
+            const std::string body = R"([{"id":7,"name":"Super Nintendo","rom_count":100000}])";
+            response.status = 200;
+            response.body.assign(body.begin(), body.end());
+            return true;
+        }, ecs::Protocol::RomM);
+    CHECK(rejects([&] { gateway.libraries(); }));
+}
+
+static void rommArtworkPaths() {
+    unsigned requests = 0;
+    const ecs::Client client("http://localhost:8080", "romm-fixture-token",
+        [&](const std::string&, http::Response&, uint64_t,
+            const std::atomic<bool>*, const http::Options&) {
+            ++requests;
+            return false;
+        }, ecs::Protocol::RomM);
+    auto game = item();
+    for (const char* path : {"https://another-server.invalid/cover.png", "//another-server.invalid/cover.png",
+                             "/assets/romm/resources/../cover.png", "/assets/romm/resources/%2e%2e/cover.png"}) {
+        game.artwork = path;
+        CHECK(client.artwork(game, nullptr).empty());
+    }
+    CHECK(requests == 0);
+}
+
 static void tests(const fs::path& root) {
+    rommGatewayContract();
+    rommArtworkPaths();
     CHECK(ecs::normalizeOrigin("HTTP://Example.COM:080/") == "http://example.com");
     CHECK(ecs::normalizeOrigin("https://[::1]:8473/") == "https://[::1]:8473");
     for (const char* url : {"file:///tmp", "http://user:secret@host", "http://host/ui", "http://host?token=x", "http://host:99999", "http://host\\evil"})
@@ -223,16 +258,33 @@ static void tests(const fs::path& root) {
         CHECK(entry.path().filename().string().rfind(".download-", 0) != 0);
 }
 
-static int network(const std::string& origin, const fs::path& root) {
+static int network(const std::string& origin, const std::string& rommOrigin, const std::string& offlineOrigin,
+                   const fs::path& root) {
     Config config;
     config.load((root / "config.ini").u8string());
     secret::useMemoryBackend();
-    ContentServerBrowser browser;
-    browser.init(config, root.u8string() + "/", true);
-    std::snprintf(browser.address, sizeof browser.address, "%s", origin.c_str());
-    std::snprintf(browser.token, sizeof browser.token, "%s", "fixture-token");
+    ContentServerBrowser manager;
+    manager.init(config, root.u8string() + "/", true);
+    const auto add = [&](const std::string& address, const char* name, const char* token, int protocol) {
+        std::snprintf(manager.address, sizeof manager.address, "%s", address.c_str());
+        std::snprintf(manager.name, sizeof manager.name, "%s", name);
+        manager.protocol = protocol;
+        if (!manager.add()) throw std::runtime_error(manager.message);
+        auto& tab = *manager.tabs.back();
+        std::snprintf(tab.token, sizeof tab.token, "%s", token);
+        manager.saveToken(tab);
+    };
+    add(origin, "ECS fixture", "fixture-token", 0);
+    add(rommOrigin, "RomM fixture", "romm-fixture-token", 1);
+    add(offlineOrigin, "Offline fixture", "offline-fixture-token", 0);
+    auto& browser = *manager.tabs[0];
+    auto& romm = *manager.tabs[1];
+    auto& offline = *manager.tabs[2];
+    std::snprintf(romm.search, sizeof romm.search, "%s", "Jag + CD");
+    offline.connect();
+    romm.connect();
     browser.connect();
-    const auto wait = [](ContentServerBrowser& state) {
+    const auto wait = [](ContentServerTab& state) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (state.busy && std::chrono::steady_clock::now() < deadline) {
             state.pump();
@@ -241,6 +293,18 @@ static int network(const std::string& origin, const fs::path& root) {
         return !state.busy;
     };
     if (!wait(browser) || browser.games.empty()) { std::fprintf(stderr, "FAIL browse: %s\n", browser.message.c_str()); return 1; }
+    LibraryService art;
+    art.createTexture = [](const void* rgba, int w, int h) {
+        const auto* pixels = static_cast<const unsigned char*>(rgba);
+        CHECK(w == 1 && h == 1 && pixels[0] == 0x20 && pixels[3] == 0xff);
+        return 1u;
+    };
+    art.destroyTexture = [](unsigned texture) { CHECK(texture == 1); };
+    const auto coverDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    unsigned texture = 0;
+    while (!(texture = browser.cover(browser.games.front(), art).tex) && std::chrono::steady_clock::now() < coverDeadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(texture == 1);
     browser.browse(0, true);
     if (!wait(browser) || !browser.nextCursor.empty() || browser.games.size() != 2) return 2;
     browser.download(0);
@@ -250,13 +314,47 @@ static int network(const std::string& origin, const fs::path& root) {
     if (!wait(browser) || !browser.launchReady) return 4;
     CHECK(bytes(fs::u8path(browser.readyPath)) == bytes(fs::u8path(managedLaunch)));
     CHECK(fs::u8path(browser.readyPath).stem() != fs::u8path(managedLaunch).stem());
+    CHECK(wait(offline) && !offline.message.empty() && offline.games.empty());
+    CHECK(wait(romm) && romm.games.size() == 1 && romm.games.front().id == browser.games.front().id);
+    CHECK(romm.nextCursor == "1" && browser.nextCursor.empty() && browser.games.size() == 2);
+    CHECK(romm.selectedLibrary == 0 && !romm.games.empty() && romm.games.front().artwork.empty());
+    romm.browse(0, true);
+    CHECK(wait(romm) && romm.games.size() == 2 && romm.nextCursor.empty());
+    if (romm.games.size() != 2) return 5;
+    const ecs::Client rommClient(rommOrigin, "romm-fixture-token", http::get, ecs::Protocol::RomM);
+    CHECK(rommClient.artwork(romm.games[1], nullptr).empty()); // missing advertised cover is harmless
+    auto offOriginCover = romm.games[1];
+    offOriginCover.artwork = "https://untrusted.invalid/secret";
+    CHECK(rommClient.artwork(offOriginCover, nullptr).empty());
+    romm.download(0);
+    if (!wait(romm) || !romm.launchReady) {
+        std::fprintf(stderr, "FAIL RomM download: %s\n", romm.message.c_str());
+        return 6;
+    }
+    const std::string rommLaunch = romm.readyPath;
+    CHECK(bytes(fs::u8path(rommLaunch)) == bytes(fs::u8path(managedLaunch)));
+    CHECK(fs::u8path(rommLaunch).stem() != fs::u8path(managedLaunch).stem());
+    romm.system = 1;
+    romm.browse(0);
+    CHECK(wait(romm) && romm.games.size() == 1 && romm.games.front().systemId == "com.provenance.jaguarcd");
+    CHECK(!romm.games.empty() && !rommClient.artwork(romm.games.front(), nullptr).empty());
+    romm.download(0);
+    CHECK(wait(romm) && romm.launchReady);
+    CHECK(bytes(fs::u8path(romm.readyPath)) == "FILE \"Track.bin\" BINARY\n  TRACK 01 MODE1/2352\n");
+    CHECK(bytes(fs::u8path(romm.readyPath).parent_path() / "Track.bin") == "track");
+    manager.save();
     Config restoredConfig;
     restoredConfig.load((root / "config.ini").u8string());
     ContentServerBrowser restored;
     restored.init(restoredConfig, root.u8string() + "/", true);
-    restored.connect();
-    CHECK(wait(restored) && restored.games.size() == 1);
-    CHECK(std::string(restored.token) == "fixture-token");
+    CHECK(restored.tabs.size() == 3);
+    if (restored.tabs.size() != 3) return 7;
+    auto& restoredEcs = *restored.tabs[0];
+    restoredEcs.connect();
+    CHECK(wait(restoredEcs) && restoredEcs.games.size() == 1);
+    CHECK(std::string(restoredEcs.token) == "fixture-token");
+    CHECK(restored.tabs[1]->name == "RomM fixture" && std::string(restored.tabs[1]->token) == "romm-fixture-token");
+    CHECK(std::string(restored.tabs[1]->search) == "Jag + CD" && restored.tabs[1]->system == 1);
     restored.stop();
     CHECK(bytes(root / "config.ini").find("fixture-token") == std::string::npos);
     http::Options options;
@@ -271,8 +369,10 @@ static int network(const std::string& origin, const fs::path& root) {
     CHECK(!http::get(origin + "/public", response, 1024, nullptr, options));
     std::printf("LAUNCH %s\n", managedLaunch.c_str());
     std::printf("SOURCE_LAUNCH %s\n", browser.readyPath.c_str());
-    browser.forget();
-    CHECK(browser.servers.empty());
+    std::printf("ROMM_LAUNCH %s\n", rommLaunch.c_str());
+    CHECK(manager.forget(0));
+    CHECK(manager.tabs.size() == 2 && manager.tabs[0]->origin == rommOrigin);
+    CHECK(manager.tabs[0]->games.size() == 1);
     std::string saved;
     CHECK(secret::active().get("io.github.libretro.VirtualJaguar.ContentServer", origin, saved) == secret::Status::NotFound);
     return failures ? 1 : 0;
@@ -283,11 +383,11 @@ int main(int argc, char** argv) {
     fs::create_directories(root);
     int result = 1;
     try {
-        if (argc == 3 && std::string(argv[1]) == "--server") result = network(argv[2], root);
+        if (argc == 5 && std::string(argv[1]) == "--servers") result = network(argv[2], argv[3], argv[4], root);
         else { tests(root); result = failures ? 1 : 0; std::printf("Content server checks: %d failures\n", failures); }
     } catch (const std::exception& error) { std::fprintf(stderr, "FAIL %s\n", error.what()); }
     // Integration driver owns the published game until its headless launch finishes.
-    if (argc != 3) fs::remove_all(root);
+    if (argc != 5) fs::remove_all(root);
     else std::printf("CACHE %s\n", root.u8string().c_str());
     return result;
 }
