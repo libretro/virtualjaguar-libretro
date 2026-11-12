@@ -68,3 +68,17 @@ installers before creating an immutable release. Feed validation takes
 place against the public asset URLs after publication of the immutable
 release. The shared feed publisher should serialize updates per channel
 and reject stale build numbers immediately before publishing.
+
+## Native upgrade fixture
+
+The Windows direct upgrade fixture workflow stages nightly builds 101 and
+102 with the real updater backend and direct Inno packaging. The fixture
+program supplies only the two SDL functions the backend uses. Native
+Windows x64 and ARM64 jobs use a loopback HTTPS appcast to drive WinSparkle's
+confirmation UI, check tamper rejection, and exercise per-user and
+all-users upgrades in custom paths with save and configuration sentinels.
+
+The staging job tries the existing Azure Authenticode action and records
+whether Azure or a disposable local certificate signed the fixture
+installers. A fresh Ed25519 key signs the enclosure bytes after
+Authenticode. The workflow publishes only short-lived CI artifacts.
