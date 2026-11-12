@@ -203,6 +203,13 @@ in place with `--clobber`, as before.
 - **Gating.** A tagged release needs the app job to succeed (or be skipped); re-run the failed jobs
   and the release follows. The nightly waits for it but does not require it, like the jagcd tools,
   so an Apple notarization outage cannot withhold the core nightly.
+- **Windows installer release qualification (#1206).** Before a stable tag publishes, three
+  Windows runner legs download the exact `release-staged` artifact, verify the x64 or ARM64 installer
+  against its `SHA256SUMS.txt` entry, silently install it, run the windowed YARC/GL qualification
+  from the installed tree, and silently uninstall it. The legs are native Windows x64, native
+  Windows ARM64, and x64 installer execution under Windows ARM emulation. That emulation leg is
+  reported separately and is not described as native x64. Core-only tags with no app package skip
+  this gate; nightly publication is unchanged.
 - **Signing** is secret-driven. Every macOS file we ship is Developer ID signed and notarized: the
   app, the macOS core dylibs, `cue2cdi-macos-universal` and the macOS chdman/jagcd tools (composite
   action `.github/actions/macos-sign`); same-repo PR app packages are too. Without the secrets (fork
