@@ -31,8 +31,8 @@ direct artifacts independently of the existing managed artifacts.
    `ditto -c -k --keepParent`. Sign the final ZIP bytes with Sparkle's
    `sign_update` in trusted release CI. Keep the private key outside the
    source tree and PR CI. Give stable and nightly distinct trust keys.
-3. Use a dedicated releases repository with GitHub release immutability
-   enabled so the existing rolling nightly remains replaceable. Upload
+3. Use the dedicated releases repository shared with Windows, with GitHub
+   release immutability enabled so the existing rolling nightly remains replaceable. Upload
    `VirtualJaguar-<tag>-macos-universal-direct.zip` before finalizing
    the immutable release. Use a build-specific immutable prerelease for
    nightly. Preserve the existing rolling nightly release for managed
@@ -51,3 +51,22 @@ Intel and Apple Silicon, including signature rejection, stable/nightly
 isolation, persisted preferences and save preservation. Use fixture keys
 and ad-hoc code signatures for local smoke tests. Use trusted release CI for
 Developer ID and notarization qualification.
+
+## Callable fixture staging
+
+Call `.github/workflows/macos-direct-stage.yml` as a reusable workflow job.
+Pass `channel` (`stable` or `nightly`), `version` (numeric X.Y.Z), and
+`run_number` (the parent release workflow's run number as a string). Stable
+uses the version for ordering. Nightly uses the run number. Manual dispatch
+uses its own run number for standalone fixture runs.
+
+The job needs `contents: read` and takes no secrets. It returns
+`outputs.artifact_name`, which names a seven-day Actions artifact containing
+a `*-macos-universal-direct-fixture.zip` and its fixture Ed25519 signature.
+The artifact uses the existing `ci-core-*` exclusion from release staging.
+The bundle has a channel-specific fixture identity and an `.invalid` feed
+URL. The job builds both architectures, verifies the ad-hoc signature after
+unpacking, runs the public ROM smoke test on each available architecture,
+and verifies rejection of a tampered ZIP and the other channel's fixture key.
+It omits librashader's optional runtime. This artifact is for CI qualification
+only. Production staging still needs the release handoff above.
