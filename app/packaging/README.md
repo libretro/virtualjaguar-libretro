@@ -614,9 +614,10 @@ bash app/packaging/manifests/render.sh --version X.Y.Z --sums SHA256SUMS.txt \
 
 then, by hand (these are outward actions that stay with the maintainer):
 
-* **Homebrew cask** (`homebrew/virtualjaguar.rb`): PR to your tap or `Homebrew/homebrew-cask`
-  (`brew audit --new --cask`, `brew install --cask ./virtualjaguar.rb`). Homebrew requires casks to be
-  signed and notarized, so wait for a notarized release.
+* **Homebrew cask** (`homebrew/virtualjaguar.rb`): update the [project tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar)
+  with the new version and SHA-256 for the notarized stable macOS ZIP. Use the
+  [tap's install instructions](https://github.com/Provenance-Emu/homebrew-virtualjaguar#readme)
+  to test the updated cask.
 * **Homebrew formula** (`virtualjaguar-formula.rb`): tap only; its configure step downloads data
   (not allowed in homebrew-core).
 * **winget**: `wingetcreate` or a PR to `microsoft/winget-pkgs` with the three `winget/*.yaml` files

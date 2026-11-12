@@ -64,3 +64,26 @@ echo
 if [ -f "$rel/$core.info" ]; then
   printf 'For RetroArch, download the %s alongside the core.\n\n' "$(links 'core info file' "$core.info")"
 fi
+
+if [ -f "$rel/$app-macos-universal.zip" ]; then
+  case "$tag" in
+    v*)
+      cat <<'EOF'
+### Homebrew (macOS)
+
+Install the stable standalone app from the [project tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar):
+
+```sh
+brew tap Provenance-Emu/virtualjaguar
+brew trust --cask Provenance-Emu/virtualjaguar/virtualjaguar
+brew install --cask Provenance-Emu/virtualjaguar/virtualjaguar
+```
+
+EOF
+      ;;
+    nightly|prerelease)
+      printf 'The [Homebrew tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar) installs the stable macOS app. For this build, use the %s above.\n\n' \
+        "$(links 'universal macOS ZIP' "$app-macos-universal.zip")"
+      ;;
+  esac
+fi
