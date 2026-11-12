@@ -15,7 +15,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
-REPOSITORY = "libretro/virtualjaguar-libretro"
+MANAGED_REPOSITORY = "libretro/virtualjaguar-libretro"
 ED25519_SPKI = bytes.fromhex("302a300506032b6570032100")
 
 
@@ -26,18 +26,16 @@ def download(url, output):
         shutil.copyfileobj(response, output)
 
 
-def validate_public_installer(tag, name, destination):
-    api = f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{tag}"
+def validate_public_installer(repository, tag, name, destination):
+    api = f"https://api.github.com/repos/{repository}/releases/tags/{tag}"
     with urllib.request.urlopen(api, timeout=30) as response:
         release = json.load(response)
     if release.get("immutable") is not True or release.get("draft"):
         raise ValueError("installer must come from a public immutable GitHub release")
-    if release.get("prerelease") is not True:
-        raise ValueError("direct-only releases must leave the managed latest release in place")
     if release.get("tag_name") != tag:
         raise ValueError("release tag does not match the requested build")
 
-    url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+    url = f"https://github.com/{repository}/releases/download/{tag}/{name}"
     assets = [asset for asset in release["assets"] if asset["name"] == name]
     if len(assets) != 1 or assets[0]["browser_download_url"] != url:
         raise ValueError(f"immutable release does not contain {name}")
@@ -101,12 +99,12 @@ def check_previous(previous, channel, arch, version):
             raise ValueError(f"version must increase from {previous_version}")
 
 
-def make_appcast(channel, arch, version, display_version, url, length, signature):
+def make_appcast(repository, channel, arch, version, display_version, url, length, signature):
     ET.register_namespace("sparkle", SPARKLE)
     rss = ET.Element("rss", {"version": "2.0"})
     feed = ET.SubElement(rss, "channel")
     ET.SubElement(feed, "title").text = f"Virtual Jaguar Windows {channel} {arch}"
-    ET.SubElement(feed, "link").text = f"https://github.com/{REPOSITORY}/releases"
+    ET.SubElement(feed, "link").text = f"https://github.com/{repository}/releases"
     ET.SubElement(feed, "description").text = "Virtual Jaguar direct installer updates"
     item = ET.SubElement(feed, "item")
     ET.SubElement(item, "title").text = f"Virtual Jaguar {display_version}"
@@ -129,6 +127,7 @@ def main():
     parser.add_argument("arch", choices=["x64", "arm64"])
     parser.add_argument("version")
     parser.add_argument("display_version")
+    parser.add_argument("--asset-repository", required=True, help="Dedicated GitHub release repository (owner/repo)")
     parser.add_argument("--public-key", required=True)
     parser.add_argument("--signature", required=True)
     parser.add_argument("--openssl", default="openssl")
@@ -139,6 +138,11 @@ def main():
     history.add_argument("--first-entry", action="store_true")
     args = parser.parse_args()
 
+    repository = args.asset_repository
+    if (not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", repository)
+            or repository.split("/")[1] in (".", "..")
+            or repository.lower() == MANAGED_REPOSITORY):
+        parser.error("--asset-repository must name the dedicated update-release repository")
     version_tuple(args.channel, args.version)
     version_tuple("stable", args.display_version)
     if args.channel == "stable" and args.version != args.display_version:
@@ -153,10 +157,10 @@ def main():
     name = f"VirtualJaguar-{args.channel}-{args.version}-windows-{args.arch}-direct-setup.exe"
     with tempfile.TemporaryDirectory() as temporary:
         installer = Path(temporary) / name
-        url, length = validate_public_installer(tag, name, installer)
+        url, length = validate_public_installer(repository, tag, name, installer)
         verify_signatures(installer, key, signature, args.openssl, args.powershell)
 
-    feed = make_appcast(args.channel, args.arch, args.version, args.display_version,
+    feed = make_appcast(repository, args.channel, args.arch, args.version, args.display_version,
                         url, length, args.signature)
     with args.output.open("xb") as output:
         output.write(feed)

@@ -8,6 +8,7 @@
 #include <shellapi.h>
 
 #include <atomic>
+#include <ctime>
 #include <filesystem>
 #include <string>
 
@@ -16,6 +17,11 @@ namespace {
 enum class InstallState { blocked, allowed, quitting };
 std::atomic<InstallState> installState{InstallState::blocked};
 bool active = false;
+bool background = false;
+Uint64 nextBackgroundPoll = 0;
+constexpr Uint64 kHourMs = 60 * 60 * 1000;
+constexpr double kDaySeconds = 24 * 60 * 60;
+std::atomic<bool> shouldQuit{false};
 std::wstring installerArguments;
 
 bool readInstallLocation()
@@ -70,6 +76,7 @@ int __cdecl runInstaller(const wchar_t* installer)
 
 void __cdecl requestShutdown()
 {
+    shouldQuit.store(true);
     SDL_Event event{};
     event.type = SDL_EVENT_QUIT;
     SDL_PushEvent(&event);
@@ -89,17 +96,42 @@ bool start(bool backgroundChecks)
     win_sparkle_set_can_shutdown_callback(canShutdown);
     win_sparkle_set_shutdown_request_callback(requestShutdown);
     win_sparkle_set_user_run_installer_callback(runInstaller);
-    // Setting this explicitly before init also suppresses the first-run prompt.
-    win_sparkle_set_automatic_check_for_updates(backgroundChecks ? 1 : 0);
+    // The app owns the schedule so the preference takes effect without a restart.
+    // An explicit value also suppresses WinSparkle's first-run prompt.
+    win_sparkle_set_automatic_check_for_updates(0);
     win_sparkle_init();
     active = true;
+    setBackgroundChecks(backgroundChecks);
     return true;
+}
+
+bool available()
+{
+    return active;
+}
+
+bool shutdownRequested()
+{
+    return shouldQuit.load();
 }
 
 void setBackgroundChecks(bool enabled)
 {
-    if (active)
-        win_sparkle_set_automatic_check_for_updates(enabled ? 1 : 0);
+    if (!active || enabled == background)
+        return;
+    background = enabled;
+    nextBackgroundPoll = 0;
+}
+
+void tick()
+{
+    if (!active || !background || SDL_GetTicks() < nextBackgroundPoll)
+        return;
+    nextBackgroundPoll = SDL_GetTicks() + kHourMs;
+    const std::time_t last = win_sparkle_get_last_check_time();
+    const std::time_t now = std::time(nullptr);
+    if (last <= 0 || last > now || std::difftime(now, last) >= kDaySeconds)
+        win_sparkle_check_update_without_ui();
 }
 
 void check()
@@ -125,6 +157,7 @@ void stop()
         win_sparkle_cleanup();
         active = false;
     }
+    background = false;
 }
 
 } // namespace vj::windows_updates

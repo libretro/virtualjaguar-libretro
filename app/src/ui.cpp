@@ -2,6 +2,13 @@
 // options menu generated from the options v2 definitions), the save-state
 // manager, the on-screen messages.
 #include "app.h"
+
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+#include "platform/winsparkle_updates.h"
+#endif
+#ifdef _WIN32
+#include "platform/windows_portable_updates.h"
+#endif
 #include "build_channel.h"
 #include "devices_ui.h"
 #include "fonts_ui.h"
@@ -289,6 +296,16 @@ void drawTvModeSettings(App& app) {
 // The config keys are the ones these controls always had (ui.*, saves.resume, library.*): nothing is renamed.
 void drawInterfaceTab(App& app) {
     drawAppGroupReset(app, AppGroup::Interface);
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    if (windows_updates::available()) {
+        bool background = app.cfg.getBool(windows_updates::kBackgroundPreference, false);
+        if (ImGui::Checkbox("Check for updates automatically", &background)) {
+            app.cfg.setBool(windows_updates::kBackgroundPreference, background);
+            app.cfg.save();
+            windows_updates::setBackgroundChecks(background);
+        }
+    }
+#endif
     ImGui::SeparatorText("Overlays");
     ImGui::Checkbox("Show frame rate", &app.showFps);
     drawControlsOverlaySettings(app);
@@ -697,6 +714,25 @@ void drawMenuBar(App& app) {
     drawAchievementsMenu(app);
     drawNetplayMenu(app);
     if (ImGui::BeginMenu("Help")) {
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+        if (windows_updates::available() && ImGui::MenuItem("Check for Updates…"))
+            windows_updates::check();
+#endif
+#ifdef _WIN32
+        if (app.paths.portable) {
+            const std::string_view channel = kBuildChannel;
+            if (channel == "release") {
+                if (ImGui::MenuItem("Check for Updates…")) {
+                    if (windows_portable_updates::start()) app.toast("Checking for a Virtual Jaguar update…");
+                    else app.toast("Could not start another update check.");
+                }
+                if (ImGui::MenuItem("View Stable Downloads"))
+                    SDL_OpenURL("https://github.com/libretro/virtualjaguar-libretro/releases/latest");
+            } else if (channel == "nightly" && ImGui::MenuItem("View Nightly Downloads")) {
+                SDL_OpenURL("https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly");
+            }
+        }
+#endif
         if (ImGui::MenuItem("About")) app.showAbout = true;
         ImGui::EndMenu();
     }
