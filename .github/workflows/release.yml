@@ -915,6 +915,62 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Stable Windows app installers are qualified from the exact staged release
+  # artifact, after checksum generation and before publication (#1206).
+  windows-installer-qualification:
+    name: Windows installer ${{ matrix.leg }}
+    needs: [stage, app-packages]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.app-packages.result == 'success'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: native x64
+            os: windows-latest
+            arch: x64
+          - leg: native ARM64
+            os: windows-11-arm
+            arch: arm64
+          - leg: x64 emulation on Windows ARM
+            os: windows-11-arm
+            arch: x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Download the exact staged release
+        uses: actions/download-artifact@v8
+        with:
+          name: release-staged
+          path: release/
+      - name: Verify checksum, install, boot YARC in a real window, and uninstall
+        shell: pwsh
+        run: >-
+          ./scripts/release/qualify-windows-installer.ps1
+          -ReleaseDirectory release
+          -Tag '${{ github.ref_name }}'
+          -Architecture '${{ matrix.arch }}'
+          -Content 'test/roms/yarc.j64'
+          -OutputDirectory "$env:RUNNER_TEMP/windows-installer-qualification"
+      - name: Qualification summary
+        if: always()
+        shell: pwsh
+        run: |
+          "Leg: ${{ matrix.leg }} (installer architecture: ${{ matrix.arch }})" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if (Test-Path "$env:RUNNER_TEMP/windows-installer-qualification/RESULT.txt") {
+            Get-Content "$env:RUNNER_TEMP/windows-installer-qualification/RESULT.txt" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-installer-qualification-${{ matrix.arch }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/windows-installer-qualification/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # ----------------------------------------------------------------
   # Release: take the staged files, build the release body from
   # docs/RELEASE_NOTES_v<TAG>.md (quick downloads, signing table and SHA-256
@@ -922,7 +978,7 @@ jobs:
   # SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures, gl-qualification]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures, gl-qualification, windows-installer-qualification]
     # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
     # tag (release-notes lookup, release title, `gh release create <TAG>`), so
     # this guard is what keeps a develop push from creating a release literally
@@ -945,6 +1001,7 @@ jobs:
       && needs.stage.result == 'success'
       && needs.verify-signatures.result == 'success'
       && needs.gl-qualification.result == 'success'
+      && (needs.windows-installer-qualification.result == 'success' || (needs.app-packages.result == 'skipped' && needs.windows-installer-qualification.result == 'skipped'))
     permissions:
       contents: write
     runs-on: ubuntu-latest
