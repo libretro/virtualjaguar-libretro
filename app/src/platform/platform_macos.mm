@@ -27,6 +27,26 @@
 #include "platform/platform.h"
 #include "platform/platform_os.h"
 
+#ifdef VJ_MAC_DIRECT_SPARKLE
+#include "platform/sparkle_macos.h"
+
+@interface VJUpdateMenuTarget : NSObject
+- (void)check:(id)sender;
+- (void)toggleBackgroundChecks:(NSMenuItem*)sender;
+@end
+
+@implementation VJUpdateMenuTarget
+- (void)check:(id)sender {
+    dispatch_async(dispatch_get_main_queue(), ^{ vj::sparkle::check(); });
+}
+- (void)toggleBackgroundChecks:(NSMenuItem*)sender {
+    const bool enabled = !vj::sparkle::backgroundChecks();
+    vj::sparkle::setBackgroundChecks(enabled);
+    sender.state = enabled ? NSControlStateValueOn : NSControlStateValueOff;
+}
+@end
+#endif
+
 using vj::platform::Cmd;
 using vj::platform::MenuBar;
 using vj::platform::MenuItem;
@@ -50,6 +70,9 @@ namespace os {
 namespace {
 
 VJMenuTarget* g_target = nil;
+#ifdef VJ_MAC_DIRECT_SPARKLE
+VJUpdateMenuTarget* g_updateTarget = nil;
+#endif
 NSMenu* g_dockMenu = nil;
 bool g_active = false;
 bool g_dockHooked = false;
@@ -124,6 +147,19 @@ NSMenuItem* stdItem(NSString* title, SEL action, NSString* key, NSEventModifierF
 NSMenu* makeAppMenu(const std::vector<MenuItem>& items) {
     NSMenu* app = [[NSMenu alloc] initWithTitle:@""];
     app.autoenablesItems = NO;
+#ifdef VJ_MAC_DIRECT_SPARKLE
+    if (g_updateTarget) {
+        NSMenuItem* check = stdItem(@"Check for Updates…", @selector(check:), @"");
+        check.target = g_updateTarget;
+        [app addItem:check];
+        NSMenuItem* background = stdItem(@"Check for Updates Automatically",
+                                         @selector(toggleBackgroundChecks:), @"");
+        background.target = g_updateTarget;
+        background.state = sparkle::backgroundChecks() ? NSControlStateValueOn : NSControlStateValueOff;
+        [app addItem:background];
+        [app addItem:[NSMenuItem separatorItem]];
+    }
+#endif
     for (const MenuItem& m : items) {
         if (m.cmd == Cmd::Quit) {
             // Services / Hide / Hide Others / Show All sit between Settings and Quit, as in every Mac app.
@@ -190,6 +226,9 @@ bool installMenus() {
     if (!drv || std::strcmp(drv, "cocoa") != 0 || NSApp == nil) return false;
     if (!g_target) g_target = [[VJMenuTarget alloc] init];
     hookDockMenu();
+#ifdef VJ_MAC_DIRECT_SPARKLE
+    if (sparkle::start()) g_updateTarget = [[VJUpdateMenuTarget alloc] init];
+#endif
     g_active = true;
     return true;
 }

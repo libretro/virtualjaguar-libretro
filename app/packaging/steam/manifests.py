@@ -42,6 +42,10 @@ def validate_payload(platform, root):
         for name in launchers:
             if not os.access(root / name, os.X_OK):
                 raise ValueError(f"{platform}: launcher is not executable: {name}")
+    if platform == "macos":
+        sparkle = root / "Virtual Jaguar.app/Contents/Frameworks/Sparkle.framework"
+        if sparkle.exists() or sparkle.is_symlink():
+            raise ValueError("macos: Steam requires the managed app without Sparkle")
     for path in root.rglob("*"):
         relative = path.relative_to(root)
         # Data, credentials and portable mode must never become depot content.

@@ -68,6 +68,13 @@ class ManifestTests(unittest.TestCase):
                 self.assertFalse(self.out.exists())
                 marker.unlink()
 
+    def test_direct_macos_updater_rejected(self):
+        sparkle = self.roots["macos"] / "Virtual Jaguar.app/Contents/Frameworks/Sparkle.framework"
+        sparkle.mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError, "managed app"):
+            self.generate()
+        self.assertFalse(self.out.exists())
+
     def test_missing_notice_rejected(self):
         (self.roots["windows"] / "THIRD-PARTY-NOTICES.txt").unlink()
         with self.assertRaisesRegex(ValueError, "missing"):

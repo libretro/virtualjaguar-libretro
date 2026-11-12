@@ -57,8 +57,20 @@ case "${1:-}" in
     fi
     id="$(identity)"; [ -n "$id" ] || { echo "no identity; run import-cert" >&2; exit 1; }
     ts=--timestamp; [ "$id" = - ] && ts=--timestamp=none
-    # Inside-out: every nested Mach-O first, then the bundle with the entitlements.
+    # Sign Sparkle's nested code explicitly before sealing its versioned framework.
+    sparkle="$app/Contents/Frameworks/Sparkle.framework"
+    if [ -d "$sparkle" ]; then
+      version="$sparkle/Versions/Current"
+      codesign --force --options runtime "$ts" --sign "$id" "$version/Autoupdate"
+      codesign --force --options runtime "$ts" --sign "$id" "$version/Updater.app"
+      for service in "$version"/XPCServices/*.xpc; do
+        codesign --force --options runtime "$ts" --sign "$id" "$service"
+      done
+      codesign --force --options runtime "$ts" --sign "$id" "$sparkle"
+    fi
+    # Inside-out: remaining nested Mach-O first, then the bundle with the entitlements.
     while IFS= read -r -d '' f; do
+      case "$f" in "$sparkle"/*) continue ;; esac
       if file -b "$f" | grep -q 'Mach-O' && [ "$f" != "$app/Contents/MacOS/virtualjaguar" ]; then
         codesign --force --options runtime "$ts" --sign "$id" "$f"
       fi
