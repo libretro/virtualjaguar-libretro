@@ -237,9 +237,10 @@ in place with `--clobber`, as before.
   signing state in `docs/RELEASE_NOTES_vX.Y.Z.md`, the body carries the generated table. To prove a
   change to this pipeline before merging, dispatch `release.yml` on the branch with **Dry run**
   ticked: it builds, stages, signs, attests and runs the gate, and publishes nothing.
-- **After the release**, a maintainer fills the Homebrew, winget, Scoop and Flatpak templates from
-  the published `SHA256SUMS.txt` (`app/packaging/manifests/render.sh`) and submits them. CI never
-  submits to external repositories.
+- **After the release**, update the stable macOS cask in the [project Homebrew tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar)
+  with the release version and macOS ZIP checksum. A maintainer can also render the winget, Scoop
+  and Flatpak templates from the published `SHA256SUMS.txt` (`app/packaging/manifests/render.sh`).
+  CI never submits to external repositories.
 
 ### 4. Post-tag: update libretro-super
 

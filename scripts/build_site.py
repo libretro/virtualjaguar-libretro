@@ -1245,15 +1245,14 @@ def _installer_widget(what=None):
   </div>
   <div class="inst-panel" id="inst-p-pm" role="tabpanel" aria-labelledby="inst-t-pm">
     <p class="inst-label"><strong>Package managers</strong></p>
-    <p>Homebrew, winget and Scoop manifests are rendered by CI as templates in
-    <a href="%(repo)s/blob/develop/app/packaging/manifests">app/packaging/manifests</a>;
-    none is submitted yet. The Linux app also comes as a Flatpak bundle (table below).</p>
+    <p>On macOS, <a href="download.html#homebrew">install the stable app with Homebrew</a>.
+    The Linux app also comes as a Flatpak bundle.</p>
   </div>
   <p class="footnote">%(what_note)s; it verifies each file against
   <code>SHA256SUMS.txt</code> and updates what you already have when run again. Selecting a release above
   adds its <code>--channel</code>. Other options and install locations are on the
   <a href="./#get">home page</a>.</p>
-</details>""" % {"sh": _esc(sh), "ps": _esc(ps), "repo": REPO_URL,
+</details>""" % {"sh": _esc(sh), "ps": _esc(ps),
                  "sh_text": _esc(sh_text), "ps_text": _esc(ps_text),
                  "what_attr": what_attr,
                  "what_note": ("<code>--what %s</code> is already filled in"

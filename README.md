@@ -69,6 +69,20 @@ A standalone front end for the same core, in `app/`: SDL3 for window, audio and 
 
 The macOS app, core and command-line tools are signed with a Developer ID and notarized by Apple. Official Windows builds use Azure Artifact Signing when configured. Check the signing table on the release or nightly you downloaded for its Authenticode verification result. Builds you make yourself are unsigned until you sign them. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
 
+### Install on macOS with Homebrew
+
+The [project tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar)
+installs the stable standalone app on Apple Silicon and Intel Macs.
+
+```sh
+brew tap Provenance-Emu/virtualjaguar
+brew trust --cask Provenance-Emu/virtualjaguar/virtualjaguar
+brew install --cask Provenance-Emu/virtualjaguar/virtualjaguar
+```
+
+For nightly builds, use the [nightly macOS ZIP](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly)
+or the [installer script](https://jaguar.provenance-emu.com/#get) with `--what app --channel nightly`.
+
 ## Features
 
 - **Jaguar CD:** boots through a high-level CD BIOS (default) or the real CD BIOS on emulated BUTCH hardware; audio CDs and the Virtual Light Machine work. Memory Track saves are emulated. Load-time tuning: [`docs/cd-read-speed.md`](docs/cd-read-speed.md).
