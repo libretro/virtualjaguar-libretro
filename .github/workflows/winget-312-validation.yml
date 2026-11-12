@@ -28,19 +28,24 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-          if ($winget) {
-            $cli = $winget.Source
-          } else {
-            $pkg = Get-AppxPackage Microsoft.DesktopAppInstaller | Sort-Object Version -Descending | Select-Object -First 1
-            if (!$pkg) { throw 'App Installer is unavailable on this runner' }
-            $cli = Join-Path $pkg.InstallLocation winget.exe
+          function Find-WinGet {
+            $package = Get-AppxPackage Microsoft.DesktopAppInstaller |
+              Sort-Object Version -Descending | Select-Object -First 1
+            if ($package) { Join-Path $package.InstallLocation winget.exe }
           }
+          $cli = Find-WinGet
+          if (!$cli -or [version]((& $cli --version).TrimStart('v')) -lt [version]'1.28') {
+            Install-Module Microsoft.WinGet.Client -Repository PSGallery -Force -Scope CurrentUser
+            Repair-WinGetPackageManager -Latest -Force
+            $cli = Find-WinGet
+          }
+          if (!$cli) { throw 'App Installer is unavailable on this runner' }
           & $cli --version
           "VJ_WINGET=$cli" >> $env:GITHUB_ENV
           & $cli validate --manifest .github/winget-312
           if ($LASTEXITCODE -ne 0) { throw "winget validate exited $LASTEXITCODE" }
       - name: Install, boot YARC and uninstall without interaction
+        timeout-minutes: 8
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -56,7 +61,11 @@ jobs:
           $log = Join-Path $env:RUNNER_TEMP 'vj-setup.log'
           & $env:VJ_WINGET settings --enable LocalManifestFiles
           if ($LASTEXITCODE -ne 0) { throw "Enabling local manifests exited $LASTEXITCODE" }
-          & $env:VJ_WINGET install --manifest .github/winget-312 --architecture $env:VJ_ARCH --scope user --silent --disable-interactivity --accept-source-agreements --accept-package-agreements --location $dest --log $log
+          $installArgs = @('install', '--manifest', '.github/winget-312',
+            '--architecture', $env:VJ_ARCH, '--scope', 'user', '--silent',
+            '--disable-interactivity', '--accept-source-agreements', '--accept-package-agreements',
+            '--location', $dest, '--log', $log, '--verbose-logs')
+          & $env:VJ_WINGET @installArgs
           if ($LASTEXITCODE -ne 0) { throw "WinGet install exited $LASTEXITCODE" }
           $exe = Join-Path $dest 'virtualjaguar.exe'
           if (!(Test-Path $exe)) { throw 'Missing installed executable' }
@@ -69,5 +78,7 @@ jobs:
         if: always()
         with:
           name: win-install-log-${{ matrix.arch }}
-          path: ${{ runner.temp }}/vj-setup.log
+          path: |
+            ${{ runner.temp }}/vj-setup.log
+            ~/AppData/Local/Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir/*.log
           if-no-files-found: ignore

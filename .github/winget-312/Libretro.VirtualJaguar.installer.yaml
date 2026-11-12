@@ -9,6 +9,9 @@ InstallModes:
   - silent
   - silentWithProgress
 UpgradeBehavior: install
+InstallerSwitches:
+  Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CURRENTUSER
+  SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CURRENTUSER
 ReleaseDate: "2026-11-09"
 Installers:
   - Architecture: x64
