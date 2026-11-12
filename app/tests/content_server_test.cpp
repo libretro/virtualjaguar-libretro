@@ -76,14 +76,14 @@ static std::string manifest(const std::string& path, const std::string& content,
 }
 
 static void rommGatewayContract() {
-    // The ECS gateway currently advertises display names and numeric IDs without RomM slugs.
-    // A direct RomM connection must stop before issuing a potentially unfiltered ROM query.
+    // The gateway now advertises RomM slugs, but serves ECS archives instead of the
+    // direct RomM per-file download contract. Detect its platform marker before browsing.
     const ecs::Client gateway("http://localhost:8080", "gateway-fixture-token",
         [](const std::string& url, http::Response& response, uint64_t,
            const std::atomic<bool>*, const http::Options& options) {
             CHECK(url == "http://localhost:8080/api/platforms");
             CHECK(options.bearerToken == "gateway-fixture-token" && !options.followRedirects);
-            const std::string body = R"([{"id":7,"name":"Super Nintendo","rom_count":100000}])";
+            const std::string body = R"([{"id":7,"name":"Atari Jaguar","slug":"jaguar","rom_count":4,"ecs_system_id":"com.provenance.jaguar"}])";
             response.status = 200;
             response.body.assign(body.begin(), body.end());
             return true;
@@ -108,9 +108,42 @@ static void rommArtworkPaths() {
     CHECK(requests == 0);
 }
 
+static void persistedServerIdentity(const fs::path& root) {
+    Config config;
+    config.load((root / "legacy-servers.ini").u8string());
+    config.set("ecs.server.0", "http://localhost:8473");
+    secret::useMemoryBackend();
+    constexpr const char* service = "io.github.libretro.VirtualJaguar.ContentServer";
+    CHECK(secret::active().set(service, "http://localhost:8473", "old-ecs-token") == secret::Status::Ok);
+
+    ContentServerBrowser manager;
+    manager.init(config, root.u8string() + "/", true);
+    CHECK(manager.tabs.size() == 1);
+    if (manager.tabs.size() != 1) return;
+    CHECK(std::string(manager.tabs.front()->token) == "old-ecs-token");
+
+    std::snprintf(manager.name, sizeof manager.name, "%s", "Direct RomM");
+    std::snprintf(manager.address, sizeof manager.address, "%s", "HTTP://LOCALHOST:8473/");
+    CHECK(!manager.add()); // Equivalent ECS origins resolve to the same tab.
+    manager.protocol = 1;
+    CHECK(manager.add()); // The other protocol has a separate credential slot.
+    if (manager.tabs.size() != 2) return;
+    std::snprintf(manager.tabs.back()->token, sizeof manager.tabs.back()->token, "%s", "direct-romm-token");
+    manager.saveToken(*manager.tabs.back());
+
+    CHECK(manager.forget(1));
+    std::string token;
+    CHECK(secret::active().get(service, "romm:http://localhost:8473", token) == secret::Status::NotFound);
+    CHECK(secret::active().get(service, "http://localhost:8473", token) == secret::Status::Ok);
+    CHECK(token == "old-ecs-token");
+    CHECK(config.withPrefix("ecs.server.").empty());
+    CHECK(bytes(root / "legacy-servers.ini").find("-token") == std::string::npos);
+}
+
 static void tests(const fs::path& root) {
     rommGatewayContract();
     rommArtworkPaths();
+    persistedServerIdentity(root);
     CHECK(ecs::normalizeOrigin("HTTP://Example.COM:080/") == "http://example.com");
     CHECK(ecs::normalizeOrigin("https://[::1]:8473/") == "https://[::1]:8473");
     for (const char* url : {"file:///tmp", "http://user:secret@host", "http://host/ui", "http://host?token=x", "http://host:99999", "http://host\\evil"})

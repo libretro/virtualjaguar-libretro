@@ -306,6 +306,8 @@ std::vector<Library> Client::libraries(const std::atomic<bool>* cancel) const {
         std::string carts, discs;
         bool hasSlugs = false;
         for (const Json& item : result.items()) {
+            require(!item.has("ecs_system_id"),
+                    "This is an ECS RomM gateway. Add the native ECS origin as an Emulation Server.");
             std::string slug = lower(item["slug"].asString());
             hasSlugs |= !slug.empty();
             slug.erase(std::remove(slug.begin(), slug.end(), '-'), slug.end());
