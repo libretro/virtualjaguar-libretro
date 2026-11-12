@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,14 @@ struct Game {
     std::string id, name, entityType, systemId;
     neuro::Json payload;
     std::string artwork = {};
+};
+
+struct Addon {
+    std::string id, kind, filename, format, hash, endpoint;
+    uint64_t size = 0;
+    std::optional<uint64_t> baseSize;
+    std::string baseHash, baseCrc, rommSha1;
+    bool canBoot(const Game& game) const;
 };
 
 struct Page {
@@ -47,10 +56,15 @@ public:
     std::string download(const Game& game, const std::string& cacheRoot, const std::atomic<bool>* cancel,
                          const std::function<void(uint64_t, uint64_t)>& progress = {}) const;
 
+    std::vector<Addon> addons(const Game& game, const std::atomic<bool>* cancel = nullptr) const;
+    std::string downloadAddon(const Addon& addon, const std::string& cacheRoot,
+                              const std::atomic<bool>* cancel,
+                              const std::function<void(uint64_t, uint64_t)>& progress = {}) const;
     std::vector<unsigned char> artwork(const Game& game, const std::atomic<bool>* cancel) const;
 
 private:
-    neuro::Json json(const std::string& path, const std::atomic<bool>* cancel) const;
+    neuro::Json json(const std::string& path, const std::atomic<bool>* cancel,
+                     bool optional = false) const;
     std::string origin_, token_;
     Transport transport_;
     Protocol protocol_;

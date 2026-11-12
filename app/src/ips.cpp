@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 
@@ -150,7 +151,8 @@ bool cartridgePath(const std::string& path) {
     return ext == "j64" || ext == "jag" || ext == "rom" || ext == "bin";
 }
 
-bool prepare(const std::string& path, const std::string& patchPath, Cartridge& cart, std::string& error) {
+bool prepare(const std::string& path, const std::string& patchPath, Cartridge& cart, std::string& error,
+             const BaseRequirements& expected) {
     Cartridge prepared;
     prepared.path = path;
     if (!cartridgePath(path) || !readBounded(path, kMaxRom + 512, prepared.original))
@@ -159,6 +161,17 @@ bool prepare(const std::string& path, const std::string& patchPath, Cartridge& c
     Bytes payload(prepared.original.begin() + skip, prepared.original.end());
     if (!JaguarIsHeaderlessCartridge(payload.data(), payload.size()))
         return fail(error, "The base is not a supported Jaguar cartridge");
+    prepared.baseHash = sha256Hex(prepared.original.data(), prepared.original.size());
+    if ((expected.size && *expected.size != prepared.original.size()) ||
+            !matchesHash(expected.sha256, prepared.baseHash))
+        return fail(error, "The downloaded cartridge does not match the expected patch base");
+    if (!expected.crc32.empty()) {
+        char crc[9];
+        std::snprintf(crc, sizeof crc, "%08x",
+                      static_cast<unsigned>(SDL_crc32(0, prepared.original.data(), prepared.original.size())));
+        if (expected.crc32 != crc)
+            return fail(error, "The downloaded cartridge does not match the expected base CRC32");
+    }
     Bytes patch;
     if (!readBounded(patchPath, kMaxPatch, patch))
         return fail(error, "Could not read the IPS file (32 MiB maximum)");
@@ -166,7 +179,6 @@ bool prepare(const std::string& path, const std::string& patchPath, Cartridge& c
     if (!JaguarIsHeaderlessCartridge(prepared.output.data(), prepared.output.size()))
         return fail(error, "The patched bytes do not form a supported Jaguar cartridge");
     prepared.strippedHeader = skip != 0;
-    prepared.baseHash = sha256Hex(prepared.original.data(), prepared.original.size());
     prepared.outputHash = sha256Hex(prepared.output.data(), prepared.output.size());
     cart = std::move(prepared);
     return true;

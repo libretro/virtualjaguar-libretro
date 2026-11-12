@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,7 +20,13 @@ struct Cartridge {
     bool strippedHeader = false;
 };
 
-bool prepare(const std::string& path, const std::string& patchPath, Cartridge& cart, std::string& error);
+struct BaseRequirements {
+    std::optional<uint64_t> size;
+    std::string sha256, crc32;
+};
+
+bool prepare(const std::string& path, const std::string& patchPath, Cartridge& cart, std::string& error,
+             const BaseRequirements& expected = {});
 bool matchesHash(const std::string& expected, const std::string& actual);
 std::string identity(const std::string& hash);
 bool cartridgePath(const std::string& path);

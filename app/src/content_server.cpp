@@ -56,10 +56,10 @@ void checkCancel(const std::atomic<bool>* cancel) {
 }
 
 void checkResponse(bool received, const http::Response& response) {
-    if (!received) throw std::runtime_error(response.error.empty() ? "Could not reach the server." : response.error);
     if (response.status == 401) throw std::runtime_error("Access token required or expired. Check the server token.");
     if (response.status == 403) throw std::runtime_error("This token cannot read this library or game.");
     if (response.status == 404) throw std::runtime_error("This library or game is no longer available.");
+    if (!received) throw std::runtime_error(response.error.empty() ? "Could not reach the server." : response.error);
     if (response.status != 200)
         throw std::runtime_error("The server returned HTTP " + std::to_string(response.status) + ". Refresh and try again.");
 }
@@ -282,13 +282,15 @@ Client::Client(std::string origin, std::string token, Transport transport, Proto
     : origin_(normalizeOrigin(origin)), token_(std::move(token)), transport_(std::move(transport)),
       protocol_(protocol) {}
 
-Json Client::json(const std::string& path, const std::atomic<bool>* cancel) const {
+Json Client::json(const std::string& path, const std::atomic<bool>* cancel, bool optional) const {
     checkCancel(cancel);
     http::Options options;
     options.bearerToken = token_;
     options.followRedirects = false;
     http::Response response;
-    checkResponse(transport_(origin_ + path, response, 8 * 1024 * 1024, cancel, options), response);
+    const bool received = transport_(origin_ + path, response, 8 * 1024 * 1024, cancel, options);
+    if (optional && received && response.status == 404) return {};
+    checkResponse(received, response);
     Json result;
     std::string error;
     require(Json::parse(std::string(response.body.begin(), response.body.end()), result, error) &&
@@ -304,10 +306,9 @@ std::vector<Library> Client::libraries(const std::atomic<bool>* cancel) const {
         Library library{"", "RomM"};
         // Each side of the separator holds the platform IDs for one Jaguar system.
         std::string carts, discs;
-        bool hasSlugs = false;
+        bool hasSlugs = false, gateway = false;
         for (const Json& item : result.items()) {
-            require(!item.has("ecs_system_id"),
-                    "This is an ECS RomM gateway. Add the native ECS origin as an Emulation Server.");
+            gateway |= item.has("ecs_system_id");
             std::string slug = lower(item["slug"].asString());
             hasSlugs |= !slug.empty();
             slug.erase(std::remove(slug.begin(), slug.end(), '-'), slug.end());
@@ -318,7 +319,7 @@ std::vector<Library> Client::libraries(const std::atomic<bool>* cancel) const {
         }
         require(result.items().empty() || hasSlugs,
                 "This endpoint does not expose RomM platform slugs. For an ECS gateway, use the native ECS origin.");
-        library.id = carts + "|" + discs;
+        library.id = (gateway ? "gateway:" : "") + carts + "|" + discs;
         return {std::move(library)};
     }
     const Json capabilities = json("/api/v1/capabilities", cancel);
@@ -335,9 +336,11 @@ Page Client::games(const std::string& library, const std::string& search, const 
                    const std::string& cursor, const std::atomic<bool>* cancel) const {
     require(system == "com.provenance.jaguar" || system == "com.provenance.jaguarcd", "Choose a Jaguar system.");
     if (protocol_ == Protocol::RomM) {
-        const auto split = library.find('|');
+        const bool gateway = library.rfind("gateway:", 0) == 0;
+        const size_t start = gateway ? 8 : 0;
+        const auto split = library.find('|', start);
         require(split != std::string::npos, "Refresh the RomM platforms.");
-        const std::string ids = system == "com.provenance.jaguar" ? library.substr(0, split) : library.substr(split + 1);
+        const std::string ids = system == "com.provenance.jaguar" ? library.substr(start, split - start) : library.substr(split + 1);
         if (ids.empty()) return {};
         require(ids.back() == ',' && ids.find_first_not_of("0123456789,") == std::string::npos,
                 "Invalid RomM platform selection.");
@@ -366,7 +369,7 @@ Page Client::games(const std::string& library, const std::string& search, const 
             if (item["has_file_on_disk"].isBool() && !item["has_file_on_disk"].asBool()) continue;
             const std::string& name = item["name"].asString();
             page.games.push_back({rommId(item["id"]), name.empty() ? text(item["fs_name"]) : name,
-                                  "romm", system, Json(), item["path_cover_small"].asString()});
+                                  gateway ? "gateway" : "romm", system, Json(), item["path_cover_small"].asString()});
         }
         return page;
     }
@@ -394,6 +397,80 @@ Page Client::games(const std::string& library, const std::string& search, const 
     return page;
 }
 
+bool Addon::canBoot(const Game& game) const {
+    return kind == "patch" && format == "ips" && game.systemId == "com.provenance.jaguar";
+}
+
+std::vector<Addon> Client::addons(const Game& game, const std::atomic<bool>* cancel) const {
+    std::vector<Addon> addons;
+    std::set<std::string> ids;
+    const std::string id = lib::urlEncode(game.id);
+    if (game.entityType == "romm") {
+        const std::string path = "/api/roms/" + id;
+        const Json details = json(path + "/simple", cancel);
+        require(rommId(details["id"]) == game.id && details["files"].isArray() &&
+                details["files"].items().size() <= kFileLimit, "Invalid RomM file list.");
+        for (const auto& file : details["files"].items()) {
+            const std::string category = lower(file["category"].asString());
+            const std::string name = text(file["file_name"]);
+            const std::string format = pathExt(name);
+            Addon addon;
+            if (category == "mod" || category == "hack") addon.kind = "mod";
+            else if (category == "texture_pack") addon.kind = category;
+            else if (category == "patch" || format == "ips" || format == "bps" || format == "ups")
+                addon.kind = "patch";
+            else continue;
+            addon.id = rommId(file["id"]);
+            addon.filename = name;
+            addon.format = format;
+            addon.size = sizeOf(file["file_size_bytes"]);
+            addon.hash = lower(file["sha256"].asString());
+            const std::string sha1 = lower(file["sha1_hash"].asString());
+            if (sha1.size() == 40 && sha1.find_first_not_of("0123456789abcdef") == std::string::npos)
+                addon.rommSha1 = sha1;
+            require(addon.hash.empty() || hexHash(addon.hash), "Invalid add-on SHA-256.");
+            addon.endpoint = path + "/content/" + lib::urlEncode(name) + "?file_ids=" + addon.id + "&purpose=download";
+            if (ids.insert(addon.id).second) addons.push_back(std::move(addon));
+        }
+    } else {
+        std::string path;
+        if (game.entityType == "source") path = "/api/v1/sources/" + id + "/companions";
+        else if (game.entityType == "item") path = "/api/v1/items/" + id + "/companions";
+        else if (game.entityType == "gateway") path = "/api/roms/" + id + "/ecs-companions";
+        else return addons;
+        const Json list = json(path, cancel, true);
+        if (list.isNull()) return addons;
+        require(list["items"].isArray() && list["items"].items().size() <= kFileLimit, "Invalid add-on list.");
+        for (const auto& item : list["items"].items()) {
+            Addon addon;
+            addon.id = text(item["id"]);
+            addon.kind = text(item["kind"]);
+            addon.filename = text(item["filename"]);
+            addon.format = lower(item["format"].asString());
+            if (addon.format.empty()) addon.format = pathExt(addon.filename);
+            addon.size = sizeOf(item["sizeBytes"]);
+            addon.hash = text(item["sha256"]);
+            require(hexHash(addon.hash), "Invalid add-on SHA-256.");
+            addon.endpoint = path + "/" + lib::urlEncode(addon.id) + "/content";
+            require(item["contentPath"].asString() == addon.endpoint, "Invalid add-on content path.");
+            const Json& base = item["base"];
+            if (base.has("sizeBytes")) addon.baseSize = sizeOf(base["sizeBytes"]);
+            if (base.has("sha256")) {
+                addon.baseHash = lower(text(base["sha256"]));
+                require(hexHash(addon.baseHash), "Invalid base SHA-256.");
+            }
+            if (base.has("crc32")) {
+                addon.baseCrc = lower(text(base["crc32"]));
+                require(addon.baseCrc.size() == 8 &&
+                        addon.baseCrc.find_first_not_of("0123456789abcdef") == std::string::npos,
+                        "Invalid base CRC32.");
+            }
+            if (ids.insert(addon.id).second) addons.push_back(std::move(addon));
+        }
+    }
+    return addons;
+}
+
 std::vector<unsigned char> Client::artwork(const Game& game, const std::atomic<bool>* cancel) const {
     std::string path = game.artwork;
     if (path.size() > 4096) return {};
@@ -419,11 +496,91 @@ std::vector<unsigned char> Client::artwork(const Game& game, const std::atomic<b
     return std::move(response.body);
 }
 
+namespace {
+std::string downloadFiles(const std::string& origin, const std::string& token, const Transport& transport,
+                          std::vector<File>& files, std::string selected, uint64_t total,
+                          const std::string& cacheRoot, const std::string& identity, bool gameFiles,
+                          const std::atomic<bool>* cancel,
+                          const std::function<void(uint64_t, uint64_t)>& progress) {
+    checkCancel(cancel);
+    const fs::path base = fs::u8path(cacheRoot) / sha256Hex(identity.data(), identity.size());
+    fs::create_directories(base);
+    Staging staging;
+    static std::atomic<uint64_t> sequence{0};
+    for (unsigned attempt = 0; attempt < 100; ++attempt) {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path candidate = base / (".download-" + std::to_string(stamp) + "-" + std::to_string(++sequence));
+        if (fs::create_directory(candidate)) { staging.path = candidate; break; }
+    }
+    require(!staging.path.empty(), "Could not create a download staging folder.");
+    uint64_t completed = 0;
+    std::string fingerprint;
+    for (File& file : files) {
+        checkCancel(cancel);
+        const fs::path target = staging.path / fs::u8path(file.path);
+        fs::create_directories(target.parent_path());
+        require(!fs::exists(target), "The game contains duplicate file paths on this filesystem.");
+        std::ofstream output(target, std::ios::binary);
+        require(bool(output), "Could not create a downloaded file.");
+        Sha256 hash;
+        http::Options options;
+        options.bearerToken = token;
+        options.followRedirects = false;
+        options.write = [&](const void* data, size_t size) {
+            if (cancel && cancel->load()) return false;
+            output.write(static_cast<const char*>(data), std::streamsize(size));
+            if (!output) return false;
+            hash.update(data, size);
+            completed += size;
+            if (progress) progress(completed, total);
+            return true;
+        };
+        http::Response response;
+        checkResponse(transport(origin + file.endpoint, response, file.size, cancel, options), response);
+        output.close();
+        require(bool(output) && response.bytesReceived == file.size, "The download was incomplete. Refresh and try again.");
+        const std::string digest = hash.hexDigest();
+        require(file.hash.empty() || file.hash == digest, "The downloaded file failed SHA-256 verification.");
+        file.hash = digest;
+    }
+    if (gameFiles) {
+        checkDescriptors(files, staging.path);
+        selected = namespaceGameFiles(files, selected, staging.path, identity);
+        checkDescriptors(files, staging.path);
+    }
+    for (const File& file : files) fingerprint += file.path + "\n" + file.hash + "\n";
+    checkCancel(cancel);
+    fs::path final = base / sha256Hex(fingerprint.data(), fingerprint.size());
+    if (fs::exists(final)) {
+        if (cachedFilesMatch(final, base, files)) return (final / fs::u8path(selected)).u8string();
+        final += "-" + staging.path.filename().string().substr(1);
+    }
+    std::error_code error;
+    fs::rename(staging.path, final, error);
+    // Another instance can publish the same immutable version while this transfer finishes.
+    if (error) {
+        if (fs::exists(final) && cachedFilesMatch(final, base, files)) return (final / fs::u8path(selected)).u8string();
+        throw std::runtime_error("Could not publish the downloaded game. Try again.");
+    }
+    staging.path.clear();
+    return (final / fs::u8path(selected)).u8string();
+}
+} // namespace
+
 std::string Client::download(const Game& game, const std::string& cacheRoot, const std::atomic<bool>* cancel,
                              const std::function<void(uint64_t, uint64_t)>& progress) const {
     std::vector<File> files;
     std::string selected;
-    if (protocol_ == Protocol::RomM) {
+    if (game.entityType == "gateway") {
+        const std::string path = "/api/roms/" + lib::urlEncode(game.id);
+        const Json details = json(path, cancel);
+        require(rommId(details["id"]) == game.id, "Invalid ECS gateway game.");
+        const std::string name = text(details["fs_name"]);
+        require(details["fs_size_bytes"].isNumber(),
+                "For grouped gateway downloads, add the native Emulation Server.");
+        files.push_back({game.id, name, path + "/content/" + lib::urlEncode(name),
+                         "", sizeOf(details["fs_size_bytes"])});
+    } else if (protocol_ == Protocol::RomM) {
         require(game.entityType == "romm" && !game.id.empty() &&
                     game.id.find_first_not_of("0123456789") == std::string::npos, "Invalid RomM game.");
         const std::string path = "/api/roms/" + game.id;
@@ -435,6 +592,8 @@ std::string Client::download(const Game& game, const std::string& cacheRoot, con
             const std::string category = file["category"].asString();
             if (!category.empty() && category != "game") continue;
             const std::string name = text(file["file_name"]);
+            const std::string format = pathExt(name);
+            if (format == "ips" || format == "bps" || format == "ups") continue;
             const std::string full = text(file["full_path"]);
             require(safeRelativePath(name) && name.find('/') == std::string::npos,
                     "The game contains unsafe file names.");
@@ -487,67 +646,20 @@ std::string Client::download(const Game& game, const std::string& cacheRoot, con
     }
     if (selected.empty()) selected = launchFile(files);
     require(lib::isCartExt(pathExt(selected)) || lib::isDiscExt(pathExt(selected)), "Unsupported game image.");
-    checkCancel(cancel);
     const std::string identity = origin_ + "\n" + game.entityType + "\n" + game.id;
-    const fs::path base = fs::u8path(cacheRoot) / sha256Hex(identity.data(), identity.size());
-    fs::create_directories(base);
-    Staging staging;
-    static std::atomic<uint64_t> sequence{0};
-    for (unsigned attempt = 0; attempt < 100; ++attempt) {
-        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        const fs::path candidate = base / (".download-" + std::to_string(stamp) + "-" + std::to_string(++sequence));
-        if (fs::create_directory(candidate)) { staging.path = candidate; break; }
-    }
-    require(!staging.path.empty(), "Could not create a download staging folder.");
-    uint64_t completed = 0;
-    std::string fingerprint;
-    for (File& file : files) {
-        checkCancel(cancel);
-        const fs::path target = staging.path / fs::u8path(file.path);
-        fs::create_directories(target.parent_path());
-        require(!fs::exists(target), "The game contains duplicate file paths on this filesystem.");
-        std::ofstream output(target, std::ios::binary);
-        require(bool(output), "Could not create a downloaded file.");
-        Sha256 hash;
-        http::Options options;
-        options.bearerToken = token_;
-        options.followRedirects = false;
-        options.write = [&](const void* data, size_t size) {
-            if (cancel && cancel->load()) return false;
-            output.write(static_cast<const char*>(data), std::streamsize(size));
-            if (!output) return false;
-            hash.update(data, size);
-            completed += size;
-            if (progress) progress(completed, total);
-            return true;
-        };
-        http::Response response;
-        checkResponse(transport_(origin_ + file.endpoint, response, file.size, cancel, options), response);
-        output.close();
-        require(bool(output) && response.bytesReceived == file.size, "The download was incomplete. Refresh and try again.");
-        const std::string digest = hash.hexDigest();
-        require(file.hash.empty() || file.hash == digest, "The downloaded file failed SHA-256 verification.");
-        file.hash = digest;
-    }
-    checkDescriptors(files, staging.path);
-    selected = namespaceGameFiles(files, selected, staging.path, identity);
-    checkDescriptors(files, staging.path);
-    for (const File& file : files) fingerprint += file.path + "\n" + file.hash + "\n";
-    checkCancel(cancel);
-    fs::path final = base / sha256Hex(fingerprint.data(), fingerprint.size());
-    if (fs::exists(final)) {
-        if (cachedFilesMatch(final, base, files)) return (final / fs::u8path(selected)).u8string();
-        final += "-" + staging.path.filename().string().substr(1);
-    }
-    std::error_code error;
-    fs::rename(staging.path, final, error);
-    // Another instance can publish the same immutable version while this transfer finishes.
-    if (error) {
-        if (fs::exists(final) && cachedFilesMatch(final, base, files)) return (final / fs::u8path(selected)).u8string();
-        throw std::runtime_error("Could not publish the downloaded game. Try again.");
-    }
-    staging.path.clear();
-    return (final / fs::u8path(selected)).u8string();
+    return downloadFiles(origin_, token_, transport_, files, selected, total, cacheRoot,
+                         identity, true, cancel, progress);
+}
+
+std::string Client::downloadAddon(const Addon& addon, const std::string& cacheRoot,
+                                  const std::atomic<bool>* cancel,
+                                  const std::function<void(uint64_t, uint64_t)>& progress) const {
+    require(safeRelativePath(addon.filename) && addon.filename.find('/') == std::string::npos &&
+            addon.filename.size() <= 255, "The add-on has an unsafe filename.");
+    const std::string identity = origin_ + "\naddon\n" + addon.endpoint;
+    std::vector<File> files{{addon.id, addon.filename, addon.endpoint, addon.hash, addon.size, false}};
+    return downloadFiles(origin_, token_, transport_, files, addon.filename, addon.size, cacheRoot,
+                         identity, false, cancel, progress);
 }
 
 } // namespace vj::ecs

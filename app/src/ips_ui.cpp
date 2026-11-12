@@ -30,6 +30,18 @@ void SDLCALL ipsPicked(void* context, const char* const* paths, int) {
 
 } // namespace
 
+bool App::bootServerPatch(const ContentServerTab::PatchLaunch& launch, std::string& error) {
+    auto cart = std::make_shared<ips::Cartridge>();
+    const ips::BaseRequirements expected{launch.addon.baseSize, launch.addon.baseHash, launch.addon.baseCrc};
+    if (!ips::prepare(launch.base, launch.patch, *cart, error, expected)) return false;
+    if (!openContentImpl(cart->path, cart)) {
+        error = "Could not boot the patched cartridge";
+        return false;
+    }
+    ips::Bytes{}.swap(cart->original);
+    return true;
+}
+
 void App::openIpsPatch(const std::string& path, const std::string& base) {
     if (!window_ || !imguiUp_) {
         toast("Open IPS patches from the standalone window", 5.0, 3);

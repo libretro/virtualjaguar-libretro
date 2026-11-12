@@ -795,13 +795,13 @@ outside a trusted local network.
 
 - **Emulation Server** uses the native ECS v1 API. Use a device or guest token
   with read access, or leave it empty if the server admits your LAN connection.
-  Use the native ECS origin for libraries also published by an ECS RomM gateway.
 - **RomM** uses the direct RomM 5.4.0 API. Use a RomM client API token with
-  `platforms.read` and `roms.read` permissions. Other RomM versions and the ECS
-  RomM gateway are outside this compatibility contract. The gateway exposes
-  a different platform and download schema. See the
+  `platforms.read` and `roms.read` permissions. See the
   [RomM 5.4.0 API source](https://github.com/rommapp/romm/tree/5.4.0/backend/endpoints)
   and [RomM download authentication](https://docs.romm.app/5.4.0/using/downloads/).
+  To browse the ECS RomM gateway, choose **RomM** and enter an ECS read token.
+  For grouped gateway downloads such as multi-file CDs, connect to the native
+  **Emulation Server** origin.
 
 Pick a library on ECS, select **Jaguar cartridges** or **Jaguar CD**, and search
 by title. **Load more** continues the current tab's result list. The app restores
@@ -824,6 +824,15 @@ with forward slashes. The app opens the staged image through its regular
 loader. **Open recent** can launch that local copy later. Stable launch
 filenames distinguish games on different server origins, even with overlapping
 server-side IDs.
+
+Select a game to see its **Add-ons**. **Download** saves the selected file
+under `<data>/content-server/` and shows its local path. **Download and boot
+patched** downloads a Jaguar cartridge and its selected IPS, checks the base
+against any supplied size or checksum, then boots the patched bytes in memory.
+The server ROM and the downloaded base are preserved. Other formats are
+marked **Download only**. Current ECS servers expose saved patches for scanned
+games, including through the gateway. RomM lists add-ons from the game's
+file metadata.
 
 **Remember token in credential store** uses Keychain on macOS, Credential
 Manager on Windows and Secret Service on Linux. If the store is unavailable,
