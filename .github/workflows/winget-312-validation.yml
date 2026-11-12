@@ -37,10 +37,10 @@ jobs:
             $cli = Join-Path $pkg.InstallLocation winget.exe
           }
           & $cli --version
+          "VJ_WINGET=$cli" >> $env:GITHUB_ENV
           & $cli validate --manifest .github/winget-312
           if ($LASTEXITCODE -ne 0) { throw "winget validate exited $LASTEXITCODE" }
       - name: Install, boot YARC and uninstall without interaction
-        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -54,8 +54,10 @@ jobs:
           if (!$expected -or (Get-FileHash $installer).Hash -ne $expected) { throw 'Installer hash mismatch' }
           $dest = Join-Path $env:RUNNER_TEMP 'vj-unattended'
           $log = Join-Path $env:RUNNER_TEMP 'vj-setup.log'
-          $p = Start-Process $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/CURRENTUSER',"/DIR=`"$dest`"","/LOG=`"$log`"" -PassThru -Wait
-          if ($p.ExitCode -ne 0) { throw "Installer exited $($p.ExitCode)" }
+          & $env:VJ_WINGET settings --enable LocalManifestFiles
+          if ($LASTEXITCODE -ne 0) { throw "Enabling local manifests exited $LASTEXITCODE" }
+          & $env:VJ_WINGET install --manifest .github/winget-312 --architecture $env:VJ_ARCH --scope user --silent --disable-interactivity --accept-source-agreements --accept-package-agreements --location $dest --log $log
+          if ($LASTEXITCODE -ne 0) { throw "WinGet install exited $LASTEXITCODE" }
           $exe = Join-Path $dest 'virtualjaguar.exe'
           if (!(Test-Path $exe)) { throw 'Missing installed executable' }
           $p = Start-Process $exe -ArgumentList '--headless','--frames','300','--expect-hash','e33e2c61',"`"$PWD\test\roms\yarc.j64`"" -PassThru -Wait

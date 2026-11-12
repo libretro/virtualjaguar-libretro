@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
 PackageIdentifier: Libretro.VirtualJaguar
 PackageVersion: 3.12.0
 PackageLocale: en-US
@@ -19,4 +19,4 @@ Tags:
   - retro
 ReleaseNotesUrl: https://github.com/libretro/virtualjaguar-libretro/releases/tag/v3.12.0
 ManifestType: defaultLocale
-ManifestVersion: 1.10.0
+ManifestVersion: 1.28.0
