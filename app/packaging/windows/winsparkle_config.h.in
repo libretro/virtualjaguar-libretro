@@ -1,0 +1,7 @@
+#pragma once
+
+#define VJ_WINSPARKLE_PUBLIC_KEY "@VJ_WINSPARKLE_PUBLIC_KEY@"
+#define VJ_WINSPARKLE_FEED "@VJ_WINSPARKLE_FEED_BASE@/@_vj_update_channel@-@_vj_update_arch@.xml"
+#define VJ_WINSPARKLE_REGISTRY "Software\\Virtual Jaguar\\Updates\\@_vj_update_channel@-@_vj_update_arch@"
+#define VJ_WINSPARKLE_DISPLAY_VERSION L"@PROJECT_VERSION@"
+#define VJ_WINSPARKLE_BUILD_VERSION L"@_vj_update_version@"

@@ -18,17 +18,36 @@
   #define OutputName "VirtualJaguar-setup"
 #endif
 
+#ifdef DirectUpdates
+  #ifdef DirectNightly
+    #define DirectName "Virtual Jaguar Direct Nightly"
+  #else
+    #define DirectName "Virtual Jaguar Direct"
+  #endif
+  #ifdef Arm64
+    #define ProductName DirectName + " ARM64"
+  #else
+    #define ProductName DirectName + " x64"
+  #endif
+#else
+  #define ProductName "Virtual Jaguar"
+#endif
+
 [Setup]
+#ifdef DirectUpdates
+AppId={#ProductName}
+#else
 AppId={{6D1A0C3E-5B7F-4C42-9E17-0A8F3E2B5C91}
-AppName=Virtual Jaguar
+#endif
+AppName={#ProductName}
 AppVersion={#AppVersion}
-AppVerName=Virtual Jaguar {#AppVersion}
+AppVerName={#ProductName} {#AppVersion}
 AppPublisher=Virtual Jaguar contributors
 AppPublisherURL=https://jaguar.provenance-emu.com
 AppSupportURL=https://github.com/libretro/virtualjaguar-libretro/issues
 AppUpdatesURL=https://github.com/libretro/virtualjaguar-libretro/releases
-DefaultDirName={autopf}\Virtual Jaguar
-DefaultGroupName=Virtual Jaguar
+DefaultDirName={autopf}\{#ProductName}
+DefaultGroupName={#ProductName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
@@ -48,8 +67,13 @@ UninstallDisplayIcon={app}\virtualjaguar.exe
 LicenseFile={#SourceDir}\LICENSE.txt
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputName}
+#ifdef DirectUpdates
+; An update can close its own idle instance. Leave any other running game alone.
+CloseApplications=no
+#else
 ; Lets a newer installer replace a running copy cleanly.
 CloseApplications=yes
+#endif
 ; File types (the "associate" task below) change what Explorer shows: tell the shell.
 ChangesAssociations=yes
 
@@ -58,7 +82,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+#ifndef DirectUpdates
 Name: "associate"; Description: "Open Jaguar games and disc images (.j64 .jag .rom .abs .cof .cue .chd .cdi) with Virtual Jaguar"; GroupDescription: "File types:"; Flags: unchecked
+
+#endif
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -66,8 +93,8 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdi
 ; AppUserModelID is the id the program sets for itself (platform_windows.cpp): the Start menu / desktop / pinned
 ; shortcut, the running window and its Jump List are then one taskbar button.
 [Icons]
-Name: "{autoprograms}\Virtual Jaguar"; Filename: "{app}\virtualjaguar.exe"; AppUserModelID: "io.github.libretro.VirtualJaguar"
-Name: "{autodesktop}\Virtual Jaguar"; Filename: "{app}\virtualjaguar.exe"; Tasks: desktopicon; AppUserModelID: "io.github.libretro.VirtualJaguar"
+Name: "{autoprograms}\{#ProductName}"; Filename: "{app}\virtualjaguar.exe"; AppUserModelID: "io.github.libretro.VirtualJaguar"
+Name: "{autodesktop}\{#ProductName}"; Filename: "{app}\virtualjaguar.exe"; Tasks: desktopicon; AppUserModelID: "io.github.libretro.VirtualJaguar"
 
 ; File types.  KEEP IN SYNC with src/platform/commands.h (VJ_ASSOC_LIST), Info.plist.in, the .desktop file and the
 ; mime XML: the CTest platform_assoc_sync checks the OpenWithProgids and SupportedTypes lines below.
@@ -77,6 +104,7 @@ Name: "{autodesktop}\Virtual Jaguar"; Filename: "{app}\virtualjaguar.exe"; Tasks
 ;  * The associate task: a ProgId, an OpenWithProgids entry per extension (Virtual Jaguar is offered, nobody's
 ;    default is taken), and -- only for the Jaguar-specific .j64 / .jag -- the default handler.  Windows 10/11
 ;    keep the user's own choice (UserChoice) over this.
+#ifndef DirectUpdates
 [Registry]
 Root: HKA; Subkey: "Software\Classes\Applications\virtualjaguar.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Virtual Jaguar"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\Applications\virtualjaguar.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\virtualjaguar.exe"" ""%1"""
@@ -102,5 +130,24 @@ Root: HKA; Subkey: "Software\Classes\.cdi\OpenWithProgids"; ValueType: string; V
 Root: HKA; Subkey: "Software\Classes\.j64"; ValueType: string; ValueName: ""; ValueData: "VirtualJaguar.Game"; Flags: uninsdeletevalue; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\.jag"; ValueType: string; ValueName: ""; ValueData: "VirtualJaguar.Game"; Flags: uninsdeletevalue; Tasks: associate
 
+#endif
+
 [Run]
 Filename: "{app}\virtualjaguar.exe"; Description: "Launch Virtual Jaguar"; Flags: nowait postinstall skipifsilent
+
+#ifdef DirectUpdates
+[INI]
+Filename: "{app}\direct-install.ini"; Section: "Install"; Key: "Scope"; String: "{code:DirectInstallScope}"
+
+[UninstallDelete]
+Type: files; Name: "{app}\direct-install.ini"
+
+[Code]
+function DirectInstallScope(Param: String): String;
+begin
+  if IsAdminInstallMode then
+    Result := 'allusers'
+  else
+    Result := 'currentuser';
+end;
+#endif
