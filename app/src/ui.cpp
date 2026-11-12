@@ -813,6 +813,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showAbout) drawAbout(app);
     if (app.showThemeEditor) drawThemeEditor(app);
     themeFrameHook(app);   // theme file-dialog results
+    app.drawIpsPatch();
     drawResumePrompt(app);
     drawLibrary(app);
     drawContentServers(app);

@@ -3,6 +3,7 @@
 // object runs headless (no window, no GL, no ImGui) for the smoke tests.
 #pragma once
 
+#include "ips.h"
 #include <SDL3/SDL.h>
 
 #include <cstdint>
@@ -335,6 +336,7 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
+    void drawIpsPatch();
     // Write this game's auto-save when the policy allows (lib::shouldAutoSave).  `giveUp`: releaseForCall()'s predicate when
     // the caller has just released a halt -- the save then waits out the resume instead of refusing.
     bool autoSave(const std::function<bool()>& giveUp = {});
@@ -465,6 +467,7 @@ private:
     void desktopShutdown();
     platform::MenuState menuState();
     void handleEvent(const SDL_Event& e, bool headless);
+    void ipsDialogResult(int action, const std::string& path);
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
@@ -609,7 +612,16 @@ private:
     void followDiscSwap();                     // UI thread: a disc swap moved host.contentPath(); catch up with it
     unsigned seenDiscSwaps_ = 0;               // host.discSwaps() the app has caught up with
     bool discListHeadlessCheck(unsigned want);             // --expect-discs
-    bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
+    bool openContentImpl(const std::string& path, const std::shared_ptr<const ips::Cartridge>& transient);
+    bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors,
+                           const ips::Bytes* cartridge, const std::string& identity);
+    void openIpsPatch(const std::string& path, const std::string& base = {});
+    void prepareIpsBase(const std::string& path);
+    std::shared_ptr<const ips::Cartridge> transientCart_;
+    ips::Cartridge ipsCart_;
+    std::string ipsPath_, ipsError_;
+    char ipsExpectedBase_[128] = {}, ipsExpectedOutput_[128] = {};
+    bool ipsPopupRequested_ = false, ipsDialogPending_ = false, ipsConfirmReplace_ = false, ipsReplaceAvailable_ = false;
     bool openNoContentOnCore(std::string& err);
     std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side
     std::atomic<uint64_t> retroTicks_{0};      // performance-counter ticks inside retro_run, since the UI last read them
