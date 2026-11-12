@@ -760,38 +760,50 @@ single instance.
   same game and choose Netplay > Join with address `127.0.0.1` and the same port. Two copies that both
   host need different ports (the window offers 42171-42174).
 
-## Emulation Server libraries
+## Server libraries
 
-Choose **File > Server library...** or **Servers...** in the game library. Enter an
-Emulation Server origin such as `http://192.168.1.10:8473`, then paste a device or
-guest access token with read permission. A server that admits your LAN connection
-can accept an empty token. **Connect** saves the server address and lists the
-libraries you can read.
+Choose **File > Server library...** or **Servers...** in the game library. Use
+**Add server** to create a named tab. Enter the origin, including any port, and
+choose **Emulation Server** or **RomM**. In the new tab, enter the access token
+and choose **Connect / refresh server**. Use HTTPS when sending credentials
+outside a trusted local network.
 
-Select a library and **Jaguar cartridges** or **Jaguar CD**, search by title, and
-use **Load more** for additional pages. Select a game and choose **Download and
-play**. The transfer runs in the background, shows progress, and can be cancelled.
-A download can contain up to 512 files and 8 GiB.
-Completed files go under `<data>/content-server/`; the normal loader opens the
-local cartridge, CHD, CDI, CUE or playlist. **Open recent** can launch that local
-copy later. Each completed version has its own cache folder, so another download
-can coexist with a running game.
-Launch filenames include a stable game identifier to keep saves and states for
-different server games separate.
+- **Emulation Server** uses the native ECS v1 API. Use a device or guest token
+  with read access, or leave it empty if the server admits your LAN connection.
+  Use the native ECS origin for libraries also published by an ECS RomM gateway.
+- **RomM** uses the direct RomM 5.4.0 API. Use a RomM client API token with
+  `platforms.read` and `roms.read` permissions. Other RomM versions and the ECS
+  RomM gateway are outside this compatibility contract. The gateway exposes
+  a different platform and download schema. See the
+  [RomM 5.4.0 API source](https://github.com/rommapp/romm/tree/5.4.0/backend/endpoints)
+  and [RomM download authentication](https://docs.romm.app/5.4.0/using/downloads/).
 
-Managed items verify the manifest's SHA-256 hashes. Indexed CUE/BIN sources stage
-the descriptor and its companions together, preserving their relative layout.
-Unsafe paths, missing companions, unsupported images, incomplete transfers and
-hash mismatches stop the launch. CUE `FILE` entries must use quoted, portable
-paths with forward slashes. Multi-disc playlists need a managed item containing
-all required disc files.
+Pick a library on ECS, select **Jaguar cartridges** or **Jaguar CD**, and search
+by title. **Load more** continues the current tab's result list. The app restores
+each tab's name, system, ECS library and last submitted search at startup.
+Loaded pages and errors stay with their tab during the session. Visible rows
+request PNG covers on demand. When RomM advertises a derived WebP cover, the
+app requests its original PNG. Missing or unsupported covers leave the row usable.
 
-**Remember token in credential store** uses Keychain on macOS, Credential Manager
-on Windows and Secret Service on Linux. If the store is unavailable, the token
-stays in memory for that session. The settings file keeps server addresses.
-**Forget server** removes its saved address and token. Downloads use the app's
-existing WinHTTP backend on Windows and libcurl on Linux and macOS. The server
-URL should identify the origin itself, with its port and no `/ui` suffix.
+Select **Download and play** to fetch game files. The background transfer shows
+progress and supports cancellation. Downloads can contain up to 512 files and
+8 GiB. RomM fetches a file list at launch and streams individual game files, so
+CUE tracks and on-disk M3U entries can keep their relative layout. Provide
+unpacked cartridge images or supported disc sets with their descriptors. For
+multiple discs, supply an M3U in the server's game folder.
+
+Managed ECS items verify manifest SHA-256 hashes. Both protocols validate
+paths, sizes and descriptor references before publishing files under
+`<data>/content-server/`. CUE `FILE` entries must use quoted, portable paths
+with forward slashes. The app opens the staged image through its regular
+loader. **Open recent** can launch that local copy later. Stable launch
+filenames distinguish games on different server origins, even with overlapping
+server-side IDs.
+
+**Remember token in credential store** uses Keychain on macOS, Credential
+Manager on Windows and Secret Service on Linux. If the store is unavailable,
+the token stays in memory for the session. **Forget server** removes its saved
+tab and token. Completed downloads remain available locally.
 
 ## Where files go
 

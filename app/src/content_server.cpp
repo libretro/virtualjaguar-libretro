@@ -44,6 +44,13 @@ uint64_t sizeOf(const Json& value) {
     return static_cast<uint64_t>(value.asNumber());
 }
 
+std::string rommId(const Json& value) {
+    const double id = value.asNumber();
+    require(value.isNumber() && id >= 1 && id <= 9007199254740991.0 && std::floor(id) == id,
+            "RomM returned an invalid identifier.");
+    return std::to_string(static_cast<uint64_t>(id));
+}
+
 void checkCancel(const std::atomic<bool>* cancel) {
     if (cancel && cancel->load()) throw std::runtime_error("Cancelled.");
 }
@@ -271,8 +278,9 @@ bool safeRelativePath(const std::string& path) {
     return false;
 }
 
-Client::Client(std::string origin, std::string token, Transport transport)
-    : origin_(normalizeOrigin(origin)), token_(std::move(token)), transport_(std::move(transport)) {}
+Client::Client(std::string origin, std::string token, Transport transport, Protocol protocol)
+    : origin_(normalizeOrigin(origin)), token_(std::move(token)), transport_(std::move(transport)),
+      protocol_(protocol) {}
 
 Json Client::json(const std::string& path, const std::atomic<bool>* cancel) const {
     checkCancel(cancel);
@@ -283,12 +291,36 @@ Json Client::json(const std::string& path, const std::atomic<bool>* cancel) cons
     checkResponse(transport_(origin_ + path, response, 8 * 1024 * 1024, cancel, options), response);
     Json result;
     std::string error;
-    require(Json::parse(std::string(response.body.begin(), response.body.end()), result, error) && result.isObject(),
+    require(Json::parse(std::string(response.body.begin(), response.body.end()), result, error) &&
+                (result.isObject() || (protocol_ == Protocol::RomM && result.isArray())),
             "The server returned invalid JSON.");
     return result;
 }
 
 std::vector<Library> Client::libraries(const std::atomic<bool>* cancel) const {
+    if (protocol_ == Protocol::RomM) {
+        const Json result = json("/api/platforms", cancel);
+        require(result.isArray(), "Invalid RomM platform list.");
+        Library library{"", "RomM"};
+        // Each side of the separator holds the platform IDs for one Jaguar system.
+        std::string carts, discs;
+        bool hasSlugs = false;
+        for (const Json& item : result.items()) {
+            require(!item.has("ecs_system_id"),
+                    "This is an ECS RomM gateway. Add the native ECS origin as an Emulation Server.");
+            std::string slug = lower(item["slug"].asString());
+            hasSlugs |= !slug.empty();
+            slug.erase(std::remove(slug.begin(), slug.end(), '-'), slug.end());
+            std::string* ids = nullptr;
+            if (slug == "jaguar" || slug == "atarijaguar") ids = &carts;
+            if (slug == "jaguarcd" || slug == "atarijaguarcd") ids = &discs;
+            if (ids) *ids += rommId(item["id"]) + ",";
+        }
+        require(result.items().empty() || hasSlugs,
+                "This endpoint does not expose RomM platform slugs. For an ECS gateway, use the native ECS origin.");
+        library.id = carts + "|" + discs;
+        return {std::move(library)};
+    }
     const Json capabilities = json("/api/v1/capabilities", cancel);
     require(capabilities["protocol"]["major"].isNumber() && capabilities["protocol"]["major"].asNumber() == 1,
             "This server uses an unsupported content protocol.");
@@ -302,6 +334,42 @@ std::vector<Library> Client::libraries(const std::atomic<bool>* cancel) const {
 Page Client::games(const std::string& library, const std::string& search, const std::string& system,
                    const std::string& cursor, const std::atomic<bool>* cancel) const {
     require(system == "com.provenance.jaguar" || system == "com.provenance.jaguarcd", "Choose a Jaguar system.");
+    if (protocol_ == Protocol::RomM) {
+        const auto split = library.find('|');
+        require(split != std::string::npos, "Refresh the RomM platforms.");
+        const std::string ids = system == "com.provenance.jaguar" ? library.substr(0, split) : library.substr(split + 1);
+        if (ids.empty()) return {};
+        require(ids.back() == ',' && ids.find_first_not_of("0123456789,") == std::string::npos,
+                "Invalid RomM platform selection.");
+        std::string filter;
+        std::istringstream platforms(ids);
+        for (std::string id; std::getline(platforms, id, ',');) {
+            require(!id.empty(), "Invalid RomM platform selection.");
+            filter += "&platform_ids=" + id;
+        }
+        require(cursor.size() <= 5 && cursor.find_first_not_of("0123456789") == std::string::npos,
+                "Invalid RomM page offset.");
+        const unsigned offset = cursor.empty() ? 0 : unsigned(std::stoul(cursor));
+        const Json result = json("/api/roms?limit=100&offset=" + std::to_string(offset) + filter +
+            "&with_char_index=false&with_rom_id_index=false&with_filter_values=false&with_files=false"
+            "&with_total=true&search_term=" +
+            lib::urlEncode(search), cancel);
+        require(result["items"].isArray() && result["items"].items().size() <= 100 &&
+                    result["total"].isNumber() && result["total"].asNumber() >= 0, "Invalid RomM page.");
+        Page page;
+        const auto& items = result["items"].items();
+        const unsigned next = offset + unsigned(items.size());
+        if (!items.empty() && result["total"].asNumber() > next) page.nextCursor = std::to_string(next);
+        for (const Json& item : items) {
+            const std::string platform = "," + rommId(item["platform_id"]) + ",";
+            if (("," + ids).find(platform) == std::string::npos) continue;
+            if (item["has_file_on_disk"].isBool() && !item["has_file_on_disk"].asBool()) continue;
+            const std::string& name = item["name"].asString();
+            page.games.push_back({rommId(item["id"]), name.empty() ? text(item["fs_name"]) : name,
+                                  "romm", system, Json(), item["path_cover_small"].asString()});
+        }
+        return page;
+    }
     std::string path = "/api/v1/browse?category=games&limit=100&libraryId=" + lib::urlEncode(library) +
                        "&systemId=" + lib::urlEncode(system) + "&search=" + lib::urlEncode(search);
     if (!cursor.empty()) path += "&cursor=" + lib::urlEncode(cursor);
@@ -315,16 +383,69 @@ Page Client::games(const std::string& library, const std::string& search, const 
         if (type != "item" && type != "source" && type != "asset") continue;
         if (item["systemId"].asString() != system) continue;
         require(item[type].isObject(), "A game is missing its download details.");
-        page.games.push_back({text(item["id"]), text(item["name"]), type, system, item[type]});
+        const std::string id = text(item["id"]);
+        std::string artwork;
+        const auto& preview = item["previewAsset"]["id"].asString();
+        if (!preview.empty()) artwork = contentPath("files", preview);
+        if (type == "source" && item[type]["artworkAvailable"].asBool())
+            artwork = "/api/v1/sources/" + lib::urlEncode(id) + "/matches/selections/artwork/content";
+        page.games.push_back({id, text(item["name"]), type, system, item[type], std::move(artwork)});
     }
     return page;
+}
+
+std::vector<unsigned char> Client::artwork(const Game& game, const std::atomic<bool>* cancel) const {
+    std::string path = game.artwork;
+    if (path.size() > 4096) return {};
+    if (protocol_ == Protocol::RomM) {
+        // RomM appends a timestamp for cache invalidation, which can contain spaces.
+        // Keep it in the UI cache key and send only the resource path.
+        path = path.substr(0, path.find('?'));
+        if (path.rfind("/assets/romm/resources/", 0) != 0) return {};
+        // RomM generates PNG small covers and can advertise a derived WebP copy.
+        if (pathExt(path) == "webp") path.replace(path.size() - 4, 4, "png");
+        const std::string relative = path.substr(1);
+        if (!safeRelativePath(relative) || relative.find('%') != std::string::npos) return {};
+        path.clear();
+        std::istringstream segments(relative);
+        for (std::string segment; std::getline(segments, segment, '/');)
+            path += "/" + lib::urlEncode(segment);
+    } else if (path.rfind("/api/v1/", 0) != 0) return {};
+    http::Options options;
+    options.bearerToken = token_;
+    options.followRedirects = false;
+    http::Response response;
+    if (!transport_(origin_ + path, response, 2 * 1024 * 1024, cancel, options) || response.status != 200) return {};
+    return std::move(response.body);
 }
 
 std::string Client::download(const Game& game, const std::string& cacheRoot, const std::atomic<bool>* cancel,
                              const std::function<void(uint64_t, uint64_t)>& progress) const {
     std::vector<File> files;
     std::string selected;
-    if (game.entityType == "item") {
+    if (protocol_ == Protocol::RomM) {
+        require(game.entityType == "romm" && !game.id.empty() &&
+                    game.id.find_first_not_of("0123456789") == std::string::npos, "Invalid RomM game.");
+        const std::string path = "/api/roms/" + game.id;
+        const Json details = json(path + "/simple", cancel);
+        require(rommId(details["id"]) == game.id && details["files"].isArray() &&
+                    details["files"].items().size() <= kFileLimit, "Invalid RomM file list.");
+        const std::string romPath = text(details["fs_path"]) + "/" + text(details["fs_name"]);
+        for (const Json& file : details["files"].items()) {
+            const std::string category = file["category"].asString();
+            if (!category.empty() && category != "game") continue;
+            const std::string name = text(file["file_name"]);
+            const std::string full = text(file["full_path"]);
+            require(safeRelativePath(name) && name.find('/') == std::string::npos,
+                    "The game contains unsafe file names.");
+            require(full == romPath || full.rfind(romPath + "/", 0) == 0,
+                    "A RomM file is outside its game folder.");
+            const std::string id = rommId(file["id"]);
+            files.push_back({id, full == romPath ? name : full.substr(romPath.size() + 1),
+                             path + "/content/" + lib::urlEncode(name) + "?file_ids=" + id + "&purpose=play",
+                             "", sizeOf(file["file_size_bytes"])});
+        }
+    } else if (game.entityType == "item") {
         const Json manifest = json("/api/v1/items/" + lib::urlEncode(game.id) + "/manifest", cancel);
         require(manifest["files"].isArray(), "The game manifest has no files.");
         for (const Json& file : manifest["files"].items()) {
