@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: Libretro.VirtualJaguar
+PackageVersion: 3.12.0
+InstallerLocale: en-US
+InstallerType: inno
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: 2026-11-09
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.12.0/VirtualJaguar-3.12.0-windows-x64-setup.exe
+    InstallerSha256: 54DED4F39165BD59A7AC925C5A09909BC92604920559D37FEE42F8E8DD7ED8CF
+  - Architecture: arm64
+    InstallerUrl: https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.12.0/VirtualJaguar-3.12.0-windows-arm64-setup.exe
+    InstallerSha256: CBF1A02CAC30D430927D637DEBE703E8207E61E0DB8D9FE6692CF166658E30DB
+ManifestType: installer
+ManifestVersion: 1.10.0

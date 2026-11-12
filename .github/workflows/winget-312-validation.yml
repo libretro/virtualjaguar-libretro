@@ -1,0 +1,71 @@
+name: Validate Virtual Jaguar 3.12.0 WinGet package
+
+on:
+  push:
+    branches: [codex/winget-312-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      VJ_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate WinGet manifests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+          if ($winget) {
+            $cli = $winget.Source
+          } else {
+            $pkg = Get-AppxPackage Microsoft.DesktopAppInstaller | Sort-Object Version -Descending | Select-Object -First 1
+            if (!$pkg) { throw 'App Installer is unavailable on this runner' }
+            $cli = Join-Path $pkg.InstallLocation winget.exe
+          }
+          & $cli --version
+          & $cli validate --manifest .github/winget-312
+          if ($LASTEXITCODE -ne 0) { throw "winget validate exited $LASTEXITCODE" }
+      - name: Install, boot YARC and uninstall without interaction
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = "VirtualJaguar-3.12.0-windows-$env:VJ_ARCH-setup.exe"
+          $url = "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.12.0/$name"
+          $installer = Join-Path $env:RUNNER_TEMP $name
+          curl.exe --fail --location --retry 3 --output $installer $url
+          if ($LASTEXITCODE -ne 0) { throw 'Installer download failed' }
+          $manifest = Get-Content .github/winget-312/Libretro.VirtualJaguar.installer.yaml -Raw
+          $expected = [regex]::Match($manifest, [regex]::Escape($url) + '\r?\n\s+InstallerSha256: ([A-F0-9]{64})').Groups[1].Value
+          if (!$expected -or (Get-FileHash $installer).Hash -ne $expected) { throw 'Installer hash mismatch' }
+          $dest = Join-Path $env:RUNNER_TEMP 'vj-unattended'
+          $log = Join-Path $env:RUNNER_TEMP 'vj-setup.log'
+          $p = Start-Process $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/CURRENTUSER',"/DIR=`"$dest`"","/LOG=`"$log`"" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Installer exited $($p.ExitCode)" }
+          $exe = Join-Path $dest 'virtualjaguar.exe'
+          if (!(Test-Path $exe)) { throw 'Missing installed executable' }
+          $p = Start-Process $exe -ArgumentList '--headless','--frames','300','--expect-hash','e33e2c61',"`"$PWD\test\roms\yarc.j64`"" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "YARC smoke exited $($p.ExitCode)" }
+          $p = Start-Process (Join-Path $dest 'unins000.exe') -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+          if ($p.ExitCode -ne 0 -or (Test-Path $exe)) { throw "Uninstall failed: $($p.ExitCode)" }
+          Write-Host "PASS $env:VJ_ARCH: verified installer hash, silent install, YARC boot and silent uninstall"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: win-install-log-${{ matrix.arch }}
+          path: ${{ runner.temp }}/vj-setup.log
+          if-no-files-found: ignore
