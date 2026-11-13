@@ -27,13 +27,14 @@ if [ "$direct" = 1 ]; then
   [ -n "$iscc" ] && [ -f "$build_info" ] && [ -f "$prefix/bin/WinSparkle.dll" ] || {
     echo "Direct packaging needs ISCC and a WinSparkle install tree" >&2; exit 1;
   }
-  read -r channel sdk_arch build_version extra < "$build_info"
+  IFS= read -r build_line < "$build_info"
+  read -r channel sdk_arch build_version extra <<< "${build_line%$'\r'}"
   [ "$sdk_arch" = "$arch" ] && [ -z "$extra" ] || {
     echo "WinSparkle build metadata does not match package architecture" >&2; exit 1;
   }
   case "$channel" in
-    stable) [[ "$build_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$label" = "$build_version" ]] || exit 2 ;;
-    nightly) [[ "$build_version" =~ ^[1-9][0-9]*$ ]] || exit 2 ;;
+    stable) [[ "$build_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$label" = "$build_version" ]] || { echo "Invalid stable WinSparkle build version" >&2; exit 2; } ;;
+    nightly) [[ "$build_version" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid nightly WinSparkle build sequence" >&2; exit 2; } ;;
     *) echo "Unknown update channel: $channel" >&2; exit 2 ;;
   esac
   installer_defs+=(/DDirectUpdates)
