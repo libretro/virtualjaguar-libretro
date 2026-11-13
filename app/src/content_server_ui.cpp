@@ -64,7 +64,7 @@ void drawServerTab(App& app, ContentServerBrowser& manager, ContentServerTab& br
         if (ImGui::Button("Cancel")) browser.cancel();
     }
     ImGui::BeginDisabled(browser.busy);
-    ImGui::BeginChild("##server-games", ImVec2(0, -ui::em(3)), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("##server-games", ImVec2(0, -ui::em(browser.selectedGame >= 0 ? 12 : 3)), ImGuiChildFlags_Borders);
     const float rowHeight = ui::em(3);
     ImGuiListClipper clipper;
     clipper.Begin(int(browser.games.size()), rowHeight + ImGui::GetStyle().ItemSpacing.y);
@@ -73,8 +73,11 @@ void drawServerTab(App& app, ContentServerBrowser& manager, ContentServerTab& br
             const auto& game = browser.games[size_t(i)];
             ImGui::PushID(i);
             const ImVec2 pos = ImGui::GetCursorScreenPos();
-            if (ImGui::Selectable("##game", browser.selectedGame == i, 0, ImVec2(0, rowHeight)))
-                browser.selectedGame = i;
+            if (ImGui::Selectable("##game", browser.selectedGame == i, 0, ImVec2(0, rowHeight)) &&
+                    browser.selectedGame != i && !browser.busy) {
+                browser.selectGame(i);
+                browser.loadAddons();
+            }
             auto* draw = ImGui::GetWindowDrawList();
             const ArtView cover = browser.cover(game, app.library);
             if (cover.tex) {
@@ -109,6 +112,42 @@ void drawServerTab(App& app, ContentServerBrowser& manager, ContentServerTab& br
         }
         ImGui::EndDisabled();
     }
+    if (browser.selectedGame >= 0 && size_t(browser.selectedGame) < browser.games.size()) {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Add-ons");
+        if (!browser.addonsLoaded && !browser.busy) {
+            ImGui::SameLine();
+            if (ImGui::Button("Load add-ons")) browser.loadAddons();
+        }
+        if (browser.addonsLoaded && browser.addons.empty())
+            ImGui::TextUnformatted("No add-ons available.");
+        if (!browser.addons.empty()) {
+            const auto& game = browser.games[size_t(browser.selectedGame)];
+            ImGui::BeginChild("##server-addons", ImVec2(0, 0), ImGuiChildFlags_Borders);
+            for (const auto& addon : browser.addons) {
+                ImGui::PushID(addon.id.c_str());
+                const char* kind = addon.kind == "patch" ? "Patch" : addon.kind == "mod" ? "Mod" :
+                                   addon.kind == "texture_pack" ? "Texture pack" : "Add-on";
+                const bool boot = addon.canBoot(game);
+                ImGui::TextWrapped("%s · %s · %llu bytes%s", addon.filename.c_str(), kind,
+                                   static_cast<unsigned long long>(addon.size),
+                                   boot ? "" : " · Download only");
+                if (ImGui::IsItemHovered()) {
+                    if (!addon.hash.empty()) ImGui::SetTooltip("SHA-256: %s", addon.hash.c_str());
+                    else if (!addon.rommSha1.empty()) ImGui::SetTooltip("RomM SHA-1: %s", addon.rommSha1.c_str());
+                }
+                ImGui::BeginDisabled(launchPending || browser.busy);
+                if (ImGui::Button("Download")) browser.downloadAddon(addon, false);
+                if (boot) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Download and boot patched")) browser.downloadAddon(addon, true);
+                }
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+        }
+    }
     ImGui::EndDisabled();
 }
 
@@ -118,6 +157,12 @@ void drawContentServers(App& app) {
     ContentServerBrowser& manager = app.contentServers;
     for (auto& tab : manager.tabs) {
         tab->pump();
+        if (tab->patchReady) {
+            std::string error;
+            if (app.bootServerPatch(*tab->patchReady, error)) manager.show = false;
+            else tab->message = std::move(error);
+            tab->patchReady.reset();
+        }
         if (tab->launchReady) {
             tab->launchReady = false;
             if (app.openContent(tab->readyPath)) manager.show = false;

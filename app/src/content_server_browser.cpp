@@ -65,12 +65,13 @@ void ContentServerTab::pump() {
         } else {
             games.clear();
             nextCursor.clear();
-            selectedLibrary = selectedGame = -1;
+            selectedLibrary = -1;
+            selectGame(-1);
             message = "Connected. This token has no accessible libraries.";
         }
         break;
     case Kind::Games:
-        if (!result->append) { games.clear(); selectedGame = -1; }
+        if (!result->append) { games.clear(); selectGame(-1); }
         for (auto& game : result->page.games) {
             const auto duplicate = std::find_if(games.begin(), games.end(), [&](const ecs::Game& other) {
                 return game.id == other.id && game.entityType == other.entityType;
@@ -79,6 +80,14 @@ void ContentServerTab::pump() {
         }
         nextCursor = games.size() < 10000 ? result->page.nextCursor : "";
         message = games.empty() ? "No matching games in this library." : std::to_string(games.size()) + " games";
+        break;
+    case Kind::Addons:
+        addons = std::move(result->addons);
+        addonsLoaded = true;
+        break;
+    case Kind::AddonDownload:
+        patchReady = std::move(result->patch);
+        if (!patchReady) message = "Saved add-on to " + result->path;
         break;
     case Kind::Download:
         readyPath = std::move(result->path);
@@ -96,12 +105,14 @@ void ContentServerTab::connect() {
     opened = true;
     if (!http::available()) { message = "This build has no HTTP support."; return; }
     clearCovers();
+    selectGame(-1);
     if (activeToken_ != token) {
         libraries.clear();
         games.clear();
         nextCursor.clear();
         readyPath.clear();
-        selectedLibrary = selectedGame = -1;
+        selectedLibrary = -1;
+        selectGame(-1);
         launchReady = false;
         activeToken_ = token;
     }
@@ -123,7 +134,7 @@ void ContentServerTab::browse(int library, bool append) {
     activeSearch_ = search;
     activeSystem_ = kSystems[system];
     const std::string cursor = append ? nextCursor : "";
-    if (!append) { games.clear(); nextCursor.clear(); selectedGame = -1; }
+    if (!append) { games.clear(); nextCursor.clear(); selectGame(-1); }
     const std::string id = libraries[size_t(library)].id, query = activeSearch_, systemId = activeSystem_;
     const ecs::Client client(origin, activeToken_, http::get, protocol);
     start([this, client, id, query, systemId, cursor, append] {
@@ -131,6 +142,47 @@ void ContentServerTab::browse(int library, bool append) {
         result.kind = Kind::Games;
         result.append = append;
         result.page = client.games(id, query, systemId, cursor, &cancel_);
+        return result;
+    });
+}
+
+void ContentServerTab::selectGame(int index) {
+    if (selectedGame == index) return;
+    selectedGame = index;
+    addons.clear();
+    addonsLoaded = false;
+}
+
+void ContentServerTab::loadAddons() {
+    if (busy || selectedGame < 0 || size_t(selectedGame) >= games.size()) return;
+    const ecs::Client client(origin, activeToken_, http::get, protocol);
+    const auto game = games[size_t(selectedGame)];
+    start([this, client, game] {
+        Result result;
+        result.kind = Kind::Addons;
+        result.addons = client.addons(game, &cancel_);
+        return result;
+    });
+}
+
+void ContentServerTab::downloadAddon(const ecs::Addon& addon, bool boot) {
+    if (busy || selectedGame < 0 || size_t(selectedGame) >= games.size()) return;
+    const auto game = games[size_t(selectedGame)];
+    if (boot && !addon.canBoot(game)) return;
+    received_ = 0;
+    total_ = addon.size;
+    downloading = true;
+    const ecs::Client client(origin, activeToken_, http::get, protocol);
+    start([this, client, game, addon, boot] {
+        Result result;
+        result.kind = Kind::AddonDownload;
+        const auto progress = [this](uint64_t received, uint64_t total) {
+            received_.store(received);
+            total_.store(total);
+        };
+        result.path = client.downloadAddon(addon, root_, &cancel_, progress);
+        if (boot)
+            result.patch = PatchLaunch{client.download(game, root_, &cancel_, progress), result.path, addon};
         return result;
     });
 }

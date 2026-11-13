@@ -336,6 +336,7 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
+    bool bootServerPatch(const ContentServerTab::PatchLaunch& launch, std::string& error);
     void drawIpsPatch();
     // Write this game's auto-save when the policy allows (lib::shouldAutoSave).  `giveUp`: releaseForCall()'s predicate when
     // the caller has just released a halt -- the save then waits out the resume instead of refusing.

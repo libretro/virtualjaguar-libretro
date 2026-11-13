@@ -17,6 +17,11 @@ import zlib
 client, emulator, rom = sys.argv[1:]
 cartridge = pathlib.Path(rom).read_bytes()
 failures = []
+patch = b"PATCHEOF"
+patch_id = hashlib.sha256(patch).hexdigest()
+companion_list = "/api/v1/sources/game-two/companions"
+patch_path = f"{companion_list}/{patch_id}/content"
+
 
 
 def png_chunk(tag, data):
@@ -41,6 +46,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Location", "/public")
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return
+        if url.path == patch_path and self.headers.get("Authorization") == "Bearer deny-companion":
+            self.send_error(403)
             return
         if url.path == "/public":
             body = b"public"
@@ -72,6 +80,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     "relativePath": "fixture.j64", "size": len(cartridge),
                                     "sha256": hashlib.sha256(cartridge).hexdigest(),
                                     "contentPath": "https://untrusted.invalid/credential-test"}]}
+            elif url.path == companion_list:
+                value = {"supportedKinds": ["patch"], "items": [{
+                    "id": patch_id, "kind": "patch", "format": "ips", "filename": "Fixture.ips",
+                    "sizeBytes": len(patch), "sha256": patch_id, "contentPath": patch_path,
+                }]}
+            elif url.path == patch_path:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(patch)))
+                self.end_headers()
+                self.wfile.write(patch)
+                return
             elif url.path in ("/api/v1/files/cart/content", "/api/v1/sources/game-two/content",
                               "/api/v1/files/cover/content"):
                 body = cover if url.path == "/api/v1/files/cover/content" else cartridge
@@ -105,6 +124,8 @@ class RomMHandler(Handler):
             101: ("Fixture.j64", cartridge, "roms/jaguar/Fixture.j64"),
             102: ("Fixture.cue", cue, "roms/jaguarcd/Fixture/Fixture.cue"),
             103: ("Track.bin", b"track", "roms/jaguarcd/Fixture/Track.bin"),
+            104: ("Fixture.ips", patch, "roms/jaguar/Fixture.j64/patch/Fixture.ips"),
+            105: ("Fixture.ips", b"mod-data", "roms/jaguar/Fixture.j64/mod/Fixture.ips"),
         }
         if url.path == "/api/platforms":
             value = [{"id": 1, "slug": "snes", "rom_count": 80000},
@@ -126,15 +147,17 @@ class RomMHandler(Handler):
         elif url.path in ("/api/roms/42/simple", "/api/roms/44/simple"):
             # RomM permits IDs to overlap ECS. The second cartridge row is used only for artwork.
             disc = "/44/" in url.path
-            ids = [102, 103] if disc else [101]
+            ids = [102, 103] if disc else [101, 104, 105]
             value = {"id": 44 if disc else 42, "fs_name": "Fixture" if disc else "Fixture.j64",
                      "fs_path": "roms/jaguarcd" if disc else "roms/jaguar",
                      "files": [{"id": key, "file_name": files[key][0], "file_size_bytes": len(files[key][1]),
-                                "full_path": files[key][2], "category": "game"} for key in ids]}
+                                "full_path": files[key][2],
+                                "category": {104: "patch", 105: "mod"}.get(key, "game")} for key in ids]}
         elif url.path.startswith(("/api/roms/42/content/", "/api/roms/44/content/")):
             key = int(query["file_ids"][0])
             name, body, _ = files[key]
-            if url.path.rsplit("/", 1)[-1] != name or query.get("purpose") != ["play"]:
+            purpose = "download" if key in (104, 105) else "play"
+            if url.path.rsplit("/", 1)[-1] != name or query.get("purpose") != [purpose]:
                 failures.append("incorrect RomM file selector")
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
@@ -183,6 +206,8 @@ try:
     assert pathlib.Path(launch).read_bytes() == cartridge
     source_launch = next(line[14:] for line in result.stdout.splitlines() if line.startswith("SOURCE_LAUNCH "))
     assert pathlib.Path(source_launch).read_bytes() == cartridge
+    patch_file = next(line[13:] for line in result.stdout.splitlines() if line.startswith("SERVER_PATCH "))
+    assert pathlib.Path(patch_file).read_bytes() == patch
     romm_launch = next(line[12:] for line in result.stdout.splitlines() if line.startswith("ROMM_LAUNCH "))
     assert pathlib.Path(romm_launch).read_bytes() == cartridge
     for downloaded in (launch, source_launch, romm_launch):

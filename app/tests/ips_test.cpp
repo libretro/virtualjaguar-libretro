@@ -134,6 +134,21 @@ void fileAndLoaderTests(const fs::path& folder) {
 
     ips::Cartridge cart;
     CHECK(ips::prepare(rom, ipsFile, cart, error));
+    ips::Cartridge verified;
+    const ips::BaseRequirements matching{cart.original.size(), cart.baseHash, ""};
+    CHECK(ips::prepare(rom, ipsFile, verified, error, matching));
+    CHECK(verified.output == cart.output);
+    ips::Cartridge mismatched;
+    CHECK(!ips::prepare(rom, ipsFile, mismatched, error, {cart.original.size() + 1, "", ""}));
+    CHECK(!ips::prepare(rom, ipsFile, mismatched, error, {cart.original.size(), std::string(64, '0'), ""}));
+    char crc[9];
+    std::snprintf(crc, sizeof crc, "%08x",
+                  static_cast<unsigned>(SDL_crc32(0, cart.original.data(), cart.original.size())));
+    CHECK(ips::prepare(rom, ipsFile, verified, error, {cart.original.size(), "", crc}));
+    crc[0] = crc[0] == '0' ? '1' : '0';
+    CHECK(!ips::prepare(rom, ipsFile, mismatched, error, {cart.original.size(), "", crc}));
+    CHECK(mismatched.output.empty());
+
     payload[0x3000] = 0x99;
     CHECK(cart.strippedHeader && cart.original == headered && cart.output == payload);
     CHECK(cart.baseHash == sha256Hex(headered.data(), headered.size()));

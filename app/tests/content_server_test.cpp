@@ -75,20 +75,134 @@ static std::string manifest(const std::string& path, const std::string& content,
            "\",\"contentPath\":\"https://untrusted.invalid/steal\"}]}";
 }
 
-static void rommGatewayContract() {
-    // The gateway now advertises RomM slugs, but serves ECS archives instead of the
-    // direct RomM per-file download contract. Detect its platform marker before browsing.
-    const ecs::Client gateway("http://localhost:8080", "gateway-fixture-token",
-        [](const std::string& url, http::Response& response, uint64_t,
-           const std::atomic<bool>*, const http::Options& options) {
-            CHECK(url == "http://localhost:8080/api/platforms");
-            CHECK(options.bearerToken == "gateway-fixture-token" && !options.followRedirects);
-            const std::string body = R"([{"id":7,"name":"Atari Jaguar","slug":"jaguar","rom_count":4,"ecs_system_id":"com.provenance.jaguar"}])";
+static void nativeAddons(const fs::path& root) {
+    Fixture f;
+    const ecs::Game game{"scanned", "Fixture", "source", "com.provenance.jaguar", {}};
+    const std::string list = "/api/v1/sources/scanned/companions";
+    const std::string patch = "PATCHEOF";
+    const std::string mod = "texture data";
+    const auto itemJson = [&](const std::string& id, const std::string& kind, const std::string& bytes,
+                              const std::string& base) {
+        return "{\"id\":\"" + id + "\",\"kind\":\"" + kind +
+            "\",\"filename\":\"same.ips\",\"sizeBytes\":" + std::to_string(bytes.size()) +
+            ",\"sha256\":\"" + sha256Hex(bytes.data(), bytes.size()) +
+            "\",\"contentPath\":\"" + list + "/" + id + "/content\"" + base + "}";
+    };
+    f.responses[list] = "{\"items\":[" + itemJson("patch-1", "patch", patch,
+        R"(,"base":{"sizeBytes":131072,"crc32":"12345678"})") + "," +
+        itemJson("texture-2", "texture_pack", mod, "") + "]}";
+    f.responses[list + "/patch-1/content"] = patch;
+    f.responses[list + "/texture-2/content"] = mod;
+    const auto client = f.client();
+    const auto addons = client.addons(game);
+    CHECK(addons.size() == 2 && f.paths.size() == 1);
+    if (addons.size() != 2) return;
+    CHECK(addons[0].id != addons[1].id && addons[0].filename == addons[1].filename);
+    CHECK(addons[0].canBoot(game) && !addons[1].canBoot(game));
+    CHECK(addons[0].baseSize == 131072 && addons[0].baseCrc == "12345678");
+    auto disc = game;
+    disc.systemId = "com.provenance.jaguarcd";
+    CHECK(!addons[0].canBoot(disc));
+    const auto saved = client.downloadAddon(addons[1], root.u8string(), nullptr);
+    CHECK(bytes(saved) == mod && f.paths.size() == 2 && f.paths.back() == list + "/texture-2/content");
+    const auto patched = client.downloadAddon(addons[0], root.u8string(), nullptr);
+    CHECK(bytes(patched) == patch && bytes(saved) == mod && saved != patched);
+    f.responses[list + "/patch-1/content"] = "PATCHeof";
+    CHECK(rejects([&] { client.downloadAddon(addons[0], root.u8string(), nullptr); }));
+    CHECK(bytes(patched) == patch);
+    f.status = 401;
+    CHECK(rejects([&] { client.addons(game); }));
+    f.status = 403;
+    CHECK(rejects([&] { client.downloadAddon(addons[0], root.u8string(), nullptr); }));
+    f.status = 404;
+    CHECK(client.addons(game).empty());
+}
+
+static void rommAddons() {
+    std::vector<std::string> requests;
+    const ecs::Client client("http://localhost:8080", "fixture-token",
+        [&](const std::string& url, http::Response& response, uint64_t,
+            const std::atomic<bool>*, const http::Options& options) {
+            requests.push_back(url);
+            CHECK(options.bearerToken == "fixture-token" && !options.followRedirects);
+            const std::string body = R"({"id":42,"files":[
+                {"id":1,"file_name":"Game.j64","category":"game","file_size_bytes":1024},
+                {"id":2,"file_name":"same.ips","category":"patch","file_size_bytes":8,
+                 "sha1_hash":"1234567890abcdef1234567890abcdef12345678"},
+                {"id":3,"file_name":"same.ips","category":"mod","file_size_bytes":8}
+            ]})";
             response.status = 200;
             response.body.assign(body.begin(), body.end());
             return true;
         }, ecs::Protocol::RomM);
-    CHECK(rejects([&] { gateway.libraries(); }));
+    const ecs::Game game{"42", "Fixture", "romm", "com.provenance.jaguar", {}};
+    const auto addons = client.addons(game);
+    CHECK(requests == std::vector<std::string>{"http://localhost:8080/api/roms/42/simple"});
+    CHECK(addons.size() == 2);
+    if (addons.size() != 2) return;
+    CHECK(addons[0].canBoot(game) && !addons[1].canBoot(game));
+    CHECK(addons[0].rommSha1 == "1234567890abcdef1234567890abcdef12345678");
+    CHECK(addons[0].endpoint.find("file_ids=2&") != std::string::npos);
+    CHECK(addons[1].endpoint.find("file_ids=3&") != std::string::npos);
+}
+
+static void rommGatewayContract(const fs::path& root) {
+    const std::string origin = "http://localhost:8080";
+    const std::string rom = "cartridge";
+    const std::string patch = "PATCHEOF";
+    const std::string hash = sha256Hex(patch.data(), patch.size());
+    const std::string companion = "/api/roms/42/ecs-companions";
+    const std::string content = companion + "/" + hash + "/content";
+    std::vector<std::string> requests;
+    const ecs::Client gateway(origin, "gateway-fixture-token",
+        [&](const std::string& url, http::Response& response, uint64_t limit,
+            const std::atomic<bool>*, const http::Options& options) {
+            CHECK(url.rfind(origin, 0) == 0);
+            CHECK(options.bearerToken == "gateway-fixture-token" && !options.followRedirects);
+            const std::string path = url.substr(origin.size());
+            requests.push_back(path);
+            std::string body;
+            if (path == "/api/platforms") {
+                body = R"([{"id":7,"slug":"jaguar","ecs_system_id":"com.provenance.jaguar"}])";
+            } else if (path.rfind("/api/roms?", 0) == 0) {
+                CHECK(path.find("&platform_ids=7&") != std::string::npos);
+                body = R"({"items":[{"id":42,"platform_id":7,"fs_name":"Fixture.j64"}],"total":1})";
+            } else if (path == companion) {
+                body = R"({"items":[{"kind":"patch","filename":"Test.ips","sizeBytes":8,"id":")" + hash +
+                       R"(","sha256":")" + hash + R"(","contentPath":")" + content + R"("}]})";
+            } else if (path == content) {
+                body = patch;
+            } else if (path == "/api/roms/42") {
+                body = R"({"id":42,"fs_name":"Fixture.j64","fs_size_bytes":9})";
+            } else if (path == "/api/roms/42/content/Fixture.j64") {
+                body = rom;
+            } else {
+                CHECK(false);
+                return false;
+            }
+            response.status = 200;
+            if (options.write) {
+                CHECK(body.size() == limit);
+                response.bytesReceived = body.size();
+                return options.write(body.data(), body.size());
+            }
+            response.body.assign(body.begin(), body.end());
+            return true;
+        }, ecs::Protocol::RomM);
+    const auto libraries = gateway.libraries();
+    CHECK(libraries.size() == 1 && libraries.front().id == "gateway:7,|");
+    if (libraries.empty()) return;
+    const auto page = gateway.games(libraries.front().id, "", "com.provenance.jaguar", "");
+    CHECK(page.games.size() == 1);
+    if (page.games.empty()) return;
+    const auto& game = page.games.front();
+    CHECK(game.entityType == "gateway");
+    const auto addons = gateway.addons(game);
+    CHECK(addons.size() == 1 && requests.size() == 3 && requests.back() == companion);
+    if (addons.empty()) return;
+    CHECK(addons.front().canBoot(game));
+    CHECK(bytes(gateway.downloadAddon(addons.front(), root.u8string(), nullptr)) == patch);
+    CHECK(bytes(gateway.download(game, root.u8string(), nullptr)) == rom);
 }
 
 static void rommArtworkPaths() {
@@ -141,7 +255,9 @@ static void persistedServerIdentity(const fs::path& root) {
 }
 
 static void tests(const fs::path& root) {
-    rommGatewayContract();
+    nativeAddons(root);
+    rommAddons();
+    rommGatewayContract(root);
     rommArtworkPaths();
     persistedServerIdentity(root);
     CHECK(ecs::normalizeOrigin("HTTP://Example.COM:080/") == "http://example.com");
@@ -347,6 +463,26 @@ static int network(const std::string& origin, const std::string& rommOrigin, con
     if (!wait(browser) || !browser.launchReady) return 4;
     CHECK(bytes(fs::u8path(browser.readyPath)) == bytes(fs::u8path(managedLaunch)));
     CHECK(fs::u8path(browser.readyPath).stem() != fs::u8path(managedLaunch).stem());
+    browser.selectGame(1);
+    browser.loadAddons();
+    CHECK(wait(browser) && browser.addonsLoaded && browser.addons.size() == 1);
+    if (browser.addons.size() != 1) return 8;
+    browser.downloadAddon(browser.addons[0], true);
+    CHECK(wait(browser) && browser.patchReady.has_value());
+    if (!browser.patchReady) return 9;
+    CHECK(browser.patchReady->base == browser.readyPath);
+    CHECK(bytes(fs::u8path(browser.patchReady->patch)) == "PATCHEOF");
+    CHECK(bytes(fs::u8path(browser.patchReady->base)) == bytes(fs::u8path(managedLaunch)));
+    std::printf("SERVER_PATCH %s\n", browser.patchReady->patch.c_str());
+    const ecs::Client denied(origin, "deny-companion");
+    bool authorizationReported = false;
+    try {
+        denied.downloadAddon(browser.addons.front(), root.u8string(), nullptr);
+    } catch (const std::runtime_error& error) {
+        authorizationReported = std::string(error.what()).find("This token cannot read") != std::string::npos;
+    }
+    CHECK(authorizationReported);
+
     CHECK(wait(offline) && !offline.message.empty() && offline.games.empty());
     CHECK(wait(romm) && romm.games.size() == 1 && romm.games.front().id == browser.games.front().id);
     CHECK(romm.nextCursor == "1" && browser.nextCursor.empty() && browser.games.size() == 2);
@@ -365,6 +501,15 @@ static int network(const std::string& origin, const std::string& rommOrigin, con
         return 6;
     }
     const std::string rommLaunch = romm.readyPath;
+    romm.selectGame(0);
+    romm.loadAddons();
+    CHECK(wait(romm) && romm.addonsLoaded && romm.addons.size() == 2);
+    if (romm.addons.size() != 2) return 10;
+    CHECK(romm.addons[0].canBoot(romm.games[0]) && !romm.addons[1].canBoot(romm.games[0]));
+    romm.downloadAddon(romm.addons[1], false);
+    CHECK(wait(romm) && !romm.patchReady && romm.message.rfind("Saved add-on to ", 0) == 0);
+    CHECK(bytes(fs::u8path(romm.message.substr(16))) == "mod-data");
+
     CHECK(bytes(fs::u8path(rommLaunch)) == bytes(fs::u8path(managedLaunch)));
     CHECK(fs::u8path(rommLaunch).stem() != fs::u8path(managedLaunch).stem());
     romm.system = 1;

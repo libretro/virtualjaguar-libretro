@@ -21,7 +21,10 @@ public:
     void pump();
     void connect();
     void browse(int library, bool append = false);
+    void selectGame(int game);
+    void loadAddons();
     void download(int game);
+    void downloadAddon(const ecs::Addon& addon, bool boot);
     ArtView cover(const ecs::Game& game, LibraryService& library);
     void clearCovers();
     void cancel() { cancel_.store(true); }
@@ -39,16 +42,25 @@ public:
     std::string message, credentialNotice, nextCursor, readyPath;
     std::vector<ecs::Library> libraries;
     std::vector<ecs::Game> games;
+    std::vector<ecs::Addon> addons;
+    bool addonsLoaded = false;
+    struct PatchLaunch {
+        std::string base, patch;
+        ecs::Addon addon;
+    };
+    std::optional<PatchLaunch> patchReady;
     uint64_t received() const { return received_.load(); }
     uint64_t total() const { return total_.load(); }
 
 private:
     friend class ContentServerBrowser;
-    enum class Kind { Libraries, Games, Download, Error };
+    enum class Kind { Libraries, Games, Addons, Download, AddonDownload, Error };
     struct Result {
         Kind kind = Kind::Error;
         std::vector<ecs::Library> libraries;
         ecs::Page page;
+        std::vector<ecs::Addon> addons;
+        std::optional<PatchLaunch> patch;
         std::string path, error;
         bool append = false;
     };
