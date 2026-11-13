@@ -53,7 +53,22 @@ FetchContent_Declare(winsparkle_sdk
     URL_HASH SHA256=6037df37fc263bd1650a1c4949681a9d40ffe991d01f35892a406cb5d103c976
     SOURCE_SUBDIR unused)
 FetchContent_MakeAvailable(winsparkle_sdk)
-set(_vj_sdk_bin "${winsparkle_sdk_SOURCE_DIR}/${_vj_sdk_arch}/Release")
+# The release ZIP also contains __MACOSX, so CMake retains its wrapper directory.
+set(_vj_sdk_root "${winsparkle_sdk_SOURCE_DIR}")
+if(IS_DIRECTORY "${_vj_sdk_root}/WinSparkle-0.9.4")
+    string(APPEND _vj_sdk_root "/WinSparkle-0.9.4")
+endif()
+set(_vj_sdk_bin "${_vj_sdk_root}/${_vj_sdk_arch}/Release")
+foreach(_vj_sdk_file
+        "${_vj_sdk_root}/include/winsparkle.h"
+        "${_vj_sdk_root}/COPYING"
+        "${_vj_sdk_root}/COPYING.expat"
+        "${_vj_sdk_bin}/WinSparkle.lib"
+        "${_vj_sdk_bin}/WinSparkle.dll")
+    if(NOT EXISTS "${_vj_sdk_file}")
+        message(FATAL_ERROR "WinSparkle SDK is missing ${_vj_sdk_file}")
+    endif()
+endforeach()
 
 configure_file("${CMAKE_CURRENT_LIST_DIR}/winsparkle_config.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/winsparkle_config.h" @ONLY)
@@ -61,15 +76,15 @@ target_sources(virtualjaguar PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../src/platfo
 target_include_directories(virtualjaguar PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../src/platform")
 target_compile_definitions(virtualjaguar PRIVATE VJ_WINDOWS_DIRECT_UPDATES=1)
 target_include_directories(virtualjaguar PRIVATE
-    "${winsparkle_sdk_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}")
+    "${_vj_sdk_root}/include" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(virtualjaguar PRIVATE "${_vj_sdk_bin}/WinSparkle.lib")
 add_custom_command(TARGET virtualjaguar POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_vj_sdk_bin}/WinSparkle.dll"
         "$<TARGET_FILE_DIR:virtualjaguar>")
 install(FILES "${_vj_sdk_bin}/WinSparkle.dll" DESTINATION bin)
-install(FILES "${winsparkle_sdk_SOURCE_DIR}/COPYING"
+install(FILES "${_vj_sdk_root}/COPYING"
     DESTINATION bin RENAME WinSparkle-LICENSE.txt)
-install(FILES "${winsparkle_sdk_SOURCE_DIR}/COPYING.expat"
+install(FILES "${_vj_sdk_root}/COPYING.expat"
     DESTINATION bin RENAME WinSparkle-COPYING.expat.txt)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/winsparkle-build.txt"
     CONTENT "${_vj_update_channel} ${_vj_update_arch} ${_vj_update_version}\n")
