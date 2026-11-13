@@ -37,6 +37,7 @@ const Exact kExact[] = {
     {"ui.tv_hint_shown", KeyClass::Interface},
     {"ui.fullscreen_autohide_menu", KeyClass::Interface},
     {"ui.viewports", KeyClass::Interface},    {"ui.menubar_in_window", KeyClass::Interface},
+    {"updates.windows.background", KeyClass::Interface},
     {"ui.emu_thread", KeyClass::Interface},   // Interface > Performance > Emulation thread (#967)
     {"library.art", KeyClass::Interface},
     {"library.hide_on_launch", KeyClass::Interface}, {"library.size", KeyClass::Interface},

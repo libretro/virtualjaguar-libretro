@@ -1,5 +1,12 @@
 #include "platform/file_access.h"
 #include "app.h"
+
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+#include "platform/winsparkle_updates.h"
+#endif
+#ifdef _WIN32
+#include "platform/windows_portable_updates.h"
+#endif
 #include "build_channel.h"
 #include "gl_context.h"
 #include "startup_screen.h"
@@ -240,6 +247,9 @@ void App::loadConfig() {
 // The settings that live in plain members, read from the config with their defaults.  Settings > Reset
 // erases keys and calls this again, so it is the one place that knows what "default" means.
 void App::applySettingsFromConfig() {
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    windows_updates::setBackgroundChecks(cfg.getBool(windows_updates::kBackgroundPreference, false));
+#endif
     present.integerScale = cfg.getBool("video.integer", false);
     present.linearFilter = cfg.getBool("video.linear", false);
     present.stretch = cfg.getBool("video.stretch", false);
@@ -594,6 +604,12 @@ bool App::startupFrame(const char* status) {
 }
 
 void App::shutdown() {
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    windows_updates::stop();
+#endif
+#ifdef _WIN32
+    windows_portable_updates::stop();
+#endif
     contentServers.stop();
     beginQuit();   // a hosted halt ends within one pump wait; the auto-save and the unload below need the core out of it
     // Quitting: keep where the game was -- but never wait on a core that is still halted after beginQuit's bounded wait, and
@@ -1589,6 +1605,9 @@ bool App::openContentImpl(const std::string& pathIn, const std::shared_ptr<const
         toast(kHaltedToast, 2.5, 2);
         return false;
     }
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    if (!windows_updates::setCanInstall(false)) return false;
+#endif
     syncHardcoreLock();   // the load below settles which options are locked
     const std::string path = absolutePath(pathIn);
     ips::Bytes replaced;
@@ -1689,6 +1708,9 @@ bool App::openNoContent() {
         toast(kHaltedToast, 2.5, 2);
         return false;
     }
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    if (!windows_updates::setCanInstall(false)) return false;
+#endif
     syncHardcoreLock();   // the load below settles which options are locked
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
@@ -2842,7 +2864,24 @@ int App::runInteractive(const CliArgs& a) {
     perf.forceH = a.perfShaderH;
     video.perf = &perf;
 
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    if (!quitRequested() && paths.instance == 1 && !paths.portable) {
+        windows_updates::setCanInstall(!host.isLoaded());
+        windows_updates::start(cfg.getBool(windows_updates::kBackgroundPreference, false));
+    }
+#endif
     while (!quitRequested()) {
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+        if (windows_updates::shutdownRequested()) break;
+        windows_updates::setCanInstall(!host.isLoaded());
+        windows_updates::tick();
+#endif
+#ifdef _WIN32
+        if (paths.portable) {
+            const auto updateNotice = windows_portable_updates::poll();
+            if (!updateNotice.empty()) toast(updateNotice, 8.0);
+        }
+#endif
         if (perf.frameBegin()) {
             int pw = 0, ph = 0;
             SDL_GetWindowSizeInPixels(window_, &pw, &ph);
@@ -3029,6 +3068,9 @@ int App::runInteractive(const CliArgs& a) {
                            (void*)(uintptr_t)SDL_GetWindowID(window_));
         perf.frameEnd();
     }
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    windows_updates::stop();
+#endif
     beginQuit();   // before anything below waits on the core: a hosted halt must be gone
     latchWaker_.stop();   // (it pushes SDL events: not after SDL is gone)
 

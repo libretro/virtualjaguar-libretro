@@ -571,6 +571,7 @@ message(STATUS "TV mode default for a fresh config: ${VJ_TV_DEFAULT}")
 message(STATUS "Shader preset default for a fresh config: ${VJ_SHADER_DEFAULT}")
 message(STATUS "Build channel: ${VJ_BUILD_CHANNEL} (emulation thread default ${VJ_EMU_THREAD_DEFAULT_VALUE})")
 if(WIN32)
+    include(packaging/windows/winsparkle.cmake)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses; platform_windows.cpp: WSAStartup for the core
     target_link_libraries(virtualjaguar PRIVATE shell32)           # platform_windows.cpp: SHAddToRecentDocs, ShellExecuteW
 endif()
