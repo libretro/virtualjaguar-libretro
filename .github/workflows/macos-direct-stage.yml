@@ -1,0 +1,88 @@
+name: macOS direct fixture staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Fixture update channel
+        type: choice
+        options: [stable, nightly]
+        default: nightly
+      version:
+        description: Numeric display version (X.Y.Z)
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      channel:
+        description: stable or nightly
+        type: string
+        required: true
+      version:
+        description: Numeric display version (X.Y.Z)
+        type: string
+        required: true
+      run_number:
+        description: Calling release workflow run number
+        type: string
+        required: true
+    outputs:
+      artifact_name:
+        description: Name of the CI-only macOS fixture artifact
+        value: ${{ jobs.stage.outputs.artifact_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    outputs:
+      artifact_name: ${{ steps.upload-input.outputs.name }}
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      VERSION: ${{ inputs.version }}
+      SEQUENCE: ${{ inputs.run_number || github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate fixture inputs
+        id: upload-input
+        shell: bash
+        run: |
+          [[ "$CHANNEL" =~ ^(stable|nightly)$ ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$SEQUENCE" =~ ^[1-9][0-9]*$ ]]
+          # The shared release stager already excludes ci-core-* intermediates.
+          echo "name=ci-core-macos-direct-fixture-$CHANNEL-$VERSION-$SEQUENCE-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      - name: Build both macOS architectures
+        shell: bash
+        run: |
+          packaging=app/packaging/macos
+          sdk="$RUNNER_TEMP/sparkle-sdk"
+          bash "$packaging/fetch-sparkle.sh" "$sdk"
+          build_channel="$CHANNEL"
+          if [ "$CHANNEL" = stable ]; then build_channel=release; fi
+          for arch in arm64 x86_64; do
+            cmake -S app -B "build-direct-$arch" -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+              -DVJ_MAC_DIRECT_SPARKLE_SDK="$sdk" -DVJ_APP_SIGN_DEV_BUILD=OFF \
+              -DVJ_APP_BUILD_TESTS=OFF -DVJ_APP_FETCH_LIBRASHADER=OFF \
+              -DVJ_PACKAGE_VERSION="$VERSION" -DVJ_BUILD_CHANNEL="$build_channel"
+            cmake --build "build-direct-$arch" --config Release --parallel 4
+            cmake --install "build-direct-$arch" --config Release --prefix "$PWD/direct-$arch"
+          done
+          bash "$packaging/make-universal.sh" direct-arm64 direct-x86_64 direct-universal
+          bash "$packaging/stage-sparkle-fixture.sh" \
+            direct-universal "$sdk" "$CHANNEL" "$VERSION" "$SEQUENCE" direct-fixture
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.upload-input.outputs.name }}
+          path: direct-fixture/
+          if-no-files-found: error
+          retention-days: 7

@@ -6,6 +6,9 @@
 #include <cstdlib>
 
 #include "platform/platform_os.h"
+#ifdef VJ_MAC_DIRECT_SPARKLE
+#include "platform/sparkle_macos.h"
+#endif
 
 namespace vj {
 namespace platform {
@@ -63,6 +66,9 @@ void renderAll() {
 
 void updateState(const MenuState& s) {
     if (g_haveState && s == g_state) return;
+#ifdef VJ_MAC_DIRECT_SPARKLE
+    sparkle::setGameLoaded(s.gameLoaded);
+#endif
     g_state = s;
     g_haveState = true;
     renderAll();
