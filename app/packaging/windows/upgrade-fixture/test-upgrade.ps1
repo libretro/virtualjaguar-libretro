@@ -77,6 +77,30 @@ function Click([string]$Name) {
     }
 }
 
+function Add-FixtureTrust([string]$Certificate) {
+    # The hosted runner is elevated. CurrentUser Root imports may show an
+    # interactive confirmation dialog in the runner's unattended desktop.
+    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine')
+    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($Certificate)
+    try {
+        $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+        $store.Add($cert)
+        $script:trusted += $cert
+    } finally {
+        $store.Close()
+    }
+}
+
+function Run-Setup([string]$Executable, [string[]]$Arguments, [string]$Label) {
+    Write-Host "Starting $Label"
+    $process = Start-Process -FilePath $Executable -ArgumentList $Arguments -PassThru
+    if (!$process.WaitForExit(120000)) {
+        Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+        throw "Timed out during $Label"
+    }
+    if ($process.ExitCode -ne 0) { throw "$Label exited $($process.ExitCode)" }
+}
+
 function Assert-Version([string]$Executable, [string]$Expected) {
     $version = (& $Executable --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $version -ne $Expected) { throw "Expected build $Expected, got '$version'" }
@@ -88,7 +112,7 @@ function Assert-Version([string]$Executable, [string]$Expected) {
 
 try {
     if ($Signing -eq 'fixture') {
-        $trusted += Import-Certificate -FilePath (Join-Path $root 'fixture-authenticode.cer') -CertStoreLocation 'Cert:\CurrentUser\Root'
+        Add-FixtureTrust (Join-Path $root 'fixture-authenticode.cer')
     }
     foreach ($setup in @($oldSetup, $newSetup)) {
         $signature = Get-AuthenticodeSignature -LiteralPath $setup
@@ -100,7 +124,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not create loopback TLS certificate' }
     & $openssl x509 -in $certPem -outform DER -out $certDer
     if ($LASTEXITCODE -ne 0) { throw 'Could not encode loopback TLS certificate' }
-    $trusted += Import-Certificate -FilePath $certDer -CertStoreLocation 'Cert:\CurrentUser\Root'
+    Write-Host 'Trusting loopback TLS certificate'
+    Add-FixtureTrust $certDer
+    Write-Host 'Starting loopback HTTPS fixture'
     $script = Join-Path $PSScriptRoot 'feed.py'
     $serverArgs = @(('"{0}"' -f $script), 'serve', ('"{0}"' -f $root), ('"{0}"' -f $tlsKey), '--cert', ('"{0}"' -f $certPem))
     $server = Start-Process -FilePath (Get-Command python).Source -ArgumentList $serverArgs -RedirectStandardError (Join-Path $logs 'https.log') -PassThru
@@ -122,8 +148,7 @@ try {
         $playing = Join-Path $install 'fixture-playing'
         $args = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/$scope",
             ('/DIR="{0}"' -f $install), ('/LOG="{0}\setup-{1}.log"' -f $logs, $scope))
-        $setup = Start-Process -FilePath $oldSetup -ArgumentList $args -PassThru -Wait
-        if ($setup.ExitCode -ne 0) { throw "Initial $scope install exited $($setup.ExitCode)" }
+        Run-Setup $oldSetup $args "initial $scope install"
         Assert-Version $exe '101'
         $previousHash = (Get-FileHash -LiteralPath $exe).Hash
 
@@ -180,14 +205,13 @@ try {
         if ((Get-FileHash -LiteralPath $save).Hash -ne $originalSave -or
             (Get-FileHash -LiteralPath $config).Hash -ne $originalConfig) { throw 'User data changed' }
         Write-Host "PASS $Arch $scope 101 -> 102 with scope, custom path, saves and settings preserved"
-        $removed = Start-Process -FilePath (Join-Path $install 'unins000.exe') -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-        if ($removed.ExitCode -ne 0) { throw "Uninstall exited $($removed.ExitCode)" }
+        Run-Setup (Join-Path $install 'unins000.exe') @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') "$scope uninstall"
     }
 } finally {
     if ($appProcess -and !$appProcess.HasExited) { Stop-Process -Id $appProcess.Id -ErrorAction SilentlyContinue }
     if ($server -and !$server.HasExited) { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
     foreach ($cert in $trusted) {
-        Remove-Item -LiteralPath "Cert:\CurrentUser\Root\$($cert.Thumbprint)" -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "Cert:\LocalMachine\Root\$($cert.Thumbprint)" -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $tlsKey -ErrorAction SilentlyContinue
 }
