@@ -284,6 +284,8 @@ void App::applySettingsFromConfig() {
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     emuThreadPref = cfg.has("ui.emu_thread") ? (cfg.getBool("ui.emu_thread", false) ? 1 : 0) : -1;
+    breakAtBoot = cfg.getBool("debug.break_at_boot", false);
+    reloadOnChange = cfg.getBool("debug.reload_on_change", false);
     // No stored ui.tv_mode: the build's default (Auto unless the package says otherwise).  An unknown value does the same.
     tvSetting = tv::defaultSetting(VJ_TV_DEFAULT_SETTING);
     if (cfg.has("ui.tv_mode")) tv::settingFromKey(cfg.get("ui.tv_mode"), tvSetting);
@@ -744,6 +746,7 @@ void App::wireHost() {
     debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
     debug.core().onHalt.push_back([this](int target, unsigned pc, int reason) {   // the emulation thread (inline: the UI thread)
         audio.setPaused(true);                            // no stale buffer droning while the game is stopped
+        // (a watchpoint's `pc` is the watched address: the same line, and the reason says which it is)
         if (reason != VJ_DBG_STOP_STEP) std::fprintf(stderr, "[debug] halt: %s at $%06X (%s)\n", dbgTargetName(target), pc, dbgReasonName(reason));
     });
     debug.core().onResume.push_back([this] {
@@ -753,7 +756,9 @@ void App::wireHost() {
     debug.onHaltUi.push_back([this](int target, unsigned pc, int reason) {   // the UI thread, from syncHalt()
         if (reason == VJ_DBG_STOP_STEP) return;
         char msg[96];
-        std::snprintf(msg, sizeof msg, "Halted: %s at $%06X - F9 continues, F10 steps", dbgTargetName(target), pc);
+        std::snprintf(msg, sizeof msg, reason == VJ_DBG_STOP_WATCHPOINT ? "Watchpoint: %s touched $%06X - F9 continues, F10 steps"
+                                                                         : "Halted: %s at $%06X - F9 continues, F10 steps",
+                      dbgTargetName(target), pc);
         toast(msg, 4.0);
     });
     debug.onResumeUi.push_back([this] {
@@ -1435,6 +1440,7 @@ void App::haltedFrame() {
     ach.pump();
     cheatsPump(*this);   // community store installs/checks finish during a halt too
     syncDebug();
+    pollContentChange();   // inline, a rebuild seen here is only noted: the reload runs once the core is out of retro_run()
     video.upload(host.frame());
     applyViewports();
     ImGui_ImplOpenGL3_NewFrame();
@@ -1628,8 +1634,18 @@ bool App::openContentImpl(const std::string& pathIn, const std::shared_ptr<const
     std::vector<std::string> overrideErrors;
     // Everything that touches the core runs where the core lives: on the emulation thread at a frame boundary when
     // threaded (this thread waits), right here otherwise.
-    const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors, cartridge, identity); }, giveUp);
+    // The debugger's part of the load (dev_workflow.cpp): a reload of the same program keeps its breakpoints, moved to
+    // where their symbols are in the new build, and Break at start halts before the first instruction.
+    DebugBoot boot = planDebugBoot(path);
+    const bool ok = emu.call(
+        [&] {
+            if (!openContentOnCore(path, err, overrideErrors, cartridge, identity)) return false;
+            armDebugBootOnCore(boot);   // after the new core is up, before its first frame
+            return true;
+        },
+        giveUp);
     debug.rearmBreakpoints();   // the list is per game (a no-op after the swap); back in the core if the old game stayed
+    finishDebugBoot(boot, ok, path);
     if (!ok && err.empty()) err = "the debugger halted the game again";
     if (!ok && !host.isLoaded()) transientCart_.reset();
     host.pinSnapshot();
@@ -1656,7 +1672,8 @@ bool App::openContentImpl(const std::string& pathIn, const std::shared_ptr<const
     debug.requestRefresh();
     discordNoteGameStarted(*this);
     toast("Loaded " + host.contentName());
-    if (!noResume) offerResume();
+    // (Break at start is for looking at the boot: an auto-save loaded a few frames after Continue would jump away from it.)
+    if (!noResume && !boot.haltAtBoot) offerResume();
     saveConfig();
     return true;
 }
@@ -1719,8 +1736,16 @@ bool App::openNoContent() {
     const std::function<bool()> giveUp = releaseForCall();
     autoSave(giveUp);
     std::string err;
-    const bool ok = emu.call([&] { return openNoContentOnCore(err); }, giveUp);
+    DebugBoot boot = planDebugBoot(std::string());   // Break at start applies to a BIOS boot too
+    const bool ok = emu.call(
+        [&] {
+            if (!openNoContentOnCore(err)) return false;
+            armDebugBootOnCore(boot);
+            return true;
+        },
+        giveUp);
     debug.rearmBreakpoints();   // see openContent
+    finishDebugBoot(boot, ok, std::string());
     if (!ok && err.empty()) err = "the debugger halted the game again";
     if (ok || !host.isLoaded()) transientCart_.reset();
     host.pinSnapshot();
@@ -1879,9 +1904,12 @@ bool App::reset() {
     // ach.onReset() drives rc_client (rc_client_reset raises events): on the emulation thread, with do_frame.
     // Threaded and halted: release the halt first (the reset runs once the core resumes); the breakpoint list survives
     // and is back in the core before the first frame after the reset (#1081 M1).
-    const bool ran = callReleased([this] {
+    // Break at start: a Reset is a boot too.  Armed inside the same call, so the halt is the reset's first instruction.
+    const bool bootHalt = breakAtBoot && debug.enabled() && toolsAllowedNextGame();
+    const bool ran = callReleased([this, bootHalt] {
         host.reset();
         ach.onReset();
+        if (bootHalt) debug.armBootHaltOnCore();
     });
     debug.requestRefresh();
     toast(ran ? std::string("Reset") : std::string(kHaltedToast), ran ? 3.0 : 2.5, ran ? 1 : 2);   // not run: halted again
@@ -2702,6 +2730,15 @@ int App::run(const CliArgs& a) {
     // The emulation thread (#967) is decided once per run: switching it live would move the core between threads.
     // Headless runs stay inline unless asked (the smoke tests' hashes are inline hashes), whatever the setting says.
     emuThreadThisRun_ = a.emuThread >= 0 ? a.emuThread == 1 : (!a.headless && emuThreadWanted());
+    // The debugger's command line (dev_workflow.cpp).  A headless run takes them from the command line only: a saved
+    // "Break at start" must not park a script that has no window to continue from.
+    if (a.headless) breakAtBoot = reloadOnChange = false;
+    if (a.breakAtBoot) breakAtBoot = true;
+    if (a.reloadOnChange) reloadOnChange = true;
+    devBreaks_ = a.breaks;
+    devWatch_ = a.watch;
+    devSpecsPending_ = !devBreaks_.empty() || !devWatch_.empty();
+    if (!a.symbols.empty()) debug.symbols().setPicked(absolutePath(a.symbols), true);
     // The headless TV script steps host.runFrame() itself and never starts the thread, so it always runs inline.
     if (a.headless && !a.tvTestScript.empty() && emuThreadThisRun_) {
         emuThreadThisRun_ = false;
@@ -2936,6 +2973,7 @@ int App::runInteractive(const CliArgs& a) {
         ach.pump();
         cheatsPump(*this);   // community cheat store: finished requests, pack messages (also with the window closed)
         syncDebug();
+        pollContentChange();   // Tools > Reload when the file changes (dev_workflow.cpp)
         discordTick(*this);
 #ifdef VJ_HAVE_NEURO
         neuroTick(*this);

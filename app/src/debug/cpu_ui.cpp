@@ -40,7 +40,7 @@ struct TabState {
     unsigned nRows = 24;              // rows the listing showed last (the request asks for this many)
     unsigned gen = 0;                 // bumped by a jump (Go to, a breakpoint click): an older nav answer is dropped
     unsigned followPc = ~0u;          // follow-PC already walked back for this pc and it still was not on screen
-    char gotoBuf[16] = "";
+    char gotoBuf[64] = "";            // an address or a symbol name
     std::vector<DisasmLine> rows;     // the published rows of the last answered request for this tab
     vj_debug_regs regs, prev;         // the current registers, and what they were at the previous halt
     bool haveRegs = false, havePrev = false;
@@ -62,8 +62,17 @@ struct CpuState {
     std::string status;
     bool statusErr = false;
     bool hooked = false;
+    // The watchpoint row under the breakpoint list.
+    char watchBuf[64] = "";           // an address or a symbol name
+    int watchLen = 1;                 // index into kWatchLens
+    int watchKind = 0;                // index into kWatchKinds
 };
 CpuState g;
+
+const unsigned kWatchLens[] = {1, 2, 4, 8, 16, 64, 256};
+const char* const kWatchLenNames[] = {"1 byte", "2 bytes", "4 bytes", "8 bytes", "16 bytes", "64 bytes", "256 bytes"};
+const unsigned kWatchKinds[] = {VJ_DBG_WATCH_WRITE, VJ_DBG_WATCH_READ, VJ_DBG_WATCH_WRITE | VJ_DBG_WATCH_READ};
+const char* const kWatchKindNames[] = {"writes", "reads", "reads and writes"};
 
 void setStatus(const std::string& m, bool err) {
     g.status = m;
@@ -385,6 +394,11 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
     const float xBytes = xAddr + cw * 8.5f;
     const float xText = xBytes + cw * 17.0f;
     const bool temp = g.ctl && g.ctl->temp().active() && g.ctl->temp().target() == target;
+    // Names from the program's symbols (the content, a .cof beside it, or one loaded in the Symbols window): a label
+    // takes the place of the instruction's bytes on the line it names, and an operand that is a label gets its name.
+    const SymbolStore& sym = s.symbols();
+    const bool named = !sym.empty();
+    const ImU32 colLabel = ImGui::GetColorU32(kGreen);
 
     for (int i = 0; i < (int)t.rows.size(); i++) {
         const DisasmLine& L = t.rows[(size_t)i];
@@ -421,10 +435,13 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
             }
             ImGui::EndPopup();
         }
-        if (ImGui::IsItemHovered() && xText + ImGui::CalcTextSize(L.text.c_str()).x > width) {
+        const Symbol* label = named ? sym.at(L.addr) : nullptr;
+        const std::string text = named && L.len != 0 ? sym.annotate(L.text) : L.text;
+        if (ImGui::IsItemHovered() && (label || xText + ImGui::CalcTextSize(text.c_str()).x > width)) {
             ui::beginWrappedTooltip();
+            if (label) ImGui::TextColored(kGreen, "%s:", label->name.c_str());
             ImGui::Text("$%06X  %s", L.addr, L.bytes.c_str());
-            ImGui::TextUnformatted(L.text.c_str());
+            ImGui::TextUnformatted(text.c_str());
             ui::endWrappedTooltip();
         }
         ImGui::PopID();
@@ -444,10 +461,16 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
         char a[16];
         std::snprintf(a, sizeof a, "$%06X", L.addr);
         dl->AddText(ImVec2(p.x + xAddr, p.y), isPc ? colText : colDim, a);
-        std::string bytes = L.bytes;
-        if (bytes.size() > 14) bytes = bytes.substr(0, 14) + "..";
-        dl->AddText(ImVec2(p.x + xBytes, p.y), colDim, bytes.c_str());
-        dl->AddText(ImVec2(p.x + xText, p.y), L.len != 0 ? colText : colDim, L.text.c_str());
+        if (label) {
+            std::string name = label->name + ":";
+            if (name.size() > 16) name = name.substr(0, 14) + "..";
+            dl->AddText(ImVec2(p.x + xBytes, p.y), colLabel, name.c_str());
+        } else {
+            std::string bytes = L.bytes;
+            if (bytes.size() > 14) bytes = bytes.substr(0, 14) + "..";
+            dl->AddText(ImVec2(p.x + xBytes, p.y), colDim, bytes.c_str());
+        }
+        dl->AddText(ImVec2(p.x + xText, p.y), L.len != 0 ? colText : colDim, text.c_str());
     }
     ImGui::EndChild();
 }
@@ -488,9 +511,69 @@ void drawBreakpoints(DebugSession& s, float height) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show in the listing");
         ImGui::SameLine();
         if (ImGui::SmallButton("Remove")) s.removeBreakpoint(b.target, b.addr);
+        if (!b.symbol.empty()) {   // the label it is tied to: where it goes after a rebuild
+            ImGui::SameLine();
+            ImGui::TextColored(kGreen, "%s", DebugSession::boundName(b.symbol, b.symbolOffset).c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Follows this symbol when the program is rebuilt and reloaded");
+        }
         ImGui::PopID();
     }
     ImGui::EndChild();
+}
+
+// ---- the watchpoint ---------------------------------------------------------------------------------------------
+
+float watchRowHeight() { return ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing(); }
+
+void setWatchFromRow(DebugSession& s) {
+    uint32_t a = 0;
+    unsigned h = 0;
+    if (!s.symbols().resolve(g.watchBuf, a)) {
+        if (!parseHex(g.watchBuf, h, true)) {
+            setStatus("Not an address or a symbol", true);
+            return;
+        }
+        a = h;
+    }
+    if (s.setWatch(a, kWatchLens[g.watchLen], kWatchKinds[g.watchKind])) setStatus("Watchpoint set", false);
+    else setStatus("Could not set the watchpoint (the range leaves the bus, or a gdb client holds the one slot)", true);
+}
+
+void drawWatch(DebugSession& s) {
+    const DebugWatch& w = s.watch();
+    const bool ok = s.watchSupported();
+    ImGui::BeginDisabled(!ok);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Watch");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ui::fitWidth(0.26f, 8.0f, 14.0f));
+    const bool enter = ImGui::InputTextWithHint("##watchaddr", "$address or symbol", g.watchBuf, sizeof g.watchBuf,
+                                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ui::em(7));
+    ImGui::Combo("##watchlen", &g.watchLen, kWatchLenNames, (int)(sizeof kWatchLens / sizeof kWatchLens[0]));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ui::em(10));
+    ImGui::Combo("##watchkind", &g.watchKind, kWatchKindNames, 3);
+    ImGui::SameLine();
+    if (ImGui::Button("Set##watch") || enter) setWatchFromRow(s);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!w.set);
+    if (ImGui::Button("Clear##watch")) {
+        s.clearWatch();
+        setStatus("Watchpoint cleared", false);
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    if (!ok) {
+        ui::hint("This core has no memory watchpoint.");
+    } else if (w.set) {
+        const std::string name = DebugSession::boundName(w.symbol, w.symbolOffset);
+        ImGui::TextColored(kYellow, "Halts when the 68000 %s $%06X%s%s  (%u byte%s)", w.kind == VJ_DBG_WATCH_READ ? "reads" : w.kind == VJ_DBG_WATCH_WRITE ? "writes" : "touches",
+                           w.addr, name.empty() ? "" : "  ", name.c_str(), w.len, w.len == 1 ? "" : "s");
+    } else {
+        ui::hint("One watchpoint: halts when the 68000 touches the range. GPU, DSP and blitter accesses do not trigger it.");
+    }
 }
 
 // ---- toolbar -------------------------------------------------------------------------------------------------------
@@ -508,7 +591,13 @@ void drawBanner(DebugSession& s) {
         const int ht = s.haltedTarget();
         ImGui::TextColored(kOrange, "HALTED");
         ImGui::SameLine();
-        ImGui::Text("%s at $%06X", targetName(ht), s.haltedPc());
+        const bool watch = s.haltReason() == VJ_DBG_STOP_WATCHPOINT;   // that halt's address is the watched one
+        ImGui::Text(watch ? "%s touched $%06X" : "%s at $%06X", targetName(ht), s.haltedPc());
+        const std::string where = s.symbols().describe(s.haltedPc());
+        if (!where.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(kGreen, "%s", where.c_str());
+        }
         const char* why = stopReasonName(s.haltReason());
         if (*why) {
             ImGui::SameLine();
@@ -571,16 +660,19 @@ void drawNav(DebugSession& s) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Go to");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(ui::fitWidth(0.3f, 8.0f, 12.0f));
-    if (ImGui::InputTextWithHint("##goto", "$address", t.gotoBuf, sizeof t.gotoBuf,
-                                 ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase |
-                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
+    ImGui::SetNextItemWidth(ui::fitWidth(0.3f, 8.0f, 16.0f));
+    if (ImGui::InputTextWithHint("##goto", s.symbols().empty() ? "$address" : "$address or symbol", t.gotoBuf, sizeof t.gotoBuf,
+                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
         unsigned a = 0;
-        if (parseHex(t.gotoBuf, a, true)) {
+        uint32_t named = 0;
+        if (s.symbols().resolve(t.gotoBuf, named)) {   // "main", "main+$12", or plain hex
+            gotoAddr(t, named);
+            setStatus("", false);
+        } else if (parseHex(t.gotoBuf, a, true)) {
             gotoAddr(t, a);
             setStatus("", false);
         } else {
-            setStatus("Not an address", true);
+            setStatus(s.symbols().empty() ? "Not an address" : "Not an address or a symbol", true);
         }
     }
     ImGui::SameLine();
@@ -592,7 +684,6 @@ void drawNav(DebugSession& s) {
         t.gen++;
     }
     if (ImGui::IsItemHovered()) ui::beginWrappedTooltip(), ImGui::TextUnformatted("Back to the program counter, and follow it."), ui::endWrappedTooltip();
-    (void)s;
 }
 
 void drawWindow(DebugSession& s) {
@@ -612,6 +703,7 @@ void drawWindow(DebugSession& s) {
     }
     if (!g.ctl) g.ctl = std::make_unique<CpuControl>(s);
     if (!s.attached()) g.ctl->forget();   // a Detach (or hardcore) cleared the core: no temporary breakpoint, nothing pending
+    s.symbols().ensure();   // the labels: read once per program (and again after a rebuild); nothing when there are none
 
     drawBanner(s);
     drawToolbar(s);
@@ -670,8 +762,9 @@ void drawWindow(DebugSession& s) {
         ImGui::EndChild();
         ImGui::TableSetColumnIndex(1);
         ImGui::BeginChild("##code", ImVec2(0, bodyH));
-        drawDisasm(s, tab, t, std::max(ui::em(8), bodyH - bpH - ImGui::GetTextLineHeightWithSpacing() * 2.0f));
+        drawDisasm(s, tab, t, std::max(ui::em(8), bodyH - bpH - watchRowHeight() - ImGui::GetTextLineHeightWithSpacing() * 2.0f));
         drawBreakpoints(s, bpH);
+        drawWatch(s);
         ImGui::EndChild();
         ImGui::EndTable();
     }
@@ -693,6 +786,20 @@ bool haveRegs() { return g.t[g.tab].haveRegs; }
 size_t rowCount() { return g.t[g.tab].rows.size(); }
 // What a margin click / the context menu's item / "Add at cursor" run (the greyed controls cannot be clicked headless).
 void toggleBreakpoint(DebugSession& s, int target, unsigned addr) { toggleBp(s, target, addr); }
+// What the Go to box and the watchpoint row's Set button run.
+bool gotoText(DebugSession& s, const std::string& text) {
+    uint32_t a = 0;
+    if (!s.symbols().resolve(text, a)) return false;
+    gotoAddr(g.t[g.tab], a);
+    return true;
+}
+unsigned listingTop() { return g.t[g.tab].top; }
+void setWatch(DebugSession& s, const std::string& where, int lenIndex, int kindIndex) {
+    std::snprintf(g.watchBuf, sizeof g.watchBuf, "%s", where.c_str());
+    g.watchLen = lenIndex;
+    g.watchKind = kindIndex;
+    setWatchFromRow(s);
+}
 const std::string& status() { return g.status; }
 bool statusIsError() { return g.statusErr; }
 }  // namespace cpu_test
@@ -738,8 +845,10 @@ void registerCpuTools(DebugSession& s) {
         g.t[target].lastPc = ~0u;
         setStatus("", false);
     });
-    s.onForcedClose.push_back([&s](const char*) {
-        g.open = false;
+    s.onForcedClose.push_back([&s](const char* why) {
+        // A reload of the same program keeps the window where it is: the new core's registers and listing arrive through
+        // the views' epoch (syncCore above), and the breakpoint list is the session's.
+        if (!why || std::strcmp(why, "reload") != 0) g.open = false;
         g.feed.release(s);
         if (g.ctl) g.ctl->forget();
         for (TabState& t : g.t) {

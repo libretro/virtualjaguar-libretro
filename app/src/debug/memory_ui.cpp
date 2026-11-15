@@ -703,12 +703,15 @@ void registerMemoryTools(DebugSession& s) {
     clut.isOpen = [] { return g_clutOpen; };
     clut.toggle = [] { g_clutOpen = !g_clutOpen; };
     s.registerTool(clut);
-    s.onForcedClose.push_back([&s](const char*) {
-        g_mem.open = false;
+    s.onForcedClose.push_back([&s](const char* why) {
+        // A reload of the same program keeps both windows where they are (the developer is looking at that address):
+        // an edit or a search in flight is dropped, and the bytes re-read through the views' epoch.
+        const bool reload = why && !std::strcmp(why, "reload");
+        if (!reload) g_mem.open = false;
         g_mem.editing = false;
         g_mem.job.reset();
-        g_clutOpen = false;
-        releaseViews(s);   // (the Palette window releases its own on its next draw)
+        if (!reload) g_clutOpen = false;
+        releaseViews(s);   // (the Palette window releases its own on its next draw; an open window re-states its requests)
     });
 }
 

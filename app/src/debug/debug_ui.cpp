@@ -53,7 +53,31 @@ void drawToolsMenu(App& app) {
         if (ImGui::MenuItem("Break", "F9", false, canBreak)) d.breakNow();
     }
     if (ImGui::MenuItem("Detach debugger", nullptr, false, d.attached())) d.detach();
+    // The developer loop (dev_workflow.cpp).  Settings, not actions: they can be chosen before any game is loaded.
+    ImGui::Separator();
+    const bool hardcore = d.hardcore();
+    if (ImGui::MenuItem("Break at start", nullptr, app.breakAtBoot, !hardcore)) app.setBreakAtBoot(!app.breakAtBoot);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", hardcore ? "Off while RetroAchievements hardcore mode is on"
+                                         : "Every game starts halted at its first instruction (a Reset too):\nset breakpoints, then Continue (F9)");
+    if (ImGui::MenuItem("Reload when the file changes", nullptr, app.reloadOnChange)) app.setReloadOnChange(!app.reloadOnChange);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Loads the program again when its file is rewritten (a rebuild).\nBreakpoints follow their symbols to the new build");
     ImGui::EndMenu();
+}
+
+// "68000 at $802000  main+$12", or for a watchpoint "68000 touched $004000  score" (that halt's address is the watched
+// one; the CPU debugger has the program counter).  The name comes from the symbols, when some are loaded.
+std::string debugHaltText(DebugSession& d) {
+    char buf[96];
+    const bool watch = d.haltReason() == VJ_DBG_STOP_WATCHPOINT;
+    std::snprintf(buf, sizeof buf, watch ? "%s touched $%06X" : "%s at $%06X", dbgTargetName(d.haltedTarget()), d.haltedPc());
+    std::string text = buf;
+    if (!d.symbols().stale() && !d.symbols().empty()) {   // never read a file from here: only what a window already loaded
+        const std::string name = d.symbols().describe(d.haltedPc());
+        if (!name.empty()) text += "  " + name;
+    }
+    return text;
 }
 
 void drawDebugOverlay(App& app, float areaX, float areaY) {
@@ -67,9 +91,9 @@ void drawDebugOverlay(App& app, float areaX, float areaY) {
     if (ImGui::Begin("##debug_halt_bar", nullptr, flags)) {
         ImGui::TextColored(ui::vec4(ui::pal().warning), d.haltByGdb() ? "HALTED by gdb" : "HALTED");
         ImGui::SameLine();
-        ImGui::Text("%s at $%06X", dbgTargetName(d.haltedTarget()), d.haltedPc());
+        ImGui::TextUnformatted(debugHaltText(d).c_str());
         const char* why = dbgReasonName(d.haltReason());
-        if (*why) {
+        if (*why && d.haltReason() != VJ_DBG_STOP_WATCHPOINT) {   // (the watchpoint's text says so itself)
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", why);
         }

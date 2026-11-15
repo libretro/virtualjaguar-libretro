@@ -26,7 +26,8 @@ const char* dbgReasonName(int reason);   // "breakpoint" / "step" / "break" / ""
 struct HaltState {
     bool halted = false;
     int target = -1;                 // VJ_DBG_TARGET_*
-    unsigned pc = 0;                 // kept after the halt ends (the bar's last value)
+    unsigned pc = 0;                 // kept after the halt ends (the bar's last value).  A WATCHPOINT halt carries the
+                                     // watched address here, not a program counter (the registers have that)
     int reason = VJ_DBG_STOP_NONE;   // VJ_DBG_STOP_*
     uint64_t serial = 0;             // bumps on every ENTRY into a halt (a step's re-halt included) and on CONTINUE /
                                      // DETACH / a foreign resume; the STEP return itself does not bump it
@@ -63,6 +64,15 @@ public:
     bool breakSet(int target, unsigned addr);
     bool breakClear(int target, unsigned addr);
     void haltNext(int target);
+    // haltNext for a halt the APP asks for from the emulation thread itself (break at boot, armed inside the load call
+    // before the first frame), where no UI-side breakNow() has run to claim it: the UI's syncHalt() takes the claim
+    // (takeOwnedHalt) so the halt is not shown as gdb's.  One claim at a time; a new interface drops it.
+    void haltNextOwned(int target);
+    bool takeOwnedHalt() { return ownedHalt_.exchange(false); }   // any thread
+    // The memory watchpoint (one slot, 68000 bus accesses; vj_debug_iface.h).  False / no-op on a core without it.
+    bool watchSupported() const;
+    bool watchSet(unsigned addr, unsigned len, unsigned kind);   // kind: VJ_DBG_WATCH_*
+    void watchClear();
     void opSnapshotArm();
     int opSnapshotGet(std::vector<vj_debug_op_obj>& out, unsigned& halfline) const;   // -1 while armed, not taken; 0 without
     unsigned cryToRgb(unsigned v16) const;
@@ -134,6 +144,7 @@ private:
     std::atomic<uint64_t> verdict_{0};                   // (forSerial << 2) | v; 0 = none
     std::atomic<bool> detachAfterFrame_{false};          // releaseHalt(true) inside a halt: frameEnded() drops the host
     std::atomic<uint64_t> releaseSerial_{0};             // see releaseSerial()
+    std::atomic<bool> ownedHalt_{false};                 // see haltNextOwned()
 
     std::atomic<const vj_debug_iface*> iface_{nullptr};
     std::atomic<bool> attached_{false};

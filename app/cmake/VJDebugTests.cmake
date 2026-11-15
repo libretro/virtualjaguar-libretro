@@ -34,7 +34,7 @@ set_tests_properties(debug_symbols_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRE
 #   debug_symbols_ui_smoke   the Symbols window drawn headlessly over the mock: where the symbols come from, the
 #                        search, a row's breakpoint on the right processor, the forced close.
 vj_add_debug_ui_smoke(vj_debug_symbols_ui_smoke debug_symbols_ui_smoke tests/debug_symbols_ui_smoke.cpp
-    src/debug/symbols_ui.cpp src/debug/symbol_table.cpp)
+    src/debug/symbols_ui.cpp)
 target_compile_definitions(vj_debug_symbols_ui_smoke PRIVATE VJ_SYMBOL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/symbols")
 
 #   debug_session_unit   DebugSession (app/src/debug) against the mock core interface
@@ -52,6 +52,33 @@ else()
 endif()
 add_test(NAME debug_session_unit COMMAND vj_debug_session_test)
 set_tests_properties(debug_session_unit PROPERTIES TIMEOUT 60 LABELS emu_thread)
+
+#   debug_dev_unit       the developer loop (docs/app-debug-tools.md, "Homebrew workflow") against the mock and
+#                        synthesized symbol tables: SymbolStore, the watchpoint, breakpoints that follow their symbol
+#                        across a rebuild (carry / rebind / armOnCore / adopt), the boot halt the app owns, FileWatch
+#                        and the --break / --watch command line.  No window, no core.
+add_executable(vj_debug_dev_test
+    tests/debug_dev_test.cpp ${VJ_DEBUG_SESSION_SRCS} src/debug/file_watch.cpp src/debug/dev_boot.cpp)
+target_include_directories(vj_debug_dev_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+if(MSVC)
+    target_compile_options(vj_debug_dev_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_dev_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_dev_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_dev_unit COMMAND vj_debug_dev_test)
+set_tests_properties(debug_dev_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL " LABELS emu_thread)
+
+#   dev_workflow_e2e     the debugger's command line on the real app, headless: --break-at-boot halts before the first
+#                        frame and leaves the frame hash alone, --break by symbol / address / offset, --symbols for a
+#                        program without names, --watch by symbol, and a saved "Break at start" not parking a script.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME dev_workflow_e2e
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/dev_workflow_e2e.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/symbols")
+    set_tests_properties(dev_workflow_e2e PROPERTIES TIMEOUT 600
+        PASS_REGULAR_EXPRESSION "PASS: dev workflow" FAIL_REGULAR_EXPRESSION "FAIL ")
+endif()
 
 #   debug_e2e            the REAL core through CoreHost and DebugSession: the interface is handed over only
 #                        when VJ_CAP_DEBUG is announced; "break now" parks the 68000 inside retro_run() and the
@@ -285,7 +312,7 @@ target_link_libraries(vj_debug_scope_gate_test PRIVATE vj_core Threads::Threads)
 # cpu_view.cpp, op_view.cpp, memory_view.cpp, blitter_log.cpp and texture_pack.cpp are not listed: their core work
 # sits inside callCore/postCore lambdas, which the regex cannot tell apart from a direct call on the UI thread.
 set(VJ_NO_IFACE_FILES bitmap_ui.cpp memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp
-    scanner_ui.cpp scanner_actions.cpp scope_ui.cpp)
+    scanner_ui.cpp scanner_actions.cpp scope_ui.cpp symbols_ui.cpp)
 add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
          "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
 set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)

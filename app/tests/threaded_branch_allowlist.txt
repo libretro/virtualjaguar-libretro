@@ -8,6 +8,7 @@ app/src/core_host.cpp       7   # option events: queued to the UI when threaded,
 app/src/core_host.h         1   # the definition of threaded() (owner_ set)
 app/src/ui.cpp              5   # the Settings checkbox shows the choice (emuThreadWanted); "Restart the app to apply"; Close game / re-enter stay enabled threaded while halted (inline must resume first)
 app/src/achievements.cpp    3   # off-thread readMemory guard; pump mode; the hardcore restart retries threaded while halted
+app/src/dev_workflow.cpp    1   # reload-on-change while halted: threaded reloads at once (openContent releases the halt); inline the core is inside retro_run, so the reload waits for Continue
 app/src/debug/op_ui.cpp     2   # opStepFor inputs: threaded steps through emu.advance (inline needs !attached && !inFrame)
 app/src/netplay_ui.cpp      1   # headless self-test step: advance(1) + pinSnapshot instead of runFrame
 app/src/netplay.cpp         1   # bounce count: one more emulated frame when threaded

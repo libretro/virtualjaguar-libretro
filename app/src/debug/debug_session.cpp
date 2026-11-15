@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <utility>
 
@@ -46,12 +47,17 @@ void DebugSession::syncCore() {
     wakePosted_ = false;
     dropHalt();
     regions_.clear();
-    bps_.clear();   // a breakpoint never lingers into the next core instance / game
+    bps_.clear();   // a breakpoint never lingers into the next core instance / game (a reload of the same program
+    watch_ = DebugWatch();   // puts its list back with adopt())
     serial_++;
     // A core that went away, or was replaced: threaded, openContent() publishes null and the new interface inside one
     // blocking call, so a still-loaded core here can be a different game.  Either way the tools close exactly as
     // inline does (null seen, then the new interface), so the cheat scanner's candidates never meet the new game's RAM.
-    if (hadCore_) closeAllTools("no core");
+    // A reload of the same program (setKeepToolsOnNextCore) says "reload": the windows that survive a core swap stay.
+    // Inline the swap is seen twice (null, then the new interface): the flag lasts until a core is back.
+    const bool reload = keepTools_;
+    if (core_.loaded()) keepTools_ = false;
+    if (hadCore_) closeAllTools(reload ? "reload" : "no core");
     hadCore_ = core_.loaded();
 }
 
@@ -99,8 +105,13 @@ void DebugSession::syncHalt() {
     const bool was = mirror_.halted;
     mirror_ = h;
     if (h.halted) {
-        byGdb_ = h.reason == VJ_DBG_STOP_BREAKPOINT ? !hasBreakpoint(h.target, h.pc) && !(ownsBreakAt && ownsBreakAt(h.target, h.pc))
-                                                    : !userHaltPending_;
+        if (h.reason == VJ_DBG_STOP_BREAKPOINT) byGdb_ = !hasBreakpoint(h.target, h.pc) && !(ownsBreakAt && ownsBreakAt(h.target, h.pc));
+        else if (h.reason == VJ_DBG_STOP_WATCHPOINT) byGdb_ = !watch_.set;   // one slot: ours, or a gdb client's
+        else {
+            // A break at boot is asked for on the emulation thread, inside the load: the core holds that claim.
+            const bool owned = h.reason == VJ_DBG_STOP_USER && core_.takeOwnedHalt();
+            byGdb_ = !userHaltPending_ && !owned;
+        }
         userHaltPending_ = false;
         requestRefresh();   // the registers changed: the windows re-read at once
         auto cbs = onHaltUi;   // a callback may register another
@@ -127,17 +138,19 @@ bool DebugSession::attach() {
     if (attachedMirror_ && !detachPending() && core_.attached()) return true;
     // The core's table is rebuilt from the list on every attach: a by-value copy of the enabled entries.
     const std::vector<DebugBreakpoint> bps = enabledBreakpoints();
+    const DebugWatch watch = watch_;
     // Decided inside the lane lambda, so a detach queued before this call runs first (the lane is FIFO) and the table
     // is rebuilt only when this call is the one that attached.  A Detach decided inside a halt leaves the host for the
     // frame end (#1069); an attach in that window supersedes the drop (#1081 M6: Detach, then Break, just works) -- the
     // table was disarmed by the Detach and the list emptied, so there is nothing stale to keep.
     bool ok = false;
-    callCore([this, bps, &ok] {
+    callCore([this, bps, watch, &ok] {
         const bool was = core_.attached();
         if (was) core_.keepHost();
         ok = core_.attach();
         if (!ok || was) return;
         for (const DebugBreakpoint& b : bps) core_.breakSet(b.target, b.addr);
+        if (watch.set) core_.watchSet(watch.addr, watch.len, watch.kind);
     });
     attachedMirror_ = ok;
     return ok;
@@ -157,11 +170,14 @@ bool DebugSession::haltLive() const {
 // CONTINUE), at a frame boundary otherwise.  It is queued unconditionally (it may follow a queued attach: the lane is FIFO).
 void DebugSession::postRelease(std::vector<DebugBreakpoint> bps, bool dropHost) {
     if (dropHost) detachQueued_++;
-    postCore([this, bps, dropHost] {
+    const bool watch = watch_.set;
+    postCore([this, bps, dropHost, watch] {
         // Inside a live halt: the list's entries must go before the CONTINUE, or one in a hot loop re-halts the core
-        // before the frame can end (and the host would never be dropped / the command never run).
-        if (core_.halt().halted)
+        // before the frame can end (and the host would never be dropped / the command never run).  The watchpoint too.
+        if (core_.halt().halted) {
             for (const DebugBreakpoint& b : bps) core_.breakClear(b.target, b.addr);
+            if (watch) core_.watchClear();
+        }
         core_.releaseHalt(dropHost);
         if (dropHost) detachQueued_--;   // after releaseHalt: the frame-end drop (detachPending) takes over without a gap
     });
@@ -172,7 +188,11 @@ void DebugSession::detach() {
     std::vector<DebugBreakpoint> bps = enabledBreakpoints();
     clearBreakpointList();   // Detach clears every breakpoint: the list now, the core's table in the post / the host drop
     disarmed_ = false;       // nothing left to re-arm
-    postRelease(std::move(bps), true);
+    postRelease(std::move(bps), true);   // (reads watch_: the post clears the core's slot inside a halt; the host drop does otherwise)
+    if (watch_.set) {
+        watch_ = DebugWatch();
+        serial_++;
+    }
 }
 
 void DebugSession::releaseHalt() {
@@ -189,9 +209,11 @@ void DebugSession::rearmBreakpoints() {
     disarmed_ = false;
     if (!core_.attached()) return;   // (a Detach meanwhile: the list is empty anyway; attach() rebuilds the table from the list)
     const std::vector<DebugBreakpoint> bps = enabledBreakpoints();
-    if (bps.empty()) return;
-    postCore([this, bps] {
+    const DebugWatch watch = watch_;
+    if (bps.empty() && !watch.set) return;
+    postCore([this, bps, watch] {
         for (const DebugBreakpoint& b : bps) core_.breakSet(b.target, b.addr);   // idempotent in the core
+        if (watch.set) core_.watchSet(watch.addr, watch.len, watch.kind);
     });
 }
 
@@ -231,8 +253,108 @@ bool DebugSession::addBreakpoint(int target, unsigned addr) {
     DebugBreakpoint b;
     b.target = target;
     b.addr = addr;
+    bindSymbol(addr, b.symbol, b.symbolOffset);
     bps_.push_back(b);
     return true;
+}
+
+// ---- symbols, the watchpoint, and the list across a reload -----------------------------------------------------------
+
+std::string DebugSession::boundName(const std::string& symbol, unsigned offset) {
+    if (symbol.empty() || offset == 0) return symbol;
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "+$%X", offset);
+    return symbol + buf;
+}
+
+void DebugSession::bindSymbol(unsigned addr, std::string& symbol, unsigned& offset) {
+    symbol.clear();
+    offset = 0;
+    if (!symbols_.ensure()) return;
+    uint32_t off = 0;
+    // Close to a label only: a breakpoint far past the last label of a table is not "in" that function.
+    if (symbols_.nearest(addr, 0x400, symbol, off)) offset = off;
+}
+
+bool DebugSession::setWatch(unsigned addr, unsigned len, unsigned kind) {
+    kind &= VJ_DBG_WATCH_WRITE | VJ_DBG_WATCH_READ;
+    if (!kind || len == 0 || addr > 0xFFFFFFu || len > 0x1000000u - addr) return false;
+    if (!core_.watchSupported() || !attach()) return false;
+    bool set = false;
+    callCore([this, addr, len, kind, &set] { set = core_.watchSet(addr, len, kind); });
+    if (!set) return false;   // a gdb client holds the slot at another address
+    watch_ = DebugWatch();
+    watch_.set = true;
+    watch_.addr = addr;
+    watch_.len = len;
+    watch_.kind = kind;
+    bindSymbol(addr, watch_.symbol, watch_.symbolOffset);
+    serial_++;
+    return true;
+}
+
+void DebugSession::clearWatch() {
+    if (!watch_.set) return;
+    watch_ = DebugWatch();
+    if (core_.attached()) postCore([this] { core_.watchClear(); });
+    serial_++;
+}
+
+DebugCarry DebugSession::carry() const {
+    DebugCarry c;
+    c.bps = bps_;
+    c.watch = watch_;
+    return c;
+}
+
+int DebugSession::rebind(DebugCarry& c) const {
+    int moved = 0;
+    auto move = [this, &moved](const std::string& symbol, unsigned offset, unsigned& addr, bool code) {
+        uint32_t v = 0;
+        if (symbol.empty() || !symbols_.find(symbol, v)) return;
+        unsigned a = (v + offset) & 0x00FFFFFFu;
+        if (code) a &= ~1u;   // a program counter is even
+        if (a != addr) moved++;
+        addr = a;
+    };
+    for (DebugBreakpoint& b : c.bps) move(b.symbol, b.symbolOffset, b.addr, true);
+    if (c.watch.set) {
+        move(c.watch.symbol, c.watch.symbolOffset, c.watch.addr, false);
+        if (c.watch.len > 0x1000000u - c.watch.addr) c.watch.len = 0x1000000u - c.watch.addr;
+    }
+    // Two entries can land on one address (a function that shrank): keep the first.
+    std::vector<DebugBreakpoint> unique;
+    for (const DebugBreakpoint& b : c.bps) {
+        bool dup = false;
+        for (const DebugBreakpoint& u : unique)
+            if (u.target == b.target && u.addr == b.addr) dup = true;
+        if (!dup) unique.push_back(b);
+    }
+    c.bps.swap(unique);
+    return moved;
+}
+
+bool DebugSession::armOnCore(const DebugCarry& c, bool haltAtBoot) {
+    if (!core_.attach()) return false;
+    core_.keepHost();   // (a Detach's owed frame-end drop belongs to the previous core; setIface cleared it anyway)
+    for (const DebugBreakpoint& b : c.bps)
+        if (b.enabled) core_.breakSet(b.target, b.addr);
+    if (c.watch.set) core_.watchSet(c.watch.addr, c.watch.len, c.watch.kind);
+    if (haltAtBoot) core_.haltNextOwned(VJ_DBG_TARGET_M68K);
+    return true;
+}
+
+void DebugSession::armBootHaltOnCore() {
+    if (core_.attach()) core_.haltNextOwned(VJ_DBG_TARGET_M68K);
+}
+
+void DebugSession::adopt(const DebugCarry& c, bool armed) {
+    syncCore();   // the new core first: it drops the previous list, and must not drop this one a frame later
+    bps_ = c.bps;
+    watch_ = c.watch;
+    if (watch_.set && !core_.watchSupported()) watch_ = DebugWatch();
+    attachedMirror_ = armed && core_.attached();
+    serial_++;
 }
 
 void DebugSession::removeBreakpoint(int target, unsigned addr) {

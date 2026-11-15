@@ -9,7 +9,7 @@ if(NOT DEFINED DIR OR NOT DEFINED FILES)
     message(FATAL_ERROR "usage: cmake -DDIR=<dir> \"-DFILES=<a;b;...>\" -P CheckNoDirectIface.cmake")
 endif()
 
-set(_pattern "iface\\(\\)|->(region|peek|poke|get_regs|set_reg|disasm_risc|attach|detach|break_set|break_clear|halt_next|halted_target|op_snapshot_arm|op_snapshot_get|cry_to_rgb|blit_log_enable|blit_log_head|blit_log_get|texreplace_reload|frame_number|halt_reason)\\(|core\\(\\)\\.(region|peek|poke|getRegs|setReg|disasmRisc|attach|detach|breakSet|breakClear|haltNext|opSnapshotArm|opSnapshotGet|cryToRgb|buildCryTable|blitLogEnable|blitLogHead|blitLogGet|texReplaceReload|frameNumber)\\(|memoryRegion")
+set(_pattern "iface\\(\\)|->(region|peek|poke|get_regs|set_reg|disasm_risc|attach|detach|break_set|break_clear|halt_next|halted_target|op_snapshot_arm|op_snapshot_get|cry_to_rgb|blit_log_enable|blit_log_head|blit_log_get|texreplace_reload|frame_number|halt_reason|watch_set|watch_clear)\\(|core\\(\\)\\.(region|peek|poke|getRegs|setReg|disasmRisc|attach|detach|breakSet|breakClear|haltNext|opSnapshotArm|opSnapshotGet|cryToRgb|buildCryTable|blitLogEnable|blitLogHead|blitLogGet|texReplaceReload|frameNumber|haltNextOwned|watchSet|watchClear)\\(|memoryRegion")
 
 foreach(_f IN LISTS FILES)
     set(_path "${DIR}/${_f}")

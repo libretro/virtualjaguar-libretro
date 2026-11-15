@@ -1188,11 +1188,22 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 - **Audio scope**: waveforms and peak meters of the audio the core produces.
 - **F9** breaks into the game (continue when halted), **F10** steps while halted; a "HALTED" bar shows over the picture.
   The CPU debugger covers the 68000, GPU and DSP, with registers, disassembly, breakpoints and step-over.
+- **Symbols**: the names in your `.cof` / `.abs`; they label the CPU debugger's listing and can be typed wherever an
+  address goes.
+- **For homebrew**: **Break at start** halts every load at its first instruction so breakpoints can be set before
+  anything runs; **Reload when the file changes** picks up each rebuild, and breakpoints follow their symbols to the new
+  build; one **watchpoint** halts the 68000 when it reads or writes a range of memory.  From a build script:
+
+  ```bash
+  virtualjaguar --break-at-boot --reload-on-change --break main --watch score:2:w game.cof
+  ```
+
+  See [Homebrew workflow](../docs/app-debug-tools.md#homebrew-workflow).
 
 Writes go to RAM freely; hardware registers need "Allow register writes"; the CD registers (`$DFFF00-$DFFFFF`) and
 `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD` are never written from here.  Everything greys out (and closes) while
 RetroAchievements hardcore is on.  Extra app instances keep their own windows but do not dump textures.  Developers can
-open one at start-up: `--show-window memory|bitmap|palette|scanner|objects|blitter|textures|scope` (with `--screenshot`).
+open one at start-up: `--show-window memory|bitmap|palette|scanner|cpu|objects|blitter|textures|scope` (with `--screenshot`).
 
 ## Smoke tests
 

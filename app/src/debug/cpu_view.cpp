@@ -27,6 +27,7 @@ const char* stopReasonName(int r) {
     case VJ_DBG_STOP_BREAKPOINT: return "breakpoint";
     case VJ_DBG_STOP_STEP: return "step";
     case VJ_DBG_STOP_USER: return "break";
+    case VJ_DBG_STOP_WATCHPOINT: return "watchpoint";
     default: return "";
     }
 }
