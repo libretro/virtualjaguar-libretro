@@ -553,7 +553,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
     * the tree ever arms them, so this is a single global-bool check,
     * false in every session without an attached debugger. isWrite=0. */
    if (bpmActive)
-      GDBMemWatchHit(address, 0);
+      GDBMemWatchHit(address, 1u, 0);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -601,7 +601,7 @@ unsigned int m68k_read_memory_16(unsigned int address)
 #ifdef ALPINE_FUNCTIONS
    /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=0. */
    if (bpmActive)
-      GDBMemWatchHit(address, 0);
+      GDBMemWatchHit(address, 2u, 0);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -648,7 +648,7 @@ unsigned int m68k_read_memory_32(unsigned int address)
 #ifdef ALPINE_FUNCTIONS
    /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=0. */
    if (bpmActive)
-      GDBMemWatchHit(address, 0);
+      GDBMemWatchHit(address, 4u, 0);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -825,7 +825,7 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 #ifdef ALPINE_FUNCTIONS
    /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=1. */
    if (bpmActive)
-      GDBMemWatchHit(address, 1);
+      GDBMemWatchHit(address, 1u, 1);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -881,7 +881,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 #ifdef ALPINE_FUNCTIONS
    /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=1. */
    if (bpmActive)
-      GDBMemWatchHit(address, 1);
+      GDBMemWatchHit(address, 2u, 1);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -947,7 +947,7 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 #ifdef ALPINE_FUNCTIONS
    /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=1. */
    if (bpmActive)
-      GDBMemWatchHit(address, 1);
+      GDBMemWatchHit(address, 4u, 1);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P

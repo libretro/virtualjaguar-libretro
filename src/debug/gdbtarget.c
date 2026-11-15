@@ -353,6 +353,7 @@ static int GDBRemoveExecBp(int target, unsigned int addr)
 
 static int gdbWatchArmed    = 0;
 static unsigned int gdbWatchAddr = 0;
+static unsigned int gdbWatchLen  = 1;   /* bytes watched from gdbWatchAddr */
 static int gdbWatchKindMask = 0;   /* bit0 = write, bit1 = read */
 
 static int GDBWatchMaskForType(int type)
@@ -364,10 +365,8 @@ static int GDBWatchMaskForType(int type)
    return 3;   /* GDB_BP_WATCH_RW (access) */
 }
 
-static int GDBInsertWatch(unsigned int addr, int type)
+static int GDBInsertWatchMask(unsigned int addr, unsigned int len, int mask)
 {
-   int mask = GDBWatchMaskForType(type);
-
    if (gdbWatchArmed && gdbWatchAddr != addr)
       return -2;   /* single slot -- see docs/gdb-stub-design.md */
 
@@ -378,12 +377,19 @@ static int GDBInsertWatch(unsigned int addr, int type)
     * on ALPINE_FUNCTIONS too, but gdbtarget.c never sees that macro, so it
     * refused every Z2/Z3/Z4 for nothing; issue #936.) */
    gdbWatchAddr      = addr;
+   gdbWatchLen       = len ? len : 1;
    gdbWatchKindMask  |= mask;
    gdbWatchArmed     = 1;
    bpmAddress1       = addr;
    bpmActive         = true;
 
    return 0;
+}
+
+/* A Z2/Z3/Z4 packet: `kind` is the number of bytes gdb wants watched. */
+static int GDBInsertWatch(unsigned int addr, int type, unsigned int kind)
+{
+   return GDBInsertWatchMask(addr, kind, GDBWatchMaskForType(type));
 }
 
 static int GDBRemoveWatch(unsigned int addr, int type)
@@ -401,16 +407,22 @@ static int GDBRemoveWatch(unsigned int addr, int type)
    return 0;
 }
 
-void GDBMemWatchHit(unsigned int address, int isWrite)
+void GDBMemWatchHit(unsigned int address, unsigned int size, int isWrite)
 {
    int need = isWrite ? 1 : 2;
+   unsigned int start;
 
-   if (!gdbWatchArmed || address != gdbWatchAddr)
+   if (!gdbWatchArmed || !(gdbWatchKindMask & need))
       return;
-   if (!(gdbWatchKindMask & need))
+   /* The access [address, address + size) against the watched range: a
+    * long write that only covers the watched byte still counts. */
+   address &= 0x00FFFFFFu;
+   start    = gdbWatchAddr & 0x00FFFFFFu;
+   if (address >= start + gdbWatchLen || address + size <= start)
       return;
 
-   GDBHalt(GDB_TGT_68K, GDB_STOP_WATCHPOINT, address);
+   /* Reported at the watched address, whichever byte of it was touched. */
+   GDBHalt(GDB_TGT_68K, GDB_STOP_WATCHPOINT, gdbWatchAddr);
 }
 
 /* ------------------------------------------------------------------ */
@@ -420,12 +432,11 @@ void GDBMemWatchHit(unsigned int address, int isWrite)
 static int GDB68KInsertBreak(void *user, int type, unsigned int addr, unsigned int kind)
 {
    (void)user;
-   (void)kind;
 
    if (type == GDB_BP_SOFTWARE || type == GDB_BP_HARDWARE)
       return GDBInsertExecBp(GDB_TGT_68K, addr);
    if (type == GDB_BP_WATCH_WR || type == GDB_BP_WATCH_RD || type == GDB_BP_WATCH_RW)
-      return GDBInsertWatch(addr, type);
+      return GDBInsertWatch(addr, type, kind);
 
    return -1;
 }
@@ -806,7 +817,7 @@ static int GDBMonitorWatch(const char *args, char *out, int outMax)
       else if (strcmp(kindStr, "r") == 0)
          type = GDB_BP_WATCH_RD;
 
-      rc = GDBInsertWatch(addr, type);
+      rc = GDBInsertWatch(addr, type, 1);
       if (rc == -2)
          return snprintf(out, (size_t)outMax,
             "watch slot already in use by a different address\n");
@@ -1201,6 +1212,23 @@ void GDBTargetHaltNext(int target)
    gdbBp[target].oneShot       = 1;
    gdbBp[target].oneShotReason = GDB_STOP_USER;
    GDBRecomputeArmed(target);
+}
+
+int GDBTargetWatchSet(unsigned int addr, unsigned int len, int mask)
+{
+   if (!(mask & 3) || len == 0 || addr > 0x00FFFFFFu || len > 0x01000000u - addr)
+      return -1;
+   GDBTargetEnsureTables();
+   if (gdbWatchArmed && gdbWatchAddr == addr)
+      gdbWatchKindMask = 0;   /* same address: the new kind replaces the old */
+   return GDBInsertWatchMask(addr, len, mask & 3);
+}
+
+void GDBTargetWatchClear(void)
+{
+   gdbWatchArmed    = 0;
+   gdbWatchKindMask = 0;
+   bpmActive        = false;
 }
 
 int GDBTargetHaltedTarget(void)
