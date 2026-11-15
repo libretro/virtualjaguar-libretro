@@ -219,10 +219,11 @@ void GDBHalt(int target, int reason, unsigned int pc);
  * (m68k_read/write_memory_{8,16,32}), guarded there by "if (bpmActive)"
  * -- bpmActive/bpmAddress1 (src/core/jaguar.c) are owned exclusively by
  * this module; nothing else in the tree ever sets them. isWrite is 1 for
- * a write access, 0 for a read. A no-op unless the single armed
- * watchpoint's kind (write/read/access) matches and the address matches.
+ * a write access, 0 for a read; size is the access width in bytes (1, 2
+ * or 4). A no-op unless the single armed watchpoint's kind (write/read/
+ * access) matches and the access overlaps the watched range.
  */
-void GDBMemWatchHit(unsigned int address, int isWrite);
+void GDBMemWatchHit(unsigned int address, unsigned int size, int isWrite);
 
 /* Disarms every breakpoint/watchpoint/step and resets thread/halt state
  * -- including ack mode, which RSP requires every new connection to
@@ -255,6 +256,12 @@ void GDBTargetHaltNext(int target);
 /* The target parked in GDBHalt() (and why, as GDB_STOP_*), or -1. */
 int  GDBTargetHaltedTarget(void);
 int  GDBTargetHaltReason(void);
+/* The single memory watchpoint (68000 bus accesses only), for the app's
+ * debug interface: `len` bytes from `addr`, `mask` bit0 = write, bit1 =
+ * read. 0 = ok, -2 = the slot is armed at a different address (a gdb
+ * client's), -1 = bad arguments. Clear is idempotent. */
+int  GDBTargetWatchSet(unsigned int addr, unsigned int len, int mask);
+void GDBTargetWatchClear(void);
 
 /* Called on content unload/deinit (or a bind failure that leaves the
  * stub disabled for this session): resets all Jaguar-side state. Does

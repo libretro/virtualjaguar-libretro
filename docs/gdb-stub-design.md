@@ -625,6 +625,12 @@ from how this document originally described them:
   while one is already armed at a different address is refused (E01)
   rather than silently displacing it or growing a table. Documented as a
   known limitation in the user guide.
+- **The slot is a range.** It first matched only an access whose *address* equalled the watched one, so a `watch` on a
+  long missed a word write to its low half, and a long write that merely covered a watched byte did not count. The six
+  sites now pass the access width and the test is an overlap of `[address, address + width)` with
+  `[watch, watch + length)`; `Z2`/`Z3`/`Z4` take their length from the packet's `kind` field (`monitor watch` stays
+  one byte), and the app's `watch_set` (`vj_debug_iface.h`) passes its own. Still one slot, still 68000 accesses
+  only, and still a single flag test (`bpmActive`) when nothing is armed.
 - **Stepping does NOT use the 68K's `SPCFLAG_DEBUGGER` path**, contrary to
   what this document originally specified. All three processors' stepping
   (and `monitor halt <target>`, and the `gdb_wait` boot halt) share one

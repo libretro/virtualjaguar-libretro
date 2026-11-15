@@ -32,6 +32,10 @@ size_t rowCount();
 void toggleBreakpoint(DebugSession& s, int target, unsigned addr);   // the action behind every breakpoint-adding control
 const std::string& status();                                         // the window's status line, and whether it is an error
 bool statusIsError();
+bool gotoText(DebugSession& s, const std::string& text);              // the Go to box: an address or a symbol name
+unsigned listingTop();                                               // where the listing of the tab being looked at starts
+// The watchpoint row's Set button: `where` as typed, indices into its length (1, 2, 4, ...) and kind (w, r, rw) lists.
+void setWatch(DebugSession& s, const std::string& where, int lenIndex, int kindIndex);
 }  // namespace cpu_test
 
 // Open state, for menu code that wants it directly.

@@ -26,6 +26,7 @@ const char* dbgReasonName(int reason) {
     case VJ_DBG_STOP_BREAKPOINT: return "breakpoint";
     case VJ_DBG_STOP_STEP: return "step";
     case VJ_DBG_STOP_USER: return "break";
+    case VJ_DBG_STOP_WATCHPOINT: return "watchpoint";
     default: return "";
     }
 }
@@ -47,6 +48,7 @@ void DebugCore::setIface(const vj_debug_iface* i) {
         verdict_ = 0;
         detachAfterFrame_ = false;   // the host it would drop is the old core's
     }
+    ownedHalt_ = false;   // armed in the old core: it died with it
     iface_ = i;
     gen_++;
 }
@@ -251,6 +253,25 @@ bool DebugCore::breakClear(int target, unsigned addr) {
 void DebugCore::haltNext(int target) {
     const vj_debug_iface* f = iface();
     if (f && f->halt_next) f->halt_next(target);
+}
+
+void DebugCore::haltNextOwned(int target) {
+    ownedHalt_ = true;
+    haltNext(target);
+}
+
+bool DebugCore::watchSupported() const {
+    const vj_debug_iface* f = iface();
+    // watch_set / watch_clear were appended after the first release of the struct: check `size` first.
+    return f && f->size >= offsetof(vj_debug_iface, watch_clear) + sizeof f->watch_clear && f->watch_set && f->watch_clear;
+}
+
+bool DebugCore::watchSet(unsigned addr, unsigned len, unsigned kind) {
+    return watchSupported() && iface()->watch_set(addr, len, kind) == 1;
+}
+
+void DebugCore::watchClear() {
+    if (watchSupported()) iface()->watch_clear();
 }
 
 void DebugCore::opSnapshotArm() {

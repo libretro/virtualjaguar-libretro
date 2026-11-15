@@ -8,7 +8,7 @@
 // emulation thread and lives in DebugCore (core()); every session method that must touch it goes through
 // coreCall (waits) or corePost (fire and forget), which App wires to the emulation thread's debug lane.  Both are
 // empty inline (headless, tests), and the action then runs right where it is called: same code, one thread.
-//   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_,
+//   UI thread only:  bps_, watch_, symbols_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_,
 //                    the halt mirror (mirror_, byGdb_, userHaltPending_, disarmed_,
 //                    attachedMirror_), seenGen_, hadCore_, and the public callbacks.  Exception: regions_, lastPokeError_ and
 //                    disarmed_ may be written inside a callCore / emu.call lambda (regions() / poke() nested in a window's
@@ -30,6 +30,7 @@
 
 #include "debug_core.h"
 #include "debug_views.h"
+#include "symbol_store.h"
 #include "vj_debug_iface.h"
 
 namespace vj {
@@ -38,6 +39,27 @@ struct DebugBreakpoint {
     int target = VJ_DBG_TARGET_M68K;   // VJ_DBG_TARGET_*
     unsigned addr = 0;
     bool enabled = true;
+    // The label the address was at when the breakpoint was set ("" = none known): after a relink the breakpoint moves
+    // to symbol + symbolOffset (DebugSession::rebind), so it follows the function instead of pointing into the old build.
+    std::string symbol;
+    unsigned symbolOffset = 0;
+};
+
+// The memory watchpoint: ONE slot, 68000 bus accesses only (vj_debug_iface.h, watch_set).
+struct DebugWatch {
+    bool set = false;
+    unsigned addr = 0;
+    unsigned len = 1;                      // bytes watched from addr
+    unsigned kind = VJ_DBG_WATCH_WRITE;    // VJ_DBG_WATCH_WRITE | VJ_DBG_WATCH_READ
+    std::string symbol;                    // as DebugBreakpoint
+    unsigned symbolOffset = 0;
+};
+
+// What survives a reload of the same program (App::openContent): the breakpoint list and the watchpoint.
+struct DebugCarry {
+    std::vector<DebugBreakpoint> bps;
+    DebugWatch watch;
+    bool empty() const { return bps.empty() && !watch.set; }
 };
 
 // One Tools-menu entry.  A tool window registers itself (registerTool) with the same id as the
@@ -90,7 +112,9 @@ public:
     // RetroAchievements hardcore: the tools are off.  Turning it on detaches, drops any halt and
     // tells the windows to close (onForcedClose).
     void setHardcore(bool on);
-    // Fired (in order) when the tools get switched off from outside: "hardcore", "closed", "no core".
+    // Fired (in order) when the tools get switched off from outside: "hardcore", "closed", "no core" -- or "reload",
+    // when the same program is being loaded again (setKeepToolsOnNextCore): a window that survives a core swap may
+    // stay open for that one and only drop what it remembers about the old core.
     std::vector<std::function<void(const char* why)>> onForcedClose;
     // Fired on the UI thread by syncHalt(): a processor halted (every entry, a step's re-halt included) / the machine
     // resumed (a step is not a resume: the re-halt follows).  A halt that came and went between two UI frames fires
@@ -158,6 +182,44 @@ public:
     bool hasBreakpoint(int target, unsigned addr) const;
     void setBreakpointEnabled(int target, unsigned addr, bool on);
     void clearBreakpoints();
+    // "main+$12" for a breakpoint that is bound to a symbol, else "".
+    static std::string boundName(const std::string& symbol, unsigned offset);
+
+    // ---- the watchpoint ------------------------------------------------------------------------------------
+    // One slot (the core's): halts the 68000 when it reads / writes any byte of [addr, addr + len).  The halt's
+    // haltedPc() is the WATCHED ADDRESS; the 68000's registers hold the program counter.  A GPU, DSP, blitter or OP
+    // access never triggers it.  setWatch replaces the slot; false: the tools are off, the core has no watchpoint, the
+    // range is bad, or a gdb client holds the slot.
+    bool watchSupported() const { return core_.watchSupported(); }
+    bool setWatch(unsigned addr, unsigned len, unsigned kind);
+    void clearWatch();
+    const DebugWatch& watch() const { return watch_; }
+
+    // ---- symbols, and keeping the list across a reload ---------------------------------------------------------
+    SymbolStore& symbols() { return symbols_; }
+    const SymbolStore& symbols() const { return symbols_; }
+    // The list and the watchpoint as they stand (UI thread), for a reload of the same program.
+    DebugCarry carry() const;
+    // Moves every entry that remembers a symbol to where that symbol is now (symbols() must be current: after a relink,
+    // invalidate() + ensure()).  An entry whose symbol is gone keeps its address; entries that land on one address
+    // collapse to one.  Returns how many moved.
+    int rebind(DebugCarry& c) const;
+    // Emulation thread, inside the load call, after the new core handed over its interface and before its first frame:
+    // attaches, arms the enabled entries of `c` and, with `haltAtBoot`, a halt on the 68000's first instruction (claimed
+    // as the app's own: DebugCore::haltNextOwned).  Touches only core().  False when the core refused the attach.
+    bool armOnCore(const DebugCarry& c, bool haltAtBoot);
+    // The same boot halt alone, for a Reset (the list is already armed).  Emulation thread.
+    void armBootHaltOnCore();
+    // UI thread, after that load returned: adopts the new core (syncCore) and takes `c` as the list.  `armed` is what
+    // armOnCore returned; when false the next attach() arms the list (the core's table is rebuilt from it).
+    void adopt(const DebugCarry& c, bool armed);
+    // The next core swap asks the tool windows to close with the reason "reload" instead of "no core": a reload of the
+    // same program, where the CPU debugger, the memory viewer and the Symbols window stay open (they re-read through
+    // the views' epoch) and the others close as usual.  Consumed by the next syncCore() that sees a core; App clears
+    // it when the load failed.
+    void setKeepToolsOnNextCore(bool on) { keepTools_ = on; }
+    // The label `addr` is at, or just past ("" / 0 when none is close): what a breakpoint remembers.  Reads symbols().
+    void bindSymbol(unsigned addr, std::string& symbol, unsigned& offset);
 
     // ---- refresh cadence ------------------------------------------------------------------------------
     // Called once per app frame.  `live` is "the emulation is running": views refresh at kRefreshHz.
@@ -247,6 +309,9 @@ private:
     bool disarmed_ = false;              // releaseHalt() disarmed the list in the core; rearmBreakpoints() owes the sets
     std::atomic<int> detachQueued_{0};   // detach() posts not yet run on the emulation thread
     std::vector<DebugBreakpoint> bps_;
+    DebugWatch watch_;
+    SymbolStore symbols_;
+    bool keepTools_ = false;             // see setKeepToolsOnNextCore()
     std::vector<DebugTool> tools_;
     std::vector<DebugProvider> providers_;
     std::vector<vj_debug_region> regions_;

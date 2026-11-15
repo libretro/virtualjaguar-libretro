@@ -367,6 +367,7 @@ endif()
 set(VJ_APP_SOURCES
     src/main.cpp
     src/app.cpp
+    src/dev_workflow.cpp
     src/gl_context.cpp
     src/paths.cpp
     src/instance.cpp
@@ -452,7 +453,10 @@ set(VJ_APP_SOURCES
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
     src/debug/symbol_table.cpp
+    src/debug/symbol_store.cpp
     src/debug/symbols_ui.cpp
+    src/debug/file_watch.cpp
+    src/debug/dev_boot.cpp
     src/desktop.cpp
     src/tv_script.cpp
     src/platform/commands.cpp
@@ -625,7 +629,8 @@ install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
 
 # The session's own sources (DebugSession marshals to DebugCore and fills DebugViews): every debug test that links
 # debug_session.cpp links all three.
-set(VJ_DEBUG_SESSION_SRCS src/debug/debug_session.cpp src/debug/debug_core.cpp src/debug/debug_views.cpp)
+set(VJ_DEBUG_SESSION_SRCS src/debug/debug_session.cpp src/debug/debug_core.cpp src/debug/debug_views.cpp
+    src/debug/symbol_store.cpp src/debug/symbol_table.cpp)
 
 # CPU debugger (debug tools WP4): vendored Musashi disassembler + cpu_view / cpu_ui + their tests.
 include(VJDebugCpu)

@@ -57,6 +57,11 @@ extern "C" {
 #define VJ_DBG_STOP_BREAKPOINT  1
 #define VJ_DBG_STOP_STEP        2
 #define VJ_DBG_STOP_USER        3   /* halt_next() / break-at-boot                      */
+#define VJ_DBG_STOP_WATCHPOINT   4   /* watch_set(): halt_pump's `pc` is the WATCHED ADDRESS, not a program counter */
+
+/* ---- watch_set kinds (bit mask) -------------------------------------------- */
+#define VJ_DBG_WATCH_WRITE      0x1u
+#define VJ_DBG_WATCH_READ       0x2u
 
 /* ---- region flags ---------------------------------------------------------- */
 #define VJ_DBG_REGION_RAM       0x01u  /* plain read/write storage (DRAM, GPU/DSP RAM, CLUT) */
@@ -230,6 +235,17 @@ struct vj_debug_iface
 
    /* ---- append new members below this line ---- */
    int      (*halt_reason)(void);   /* VJ_DBG_STOP_* of the current halt, else NONE */
+   /* The memory watchpoint: ONE slot, 68000 bus accesses only (a GPU, DSP,
+    * blitter or OP access never triggers it).  Halts the 68000 in the middle
+    * of the instruction that reads / writes any byte of [addr, addr + len),
+    * with halt_reason() == VJ_DBG_STOP_WATCHPOINT and halt_pump's `pc` set to
+    * `addr`; get_regs() gives the program counter (already past the
+    * instruction's opcode word).  `kind` is VJ_DBG_WATCH_WRITE and / or _READ.
+    * Setting again replaces the slot.  Returns 1, or 0: no host attached, bad
+    * arguments, or a gdb client holds the slot at another address.  detach()
+    * clears it. */
+   int      (*watch_set)(unsigned addr, unsigned len, unsigned kind);
+   void     (*watch_clear)(void);   /* idempotent; a no-op when this interface did not arm it */
 };
 
 #ifdef __cplusplus

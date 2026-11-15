@@ -362,11 +362,32 @@ static void testToolsMenu() {
     on.toolsOn = false;
     CHECK(findCmd(buildMenuBar(on), Cmd::DebugBreak)->enabled);
 
+    // the developer loop's switches: there with no game loaded, checked from the state, Break at Start greyed in hardcore
+    {
+        MenuState dev;   // nothing loaded
+        MenuBar devBar = buildMenuBar(dev);
+        CHECK(findCmd(devBar, Cmd::DebugBreakAtBoot) && findCmd(devBar, Cmd::DebugBreakAtBoot)->enabled);
+        CHECK(findCmd(devBar, Cmd::DebugReloadOnChange) && findCmd(devBar, Cmd::DebugReloadOnChange)->enabled);
+        CHECK(!findCmd(devBar, Cmd::DebugBreakAtBoot)->checked && !findCmd(devBar, Cmd::DebugReloadOnChange)->checked);
+        dev.breakAtBoot = dev.reloadOnChange = true;
+        devBar = buildMenuBar(dev);
+        CHECK(findCmd(devBar, Cmd::DebugBreakAtBoot)->checked && findCmd(devBar, Cmd::DebugReloadOnChange)->checked);
+        dev.toolsHardcore = true;
+        devBar = buildMenuBar(dev);
+        CHECK(!findCmd(devBar, Cmd::DebugBreakAtBoot)->enabled && findCmd(devBar, Cmd::DebugReloadOnChange)->enabled);
+        MenuState other = dev;
+        other.breakAtBoot = false;
+        CHECK(other != dev);   // a change rebuilds the native menu
+        other = dev;
+        other.reloadOnChange = false;
+        CHECK(other != dev);
+    }
+
     // the tray and the Dock menu have no debugger entries
     std::vector<Cmd> tray, dock;
     collectCommands(buildTrayMenu(on), tray);
     collectCommands(buildDockMenu(on), dock);
-    for (Cmd c : {Cmd::Tool, Cmd::DebugBreak, Cmd::DebugStep, Cmd::DebugDetach}) {
+    for (Cmd c : {Cmd::Tool, Cmd::DebugBreak, Cmd::DebugStep, Cmd::DebugDetach, Cmd::DebugBreakAtBoot, Cmd::DebugReloadOnChange}) {
         for (Cmd t : tray) CHECK(t != c);
         for (Cmd d : dock) CHECK(d != c);
     }
@@ -459,6 +480,8 @@ struct Recorder : Actions {
     void debugBreakContinue() override { rec("debugBreakContinue"); }
     void debugStep() override { rec("debugStep"); }
     void debugDetach() override { rec("debugDetach"); }
+    void debugToggleBreakAtBoot() override { rec("debugToggleBreakAtBoot"); }
+    void debugToggleReloadOnChange() override { rec("debugToggleReloadOnChange"); }
     void showWindow() override { rec("showWindow"); }
 };
 
@@ -492,6 +515,8 @@ static void testDispatch() {
     CHECK(one(Cmd::DebugBreak, 0) == "debugBreakContinue");
     CHECK(one(Cmd::DebugStep, 0) == "debugStep");
     CHECK(one(Cmd::DebugDetach, 0) == "debugDetach");
+    CHECK(one(Cmd::DebugBreakAtBoot, 0) == "debugToggleBreakAtBoot");
+    CHECK(one(Cmd::DebugReloadOnChange, 0) == "debugToggleReloadOnChange");
     CHECK(one(Cmd::Quit, 0) == "quit");
     CHECK(one(Cmd::ShowWindow, 0) == "showWindow");
     CHECK(one(Cmd::TvMode, 0) == "toggleTvMode");

@@ -51,6 +51,7 @@ static int vjdbg_wrap_ready = 0;
  * those and leaves a TCP client's alone). */
 static unsigned int vjdbg_bp_addr[VJ_DBG_NUM_TARGETS][VJDBG_MAX_BP];
 static int vjdbg_bp_used[VJ_DBG_NUM_TARGETS][VJDBG_MAX_BP];
+static int vjdbg_watch_ours = 0;          /* the stub's watch slot was armed through watch_set() */
 
 /* ------------------------------------------------------------------ */
 /* Regions and the poke policy                                          */
@@ -388,9 +389,13 @@ static int VJDbgDisasmRisc(int target, unsigned int addr, char *out, int max,
 /* Attach / halt / breakpoints                                          */
 /* ------------------------------------------------------------------ */
 
+static void VJDbgWatchClear(void);
+
 static void VJDbgClearBreakpoints(void)
 {
    int t, i;
+
+   VJDbgWatchClear();
 
    for (t = 0; t < VJ_DBG_NUM_TARGETS; t++)
    {
@@ -502,6 +507,28 @@ static int VJDbgBreakClear(int target, unsigned int addr)
    return 1;   /* idempotent */
 }
 
+/* The memory watchpoint (the stub's single slot).  vjdbg_watch_ours keeps a
+ * gdb client's own watchpoint safe from our clear / detach. */
+static int VJDbgWatchSet(unsigned int addr, unsigned int len, unsigned int kind)
+{
+   if (!vjdbg_have_host || !(kind & (VJ_DBG_WATCH_WRITE | VJ_DBG_WATCH_READ)))
+      return 0;
+   if (vjdbg_watch_ours)
+      GDBTargetWatchClear();   /* ours: replace it, whatever its address */
+   vjdbg_watch_ours = 0;
+   if (GDBTargetWatchSet(addr, len, (int)(kind & 3u)) != 0)
+      return 0;
+   vjdbg_watch_ours = 1;
+   return 1;
+}
+
+static void VJDbgWatchClear(void)
+{
+   if (vjdbg_watch_ours)
+      GDBTargetWatchClear();
+   vjdbg_watch_ours = 0;
+}
+
 static void VJDbgHaltNext(int target)
 {
    if (!vjdbg_have_host)
@@ -524,6 +551,8 @@ static int VJDbgHaltReason(void)
       return VJ_DBG_STOP_STEP;
    if (r == GDB_STOP_USER)
       return VJ_DBG_STOP_USER;
+   if (r == GDB_STOP_WATCHPOINT)
+      return VJ_DBG_STOP_WATCHPOINT;
    return VJ_DBG_STOP_BREAKPOINT;
 }
 
@@ -612,6 +641,8 @@ const struct vj_debug_iface *VJDebugIface(void)
       vjdbg_iface.texreplace_reload = VJDbgTexReload;
       vjdbg_iface.frame_number      = VJDbgFrame;
       vjdbg_iface.halt_reason       = VJDbgHaltReason;
+      vjdbg_iface.watch_set         = VJDbgWatchSet;
+      vjdbg_iface.watch_clear       = VJDbgWatchClear;
       vjdbg_iface_ready = 1;
    }
    return &vjdbg_iface;
@@ -632,6 +663,7 @@ void VJDebugReset(void)
    memset(&vjdbg_host, 0, sizeof(vjdbg_host));
    memset(vjdbg_bp_used, 0, sizeof(vjdbg_bp_used));
    memset(vjdbg_bp_addr, 0, sizeof(vjdbg_bp_addr));
+   vjdbg_watch_ours = 0;   /* the unload's GDBTargetClose() resets the slot itself */
    vjDebugFrame = 0;
    GDBTargetSetDebugHost(NULL);
    OPDbgSnapReset();
