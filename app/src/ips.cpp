@@ -7,9 +7,18 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+
+#include <fcntl.h>
+#ifdef _WIN32
+#include <io.h>
+#include <sys/stat.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace vj::ips {
 namespace fs = std::filesystem;
@@ -45,8 +54,50 @@ bool readBounded(const std::string& path, size_t limit, Bytes& bytes) {
     return SDL_CloseIO(stream) && ok;
 }
 
+bool g_hardLinks = true;   // setHardLinksForTest: false takes the path of a filesystem that has none
+
+// Creates `destination` only if nothing is there (O_EXCL / CREATE_NEW: an existing
+// file is never opened, let alone truncated) and fills it. On any failure the file
+// this call created is removed again.
+bool createExclusive(const fs::path& destination, const Bytes& bytes) {
+#ifdef _WIN32
+    const int fd = _wopen(destination.c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+#else
+    const int fd = ::open(destination.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+#endif
+    if (fd < 0) return false;
+    bool ok = true;
+    size_t done = 0;
+    while (ok && done < bytes.size()) {
+        const size_t chunk = std::min<size_t>(bytes.size() - done, size_t(1) << 20);
+#ifdef _WIN32
+        const int n = _write(fd, bytes.data() + done, static_cast<unsigned>(chunk));
+#else
+        const ssize_t n = ::write(fd, bytes.data() + done, chunk);
+        if (n < 0 && errno == EINTR) continue;
+#endif
+        if (n <= 0) ok = false;
+        else done += static_cast<size_t>(n);
+    }
+#ifdef _WIN32
+    (void)_commit(fd);   // best effort: the close below reports a failed write-back
+    ok = _close(fd) == 0 && ok;
+#else
+    (void)::fsync(fd);
+    ok = ::close(fd) == 0 && ok;
+#endif
+    if (!ok) {
+        std::error_code ec;
+        fs::remove(destination, ec);
+    }
+    return ok;
+}
+
 // Publish a complete file in the same directory. A hard link gives new files
-// exclusive publication without ever exposing a partial copy.
+// exclusive publication without ever exposing a partial copy. Filesystems
+// without hard links (FAT32, exFAT: most external ROM drives and SD cards)
+// get an exclusive create instead: still never over an existing file, but a
+// crash in the middle of the copy can leave a partial one behind.
 class StagedFile {
 public:
     ~StagedFile() {
@@ -65,6 +116,7 @@ public:
             if (fs::create_directory(candidate, ec)) {
                 dir = std::move(candidate);
                 file = dir / "cartridge";
+                contents = &bytes;   // the caller's buffer outlives this object (saveCopy / replace)
                 SDL_IOStream* stream = SDL_IOFromFile(file.u8string().c_str(), "wb");
                 if (!stream) return false;
                 const bool written = SDL_SaveFile_IO(stream, bytes.data(), bytes.size(), false) && SDL_FlushIO(stream);
@@ -82,9 +134,19 @@ public:
     }
 
     bool publishNew(const std::string& destination) const {
+        const fs::path target = fs::u8path(destination);
         std::error_code ec;
-        fs::create_hard_link(file, fs::u8path(destination), ec);
-        return !ec;
+        if (g_hardLinks) {
+            fs::create_hard_link(file, target, ec);
+            if (!ec) return true;
+            if (ec == std::errc::file_exists) return false;   // something is there: never overwrite it
+        }
+        // The link failed for another reason; the usual one is a filesystem without hard links.
+        if (!contents || !createExclusive(target, *contents)) return false;
+        // The staged file may carry permissions to keep (replace()); FAT has none to set, so a failure is fine.
+        const auto permissions = fs::status(file, ec).permissions();
+        if (!ec) fs::permissions(target, permissions, fs::perm_options::replace, ec);
+        return true;
     }
 
     bool replace(const std::string& destination) const {
@@ -94,9 +156,12 @@ public:
 private:
     fs::path dir;
     fs::path file;
+    const Bytes* contents = nullptr;
 };
 
 } // namespace
+
+void setHardLinksForTest(bool available) { g_hardLinks = available; }
 
 bool apply(const Bytes& base, const Bytes& patch, Bytes& result, std::string& error) {
     if (base.empty() || base.size() > kMaxRom)

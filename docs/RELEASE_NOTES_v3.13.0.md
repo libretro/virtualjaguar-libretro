@@ -11,7 +11,8 @@ downloads are Authenticode-signed for the first time.
   and can check them against expected ones. Boot the patched cartridge from
   memory, save it as a separate copy, or replace the original after a
   byte-for-byte recovery copy has been written. Saves and states of a patched
-  game are kept apart from the original's (#1208).
+  game are kept apart from the original's. Copies can be saved to FAT32 and
+  exFAT drives too (#1208).
 - Server libraries are named tabs, each with its own address, sign-in, search
   and artwork. A RomM 5.4 server can be browsed directly, alongside Emulation
   Server (#1209).

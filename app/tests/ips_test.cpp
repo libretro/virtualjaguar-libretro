@@ -229,6 +229,26 @@ void fileAndLoaderTests(const fs::path& folder) {
     CHECK(host.loadContent(rom, error));
     CHECK(host.saveRamPath() == baseSave && TitleDBContentCRC() == baseCrc);
     host.unloadContent();
+
+    // A filesystem without hard links (FAT32, exFAT): a new copy and the recovery copy are still published, and
+    // still never over a file that is already there.
+    ips::setHardLinksForTest(false);
+    CHECK(SDL_RemovePath(backup.c_str()) && get(rom) == headered);
+    const std::string copiedNoLinks = file((patchedName + "-nolinks.j64").c_str());
+    CHECK(ips::saveCopy(cart, copiedNoLinks, error));
+    CHECK(get(copiedNoLinks) == payload);
+    CHECK(put(copiedNoLinks, Bytes{7}));
+    CHECK(!ips::saveCopy(cart, copiedNoLinks, error));      // exists: refused, and left as it is
+    CHECK(get(copiedNoLinks) == (Bytes{7}));
+    CHECK(!ips::saveCopy(cart, file("missing/copy.j64"), error));
+    CHECK(put(backup, Bytes{9}));
+    CHECK(!ips::replace(cart, error));                      // an existing recovery copy still blocks a replace
+    CHECK(get(rom) == headered && get(backup) == (Bytes{9}));
+    CHECK(SDL_RemovePath(backup.c_str()));
+    CHECK(ips::replace(cart, error));
+    CHECK(get(backup) == headered && get(rom) == payload);
+    CHECK(put(rom, headered));
+    ips::setHardLinksForTest(true);
 }
 
 } // namespace

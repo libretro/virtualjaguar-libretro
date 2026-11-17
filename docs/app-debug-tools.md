@@ -123,8 +123,9 @@ breakpoint, it now points at different instructions (or between two).  Breakpoin
 **Reload when the file changes.**  The app looks at the loaded file's size and modification time four times a second
 and reloads once a changed file has held still for two looks (a linker writes its output in pieces; a missing or empty
 file is never loaded).  It is a restart, like Reload: no auto-save is made or resumed.  With the emulation thread off
-(inline), a halted core cannot be reloaded from inside its own halt: the app says "The program was rebuilt - Continue
-(F9) to reload it" and reloads as soon as the core runs again.
+(inline), a halted core cannot be reloaded from inside its own halt, so the app releases the halt first -- breakpoints
+and the watchpoint disarmed in the core, the list kept -- and reloads when the frame ends, a moment later.  If a gdb
+client's own breakpoint halts the game again before that, the reload waits until the core next runs.
 
 **Names everywhere.**  With symbols loaded (from the program itself, a `.cof` of the same name beside it, Symbols >
 Load..., or `--symbols`) the CPU debugger shows a label in place of the instruction's bytes on the line it names, adds

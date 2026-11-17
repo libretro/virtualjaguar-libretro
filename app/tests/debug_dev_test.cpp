@@ -393,6 +393,24 @@ static void testReleaseKeepsWatch() {
     CHECK(released && s.watch().set && s.breakpoints().size() == 1);   // the session kept both
     s.rearmBreakpoints();
     CHECK(m.watchArmed && m.watchAddr == 0x4000 && m.breakpoints.size() == 1);
+
+    // Reload-on-change inside an inline halt (App::pollContentChange): the same release, then the frame ends and the
+    // program is loaded again.  The released list is what the reload carries; the new core is armed from it, and the
+    // re-arm that follows has nothing left to do.
+    released = false;
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_CONTINUE);
+    s.syncHalt();
+    CHECK(released && !m.watchArmed && m.breakpoints.empty());
+    const DebugCarry c = s.carry();
+    CHECK(c.bps.size() == 1 && c.watch.set);
+    MockDebugIface m2;
+    s.setKeepToolsOnNextCore(true);
+    s.onCoreIface(m2.iface());
+    CHECK(s.armOnCore(c, false));
+    s.adopt(c, true);
+    const int sets = m2.watchSets;
+    s.rearmBreakpoints();
+    CHECK(m2.watchSets == sets && m2.breakpoints.size() == 1 && m2.watchArmed && s.breakpoints().size() == 1);
 }
 
 static void testFileWatch() {

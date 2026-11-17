@@ -157,7 +157,8 @@ public:
     void detach();
     // The content commands while halted (#1081 M1; App::releaseForCall): the same release as detach(), but the list and
     // the host are kept.  The enabled breakpoints are disarmed in the core so the frame can end, and rearmBreakpoints()
-    // puts them back after the command.  Threaded only (inline, a halted core refuses the commands anyway).
+    // puts them back after the command.  Threaded for the content commands (inline, a halted core refuses them); inline
+    // it is how reload-on-change gets the core out of a halt so the frame can end (App::pollContentChange).
     void releaseHalt();
     // After releaseHalt(): re-arms the enabled entries in the core.  Idempotent; a no-op when nothing is disarmed or the
     // command replaced the core (the list is per game: syncCore() drops it).  UI thread, or inside the emu.call the UI

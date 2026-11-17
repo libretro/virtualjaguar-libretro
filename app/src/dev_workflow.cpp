@@ -153,16 +153,22 @@ void App::pollContentChange() {
         if (!contentWatch_.poll(stampFile(contentWatch_.path()))) return;
         std::fprintf(stderr, "[debug] %s changed on disk: reloading\n", contentWatch_.path().c_str());
         if (blocked) {
+            // Let the core out of its halt so the frame can end: the release disarms the breakpoints and the
+            // watchpoint in the core first (one in a hot loop would halt again before the frame is over and the
+            // reload would never run), keeps the list, and answers CONTINUE.  The reload then carries the list to
+            // the new build.  A halt that comes back anyway (a gdb client's breakpoint) leaves the reload pending
+            // until the core next runs.
             reloadPending_ = true;
-            toast("The program was rebuilt - Continue (F9) to reload it", 5.0);
+            debug.releaseHalt();
+            toast("The program was rebuilt - reloading", 3.0);
             return;
         }
     } else if (blocked) {
         return;
     }
     reloadPending_ = false;
-    if (host.loadedPath() != contentWatch_.path()) return;   // another game took its place meanwhile
-    reloadContent();
+    if (host.loadedPath() == contentWatch_.path()) reloadContent();   // (else another game took its place meanwhile)
+    debug.rearmBreakpoints();   // a no-op after a reload (the new core is armed); puts the list back if none happened
 }
 
 }  // namespace vj

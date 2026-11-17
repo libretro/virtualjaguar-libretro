@@ -35,5 +35,7 @@ std::string replacedIdentity(const std::string& path, Bytes& bytes);
 bool canReplace(const std::string& path);
 bool saveCopy(const Cartridge& cart, const std::string& path, std::string& error);
 bool replace(const Cartridge& cart, std::string& error);
+// Test hook: false makes new files publish as on a filesystem without hard links (FAT32, exFAT).
+void setHardLinksForTest(bool available);
 
 } // namespace vj::ips
