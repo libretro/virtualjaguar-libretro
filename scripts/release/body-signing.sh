@@ -30,6 +30,8 @@ fi
 echo
 echo '</details>'
 echo
+echo "Windows builds use Azure Artifact Signing when configured. See the table above for the Authenticode verification result for this build."
+echo
 echo "Every asset above carries a GitHub build-provenance attestation that names the commit and the workflow run that built it."
 echo
 echo '```sh'

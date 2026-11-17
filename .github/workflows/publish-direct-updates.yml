@@ -1,0 +1,134 @@
+name: Publish direct update feeds
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        type: choice
+        options: [stable, nightly]
+        required: true
+      build:
+        description: Stable version (X.Y.Z) or nightly Release workflow run number
+        type: string
+        required: true
+      display_version:
+        description: App display version (X.Y.Z)
+        type: string
+        required: true
+      macos_signature:
+        description: Base64 Ed25519 signature of the final macOS ZIP
+        type: string
+        required: true
+      windows_x64_signature:
+        description: Base64 Ed25519 signature of the final Windows x64 installer
+        type: string
+        required: true
+      windows_arm64_signature:
+        description: Base64 Ed25519 signature of the final Windows ARM64 installer
+        type: string
+        required: true
+      publish:
+        description: Publish the validated feeds (off stages reviewable artifacts only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: direct-update-feeds
+  cancel-in-progress: false
+
+env:
+  ASSET_REPO: ${{ vars.VJ_UPDATE_REPOSITORY }}
+  CHANNEL: ${{ inputs.channel }}
+  BUILD: ${{ inputs.build }}
+  DISPLAY_VERSION: ${{ inputs.display_version }}
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify macOS download
+        env:
+          ED_SIGNATURE: ${{ inputs.macos_signature }}
+          STABLE_KEY: ${{ vars.VJ_SPARKLE_STABLE_KEY }}
+          NIGHTLY_KEY: ${{ vars.VJ_SPARKLE_NIGHTLY_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANNEL" == stable ]]; then
+            tag="v$BUILD"
+            key="$STABLE_KEY"
+          else
+            tag="macos-nightly-$BUILD"
+            key="$NIGHTLY_KEY"
+          fi
+          mkdir -p candidates
+          bash app/packaging/macos/sparkle-appcast.sh "$ASSET_REPO" "$CHANNEL" "$tag" \
+            "VirtualJaguar-$tag-macos-universal-direct.zip" "$ED_SIGNATURE" "$key" 0 > candidates/macos.xml
+      - uses: actions/upload-artifact@v7
+        with:
+          name: feed-macos
+          path: candidates/macos.xml
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify Windows installer download
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+          ED_SIGNATURE: ${{ matrix.arch == 'x64' && inputs.windows_x64_signature || inputs.windows_arm64_signature }}
+          STABLE_KEY: ${{ vars.VJ_WINSPARKLE_STABLE_KEY }}
+          NIGHTLY_KEY: ${{ vars.VJ_WINSPARKLE_NIGHTLY_KEY }}
+        run: |
+          New-Item -ItemType Directory candidates | Out-Null
+          $key = if ($env:CHANNEL -eq 'stable') { $env:STABLE_KEY } else { $env:NIGHTLY_KEY }
+          if (!$key) { throw 'No public key is configured for this channel' }
+          python app/packaging/windows/build-appcast.py $env:CHANNEL $env:ARCH $env:BUILD $env:DISPLAY_VERSION `
+            --asset-repository $env:ASSET_REPO --public-key $key --signature $env:ED_SIGNATURE `
+            --first-entry --output "candidates/windows-$env:ARCH.xml"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: feed-windows-${{ matrix.arch }}
+          path: candidates/windows-${{ matrix.arch }}.xml
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish && github.ref == 'refs/heads/develop'
+    needs: [macos, windows]
+    environment: direct-updates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: feed-*
+          path: candidates
+          merge-multiple: true
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.VJ_UPDATE_REPOSITORY }}
+          ref: feeds
+          token: ${{ secrets.VJ_UPDATE_FEED_TOKEN }}
+          path: publication
+      - name: Advance feeds in one commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release/stage-update-feeds.py "$CHANNEL" "$ASSET_REPO" candidates publication
+          git -C publication add updates
+          if git -C publication diff --cached --quiet; then
+            exit 0
+          fi
+          git -C publication -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            commit -m "Publish $CHANNEL update feeds for $BUILD"
+          git -C publication push origin HEAD:feeds

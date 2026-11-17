@@ -1,5 +1,12 @@
 #include "platform/file_access.h"
 #include "app.h"
+
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+#include "platform/winsparkle_updates.h"
+#endif
+#ifdef _WIN32
+#include "platform/windows_portable_updates.h"
+#endif
 #include "build_channel.h"
 #include "gl_context.h"
 #include "startup_screen.h"
@@ -106,7 +113,7 @@ std::string joinExtensions(const std::string& pipeList) {
 }
 
 // SDL's dialog filters must stay valid until the callback runs.
-std::string g_filterName = "Atari Jaguar games and discs";
+std::string g_filterName = "Atari Jaguar games, discs and IPS patches";
 std::string g_filterPattern;
 SDL_DialogFileFilter g_filters[2];
 std::string g_lastDir;
@@ -240,6 +247,9 @@ void App::loadConfig() {
 // The settings that live in plain members, read from the config with their defaults.  Settings > Reset
 // erases keys and calls this again, so it is the one place that knows what "default" means.
 void App::applySettingsFromConfig() {
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    windows_updates::setBackgroundChecks(cfg.getBool(windows_updates::kBackgroundPreference, false));
+#endif
     present.integerScale = cfg.getBool("video.integer", false);
     present.linearFilter = cfg.getBool("video.linear", false);
     present.stretch = cfg.getBool("video.stretch", false);
@@ -274,6 +284,8 @@ void App::applySettingsFromConfig() {
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     emuThreadPref = cfg.has("ui.emu_thread") ? (cfg.getBool("ui.emu_thread", false) ? 1 : 0) : -1;
+    breakAtBoot = cfg.getBool("debug.break_at_boot", false);
+    reloadOnChange = cfg.getBool("debug.reload_on_change", false);
     // No stored ui.tv_mode: the build's default (Auto unless the package says otherwise).  An unknown value does the same.
     tvSetting = tv::defaultSetting(VJ_TV_DEFAULT_SETTING);
     if (cfg.has("ui.tv_mode")) tv::settingFromKey(cfg.get("ui.tv_mode"), tvSetting);
@@ -594,6 +606,12 @@ bool App::startupFrame(const char* status) {
 }
 
 void App::shutdown() {
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    windows_updates::stop();
+#endif
+#ifdef _WIN32
+    windows_portable_updates::stop();
+#endif
     contentServers.stop();
     beginQuit();   // a hosted halt ends within one pump wait; the auto-save and the unload below need the core out of it
     // Quitting: keep where the game was -- but never wait on a core that is still halted after beginQuit's bounded wait, and
@@ -728,6 +746,7 @@ void App::wireHost() {
     debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
     debug.core().onHalt.push_back([this](int target, unsigned pc, int reason) {   // the emulation thread (inline: the UI thread)
         audio.setPaused(true);                            // no stale buffer droning while the game is stopped
+        // (a watchpoint's `pc` is the watched address: the same line, and the reason says which it is)
         if (reason != VJ_DBG_STOP_STEP) std::fprintf(stderr, "[debug] halt: %s at $%06X (%s)\n", dbgTargetName(target), pc, dbgReasonName(reason));
     });
     debug.core().onResume.push_back([this] {
@@ -737,7 +756,9 @@ void App::wireHost() {
     debug.onHaltUi.push_back([this](int target, unsigned pc, int reason) {   // the UI thread, from syncHalt()
         if (reason == VJ_DBG_STOP_STEP) return;
         char msg[96];
-        std::snprintf(msg, sizeof msg, "Halted: %s at $%06X - F9 continues, F10 steps", dbgTargetName(target), pc);
+        std::snprintf(msg, sizeof msg, reason == VJ_DBG_STOP_WATCHPOINT ? "Watchpoint: %s touched $%06X - F9 continues, F10 steps"
+                                                                         : "Halted: %s at $%06X - F9 continues, F10 steps",
+                      dbgTargetName(target), pc);
         toast(msg, 4.0);
     });
     debug.onResumeUi.push_back([this] {
@@ -1419,6 +1440,7 @@ void App::haltedFrame() {
     ach.pump();
     cheatsPump(*this);   // community store installs/checks finish during a halt too
     syncDebug();
+    pollContentChange();   // inline, a rebuild seen here is only noted: the reload runs once the core is out of retro_run()
     video.upload(host.frame());
     applyViewports();
     ImGui_ImplOpenGL3_NewFrame();
@@ -1580,13 +1602,23 @@ void App::applyBios() {
     host.setBootTarget(bootTarget_);
 }
 
-bool App::openContent(const std::string& pathIn) {
+bool App::openContent(const std::string& path) {
+    return openContentImpl(path, {});
+}
+
+bool App::openContentImpl(const std::string& pathIn, const std::shared_ptr<const ips::Cartridge>& transient) {
     if (haltedNow() && !threaded()) {   // inline, the call would run inside retro_run; threaded, it detaches first
         toast(kHaltedToast, 2.5, 2);
         return false;
     }
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    if (!windows_updates::setCanInstall(false)) return false;
+#endif
     syncHardcoreLock();   // the load below settles which options are locked
     const std::string path = absolutePath(pathIn);
+    ips::Bytes replaced;
+    const std::string identity = transient ? ips::identity(transient->outputHash) : ips::replacedIdentity(path, replaced);
+    const ips::Bytes* cartridge = transient ? &transient->output : replaced.empty() ? nullptr : &replaced;
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
@@ -1602,9 +1634,20 @@ bool App::openContent(const std::string& pathIn) {
     std::vector<std::string> overrideErrors;
     // Everything that touches the core runs where the core lives: on the emulation thread at a frame boundary when
     // threaded (this thread waits), right here otherwise.
-    const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors); }, giveUp);
+    // The debugger's part of the load (dev_workflow.cpp): a reload of the same program keeps its breakpoints, moved to
+    // where their symbols are in the new build, and Break at start halts before the first instruction.
+    DebugBoot boot = planDebugBoot(path);
+    const bool ok = emu.call(
+        [&] {
+            if (!openContentOnCore(path, err, overrideErrors, cartridge, identity)) return false;
+            armDebugBootOnCore(boot);   // after the new core is up, before its first frame
+            return true;
+        },
+        giveUp);
     debug.rearmBreakpoints();   // the list is per game (a no-op after the swap); back in the core if the old game stayed
+    finishDebugBoot(boot, ok, path);
     if (!ok && err.empty()) err = "the debugger halted the game again";
+    if (!ok && !host.isLoaded()) transientCart_.reset();
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
@@ -1620,19 +1663,24 @@ bool App::openContent(const std::string& pathIn) {
     swapGrid_.restart();
     lastTick_ = now();
     controlsOverlayOnLoad(*this);
-    addRecent(path);
-    library.noteLaunched(path);   // the library's recently played (library_lists.h)
+    transientCart_ = transient;
+    if (!transient) {
+        addRecent(path);
+        library.noteLaunched(path);
+    }
     invalidateThumbs();
     debug.requestRefresh();
     discordNoteGameStarted(*this);
     toast("Loaded " + host.contentName());
-    if (!noResume) offerResume();
+    // (Break at start is for looking at the boot: an auto-save loaded a few frames after Continue would jump away from it.)
+    if (!noResume && !boot.haltAtBoot) offerResume();
     saveConfig();
     return true;
 }
 
 // The part of openContent that touches the core, and what feeds it (#967: the emulation thread runs it).
-bool App::openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors) {
+bool App::openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors,
+                            const ips::Bytes* cartridge, const std::string& identity) {
     if (testSlowCallMs_) SDL_Delay(testSlowCallMs_);   // VJ_TEST_SLOW_CALL_MS (smoke_busy_threaded)
     host.setDirectories(paths.system, paths.saves);
     applyBios();
@@ -1642,7 +1690,7 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     runFrames_.store(0);
     pendingStateAt_ = emu.framesRun() + 2;
     gdbStubOn_.store(false);
-    if (!host.loadContent(path, err)) {
+    if (!host.loadContent(path, err, cartridge, identity)) {
         ach.onContentClosed();
         cheatsOnClose(*this);
         return false;
@@ -1660,7 +1708,7 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     applyAudioSettings();
     audio.clear();
     audio.setPaused(false);
-    input.setContent(contentIdentity(path));   // selects the per-game control overrides
+    input.setContent(identity.empty() ? contentIdentity(path) : identity);   // selects the per-game control overrides
     applyPortDevices(*this);                   // before the first frame: the controller types chosen in Settings
     ach.onContentLoaded();                     // identify the game, look up its achievements
     cheatsAfterLoad(*this);                    // the core drops its cheat list on every unload
@@ -1677,6 +1725,9 @@ bool App::openNoContent() {
         toast(kHaltedToast, 2.5, 2);
         return false;
     }
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    if (!windows_updates::setCanInstall(false)) return false;
+#endif
     syncHardcoreLock();   // the load below settles which options are locked
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
@@ -1685,9 +1736,18 @@ bool App::openNoContent() {
     const std::function<bool()> giveUp = releaseForCall();
     autoSave(giveUp);
     std::string err;
-    const bool ok = emu.call([&] { return openNoContentOnCore(err); }, giveUp);
+    DebugBoot boot = planDebugBoot(std::string());   // Break at start applies to a BIOS boot too
+    const bool ok = emu.call(
+        [&] {
+            if (!openNoContentOnCore(err)) return false;
+            armDebugBootOnCore(boot);
+            return true;
+        },
+        giveUp);
     debug.rearmBreakpoints();   // see openContent
+    finishDebugBoot(boot, ok, std::string());
     if (!ok && err.empty()) err = "the debugger halted the game again";
+    if (ok || !host.isLoaded()) transientCart_.reset();
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
@@ -1787,7 +1847,7 @@ bool App::reloadContent() {
         return false;
     }
     reloading_ = true;   // a deliberate restart: neither keeps nor resumes an auto-save
-    bool ok = openContent(p);
+    bool ok = openContentImpl(p, transientCart_);
     reloading_ = false;
     return ok;
 }
@@ -1823,6 +1883,7 @@ void App::closeContent() {
         toast(kHaltedToast, 2.5, 2);
         return;
     }
+    transientCart_.reset();
     host.pinSnapshot();
     if (threaded()) adoptFrameEpoch();
     debug.requestRefresh();
@@ -1843,9 +1904,12 @@ bool App::reset() {
     // ach.onReset() drives rc_client (rc_client_reset raises events): on the emulation thread, with do_frame.
     // Threaded and halted: release the halt first (the reset runs once the core resumes); the breakpoint list survives
     // and is back in the core before the first frame after the reset (#1081 M1).
-    const bool ran = callReleased([this] {
+    // Break at start: a Reset is a boot too.  Armed inside the same call, so the halt is the reset's first instruction.
+    const bool bootHalt = breakAtBoot && debug.enabled() && toolsAllowedNextGame();
+    const bool ran = callReleased([this, bootHalt] {
         host.reset();
         ach.onReset();
+        if (bootHalt) debug.armBootHaltOnCore();
     });
     debug.requestRefresh();
     toast(ran ? std::string("Reset") : std::string(kHaltedToast), ran ? 3.0 : 2.5, ran ? 1 : 2);   // not run: halted again
@@ -1944,7 +2008,7 @@ void App::openBiosSettings() {
 
 void App::showOpenDialog() {
     if (!window_) return;
-    g_filterPattern = joinExtensions(CoreHost::validExtensions()) + ";m3u";   // multi-disc playlists: the app reads them (m3u.h)
+    g_filterPattern = joinExtensions(CoreHost::validExtensions()) + ";m3u;ips";
     g_filters[0].name = g_filterName.c_str();
     g_filters[0].pattern = g_filterPattern.c_str();
     g_filters[1].name = "All files";
@@ -2082,7 +2146,9 @@ void App::openAndLoadState(const std::string& pathIn, int slot, const std::strin
     }
     if (slot >= 0) stateSlot = slot;
     // The running game: the disc in the tray, or what was opened (an .m3u, or the disc before a swap).
-    auto running = [&] { return host.isLoaded() && (host.contentPath() == path || host.loadedPath() == path); };
+    auto running = [&] {
+        return !transientCart_ && host.isLoaded() && (host.contentPath() == path || host.loadedPath() == path);
+    };
     // States remain named for their mounted disc. Reopen the playlist, then select that disc before loading one.
     auto selectStateDisc = [&] {
         if (stateDisc.empty() || host.contentPath() == stateDisc) return true;
@@ -2119,6 +2185,10 @@ void App::showImportBiosDialog() {
 
 void App::handleDrop(const std::string& path) {
     if (path.empty()) return;
+    if (pathExt(path) == "ips") {
+        openIpsPatch(path);
+        return;
+    }
     // A boot ROM or CD BIOS dropped on the window (or picked with File > Open) is a BIOS to import, not a game:
     // running it as a cartridge only shows garbage.
     if (bios::importRole(path) != bios::None) {
@@ -2389,13 +2459,27 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_DROP_FILE:
         if (!e.drop.data) break;
         {
-            // A PNG dropped on a library tile is that tile's cover; anything else opens as before.
+            // A library tile can receive a cover image or supply the base for an IPS patch.
             files::remember(e.drop.data);
             const std::string path = e.drop.data;
-            if (imguiUp_ && (homeVisible() || library.show) && pathExt(path) == "png") {
+            const std::string ext = pathExt(path);
+            if (imguiUp_ && (homeVisible() || library.show) && (ext == "png" || ext == "ips")) {
                 const float x = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.x : dropX_;
                 const float y = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.y : dropY_;
                 const LibraryService::CoverTile* t = library.tileAt(x + ImGui::GetMainViewport()->Pos.x, y + ImGui::GetMainViewport()->Pos.y, ImGui::GetFrameCount());
+                if (t && ext == "ips") {
+                    std::string base;
+                    for (const auto& entry : library.entries()) {
+                        if (!ips::cartridgePath(entry.file.path) || lib::coverKey(entry) != t->key) continue;
+                        if (!base.empty()) {
+                            base.clear();   // A shared cover key cannot disambiguate cartridge files.
+                            break;
+                        }
+                        base = entry.file.path;
+                    }
+                    openIpsPatch(path, base);
+                    break;
+                }
                 if (t) {
                     library.setCoverKey(t->key, path);
                     break;
@@ -2432,6 +2516,10 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             suppressResume_ = e.user.data2 != nullptr;   // a TV launch starts fresh: the resume prompt needs a mouse
             handleDrop(p);
             suppressResume_ = false;
+        } else if (e.user.code == 0x56495053) {   // IPS native file dialog
+            const char* picked = static_cast<const char*>(e.user.data1);
+            ipsDialogResult(static_cast<int>(reinterpret_cast<intptr_t>(e.user.data2)), picked ? picked : "");
+            SDL_free(e.user.data1);
         } else if (e.user.code == 0x56414A53 && e.user.data1) {   // 'VAJS': the library's "load this state"
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
@@ -2642,6 +2730,15 @@ int App::run(const CliArgs& a) {
     // The emulation thread (#967) is decided once per run: switching it live would move the core between threads.
     // Headless runs stay inline unless asked (the smoke tests' hashes are inline hashes), whatever the setting says.
     emuThreadThisRun_ = a.emuThread >= 0 ? a.emuThread == 1 : (!a.headless && emuThreadWanted());
+    // The debugger's command line (dev_workflow.cpp).  A headless run takes them from the command line only: a saved
+    // "Break at start" must not park a script that has no window to continue from.
+    if (a.headless) breakAtBoot = reloadOnChange = false;
+    if (a.breakAtBoot) breakAtBoot = true;
+    if (a.reloadOnChange) reloadOnChange = true;
+    devBreaks_ = a.breaks;
+    devWatch_ = a.watch;
+    devSpecsPending_ = !devBreaks_.empty() || !devWatch_.empty();
+    if (!a.symbols.empty()) debug.symbols().setPicked(absolutePath(a.symbols), true);
     // The headless TV script steps host.runFrame() itself and never starts the thread, so it always runs inline.
     if (a.headless && !a.tvTestScript.empty() && emuThreadThisRun_) {
         emuThreadThisRun_ = false;
@@ -2772,6 +2869,7 @@ int App::runInteractive(const CliArgs& a) {
     if (!startupFrame(a.noContent || !a.content.empty() ? "Loading game" : "Opening library")) return 1;
     if (quit) return 0;
     if (a.noContent) openNoContent();
+    else if (!a.content.empty() && pathExt(a.content[0]) == "ips") openIpsPatch(a.content[0]);
     else if (!a.content.empty()) openContent(a.content[0]);
     if (startupFailed_) return 1;
     if (quit) return 0;
@@ -2803,7 +2901,24 @@ int App::runInteractive(const CliArgs& a) {
     perf.forceH = a.perfShaderH;
     video.perf = &perf;
 
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    if (!quitRequested() && paths.instance == 1 && !paths.portable) {
+        windows_updates::setCanInstall(!host.isLoaded());
+        windows_updates::start(cfg.getBool(windows_updates::kBackgroundPreference, false));
+    }
+#endif
     while (!quitRequested()) {
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+        if (windows_updates::shutdownRequested()) break;
+        windows_updates::setCanInstall(!host.isLoaded());
+        windows_updates::tick();
+#endif
+#ifdef _WIN32
+        if (paths.portable) {
+            const auto updateNotice = windows_portable_updates::poll();
+            if (!updateNotice.empty()) toast(updateNotice, 8.0);
+        }
+#endif
         if (perf.frameBegin()) {
             int pw = 0, ph = 0;
             SDL_GetWindowSizeInPixels(window_, &pw, &ph);
@@ -2858,6 +2973,7 @@ int App::runInteractive(const CliArgs& a) {
         ach.pump();
         cheatsPump(*this);   // community cheat store: finished requests, pack messages (also with the window closed)
         syncDebug();
+        pollContentChange();   // Tools > Reload when the file changes (dev_workflow.cpp)
         discordTick(*this);
 #ifdef VJ_HAVE_NEURO
         neuroTick(*this);
@@ -2990,6 +3106,9 @@ int App::runInteractive(const CliArgs& a) {
                            (void*)(uintptr_t)SDL_GetWindowID(window_));
         perf.frameEnd();
     }
+#ifdef VJ_WINDOWS_DIRECT_UPDATES
+    windows_updates::stop();
+#endif
     beginQuit();   // before anything below waits on the core: a hosted halt must be gone
     latchWaker_.stop();   // (it pushes SDL events: not after SDL is gone)
 

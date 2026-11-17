@@ -135,13 +135,13 @@ bool get(const std::string& url, Response& resp, uint64_t maxBytes, const std::a
     curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(h);
     curl_slist_free_all(headers);
+    resp.status = (int)status;
     if (rc != CURLE_OK) {
         if (cancel && cancel->load()) resp.error = "cancelled";
         else if (resp.error.empty()) resp.error = errbuf[0] ? errbuf : curl_easy_strerror(rc);
         resp.body.clear();
         return false;
     }
-    resp.status = (int)status;
     return true;
 }
 
@@ -239,6 +239,7 @@ bool get(const std::string& url, Response& resp, uint64_t maxBytes, const std::a
         resp.error = "no status line";
         return false;
     }
+    resp.status = (int)status;
     std::vector<unsigned char> chunk(64 * 1024);
     for (;;) {
         if (cancel && cancel->load()) {
@@ -258,7 +259,6 @@ bool get(const std::string& url, Response& resp, uint64_t maxBytes, const std::a
             return false;
         }
     }
-    resp.status = (int)status;
     return true;
 }
 

@@ -123,8 +123,14 @@ test('the stage job excludes raw intermediates and both Release publishers ship 
   assert.equal((release.match(/bash scripts\/release\/stage\.sh artifacts release signing-status/g) || []).length, 1);
   for (const x of ['ci-core-*', 'librashader-*', 'signing-status-*']) assert(stage.includes(`-not -path "$art/${x}"`), x);
   // The release and nightly jobs publish the staged artifact, never a second flatten.
-  assert.equal((release.match(/name: release-staged/g) || []).length, 4);   // one upload; downloads by the gate, release and nightly
+  assert.equal((release.match(/name: release-staged/g) || []).length, 5);   // one upload; downloads by the gates, release and nightly
   assert(!release.includes("-exec cp {} release/"));
+  const windowsQualification = release.slice(
+    release.indexOf('  windows-installer-qualification:'),
+    release.indexOf('  # ----------------------------------------------------------------\n  # Release:', release.indexOf('  windows-installer-qualification:')),
+  );
+  assert(windowsQualification.includes('name: release-staged'));
+  assert(windowsQualification.includes('path: release/'));
   assert(release.includes('name: virtualjaguar_libretro-${{ matrix.config.platform }}'));
   assert(release.includes('path: dist/'));
   assert(release.includes('Verify compile-only Mach-O production exports'));

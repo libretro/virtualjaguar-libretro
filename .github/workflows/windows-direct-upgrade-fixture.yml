@@ -1,0 +1,189 @@
+name: Windows direct upgrade fixture
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [develop]
+    paths:
+      - '.github/workflows/windows-direct-upgrade-fixture.yml'
+      - 'app/packaging/windows/**'
+      - 'app/src/platform/winsparkle_updates.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-direct-upgrade-fixture-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  stage:
+    if: >-
+      github.repository == 'libretro/virtualjaguar-libretro' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.number == 1213
+    runs-on: windows-2022
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      signing: ${{ steps.feeds.outputs.signing }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Build two versions for each Windows architecture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $openssl = Join-Path $env:ProgramFiles 'Git\usr\bin\openssl.exe'
+          $key = Join-Path $env:RUNNER_TEMP 'winsparkle-fixture-ed25519.pem'
+          $public = Join-Path $env:RUNNER_TEMP 'winsparkle-fixture-ed25519.der'
+          & $openssl genpkey -algorithm ED25519 -out $key
+          if ($LASTEXITCODE -ne 0) { throw 'Could not generate fixture Ed25519 key' }
+          & $openssl pkey -in $key -pubout -outform DER -out $public
+          if ($LASTEXITCODE -ne 0) { throw 'Could not export fixture public key' }
+          $der = [IO.File]::ReadAllBytes($public)
+          $key64 = [Convert]::ToBase64String($der, $der.Length - 32, 32)
+          foreach ($platform in @('x64', 'ARM64')) {
+            $arch = $platform.ToLowerInvariant()
+            foreach ($version in @(101, 102)) {
+              $build = "fixture-build/$arch-$version"
+              $options = @(
+                "-DVJ_WINSPARKLE_PUBLIC_KEY=$key64",
+                "-DVJ_WINSPARKLE_NIGHTLY_BUILD=$version",
+                '-DVJ_WINSPARKLE_FEED_BASE=https://127.0.0.1:8443'
+              )
+              cmake -S app/packaging/windows/upgrade-fixture -B $build -G 'Visual Studio 17 2022' -A $platform @options
+              if ($LASTEXITCODE -ne 0) { throw "Configure failed for $arch/$version" }
+              cmake --build $build --config Release --parallel 4
+              if ($LASTEXITCODE -ne 0) { throw "Build failed for $arch/$version" }
+              cmake --install $build --config Release --prefix "fixture-stage/$arch-$version"
+              if ($LASTEXITCODE -ne 0) { throw "Staging failed for $arch/$version" }
+            }
+          }
+
+      - name: Install the pinned Inno Setup compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $download = Join-Path $env:RUNNER_TEMP 'vj-fixture-inno.exe'
+          Invoke-WebRequest -Uri https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe -OutFile $download
+          $expected = '9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732'
+          if ((Get-FileHash $download).Hash -ne $expected) { throw 'Inno Setup digest mismatch' }
+          $destination = Join-Path $env:RUNNER_TEMP 'vj-fixture-iscc'
+          $setup = Start-Process $download -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',('/DIR="{0}"' -f $destination) -Wait -PassThru
+          $iscc = Join-Path $destination 'ISCC.exe'
+          if ($setup.ExitCode -ne 0 -or !(Test-Path $iscc)) { throw 'Inno Setup installation failed' }
+          "VJ_FIXTURE_ISCC=$iscc" >> $env:GITHUB_ENV
+
+      - name: Package direct-only installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in x64 arm64; do
+            for version in 101 102; do
+              bash app/packaging/windows/package.sh "fixture-stage/$arch-$version" 3.12.0 fixture-out \
+                --arch "$arch" --installer "$(cygpath -u "$VJ_FIXTURE_ISCC")" --direct-installer
+            done
+          done
+          test "$(find fixture-out -maxdepth 1 -type f | wc -l)" -eq 4
+
+      - name: Authenticode with the trusted Azure pipeline
+        id: azure
+        continue-on-error: true
+        uses: ./.github/actions/windows-sign
+        with:
+          files-folder: ${{ github.workspace }}\fixture-out
+          description: Virtual Jaguar upgrade fixture
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+
+      - name: Sign loopback feed fixtures after Authenticode
+        id: feeds
+        shell: pwsh
+        env:
+          AZURE_SIGNED: ${{ steps.azure.outputs.signed == 'true' && steps.azure.outcome == 'success' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = (Resolve-Path fixture-out).Path
+          $method = 'azure'
+          if ($env:AZURE_SIGNED -ne 'true') {
+            Write-Host '::warning::Trusted Azure Authenticode was unavailable. Using a disposable code-signing certificate for this fixture.'
+            & app/packaging/windows/upgrade-fixture/local-sign.ps1 -Directory $directory
+            $method = 'fixture'
+          }
+          $openssl = Join-Path $env:ProgramFiles 'Git\usr\bin\openssl.exe'
+          $key = Join-Path $env:RUNNER_TEMP 'winsparkle-fixture-ed25519.pem'
+          python app/packaging/windows/upgrade-fixture/feed.py create $directory $key --openssl $openssl
+          if ($LASTEXITCODE -ne 0) { throw 'Could not sign fixture appcast enclosures' }
+          if ($method -eq 'fixture') {
+            foreach ($arch in @('x64', 'arm64')) {
+              Copy-Item -LiteralPath (Join-Path $directory 'fixture-authenticode.cer') -Destination (Join-Path $directory $arch)
+            }
+          }
+          "signing=$method" >> $env:GITHUB_OUTPUT
+          "Fixture installers signed with Authenticode method **$method** and disposable Ed25519." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Delete the fixture Ed25519 key
+        if: always()
+        shell: pwsh
+        run: Remove-Item -LiteralPath "$env:RUNNER_TEMP\winsparkle-fixture-ed25519.pem" -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-direct-upgrade-fixture-x64
+          path: fixture-out/x64/
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-direct-upgrade-fixture-arm64
+          path: fixture-out/arm64/
+          if-no-files-found: error
+          retention-days: 3
+
+  upgrade:
+    name: Native upgrade (${{ matrix.arch }})
+    needs: stage
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-direct-upgrade-fixture-${{ matrix.arch }}
+          path: fixture-out
+      - name: Install, reject tampering, and upgrade with WinSparkle
+        shell: powershell
+        env:
+          VJ_FIXTURE_ARCH: ${{ matrix.arch }}
+          VJ_FIXTURE_SIGNING: ${{ needs.stage.outputs.signing }}
+        run: |
+          & app/packaging/windows/upgrade-fixture/test-upgrade.ps1 -Arch $env:VJ_FIXTURE_ARCH -Directory fixture-out -Signing $env:VJ_FIXTURE_SIGNING
+          "Native **$env:VJ_FIXTURE_ARCH** upgrade passed using **$env:VJ_FIXTURE_SIGNING** Authenticode." >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-direct-upgrade-logs-${{ matrix.arch }}
+          path: ${{ runner.temp }}/vj-upgrade-${{ matrix.arch }}/*.log
+          if-no-files-found: ignore
+          retention-days: 3

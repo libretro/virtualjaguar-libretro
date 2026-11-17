@@ -53,6 +53,9 @@ platform::MenuState App::menuState() {
     s.toolsOn = debug.enabled();
     s.halted = debug.halted();
     s.attached = debug.attached();
+    s.breakAtBoot = breakAtBoot;
+    s.reloadOnChange = reloadOnChange;
+    s.toolsHardcore = debug.hardcore();
     s.toolsWhy = debug.disabledReason();
     for (const DebugTool& t : debug.tools()) {
         platform::ToolEntry e;
@@ -154,6 +157,10 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void debugDetach() override {
             if (a.debug.attached()) a.debug.detach();
         }
+        void debugToggleBreakAtBoot() override {
+            if (!a.debug.hardcore()) a.setBreakAtBoot(!a.breakAtBoot);
+        }
+        void debugToggleReloadOnChange() override { a.setReloadOnChange(!a.reloadOnChange); }
         void showWindow() override {
             if (!a.window_) return;
             SDL_ShowWindow(a.window_);

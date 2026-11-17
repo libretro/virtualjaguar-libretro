@@ -61,7 +61,7 @@ if(VJ_APP_BUILD_TESTS)
 
     # The Symbols window's promise (#1195): the REAL core runs an rln .cof and halts on a breakpoint set from a symbol.
     add_executable(vj_debug_symbols_e2e
-        tests/debug_symbols_e2e.cpp src/debug/symbol_table.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp src/paths.cpp)
+        tests/debug_symbols_e2e.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp src/paths.cpp)
     target_include_directories(vj_debug_symbols_e2e PRIVATE src src/debug "${VJ_ROOT}/src/debug")
     target_link_libraries(vj_debug_symbols_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
     if(MSVC)

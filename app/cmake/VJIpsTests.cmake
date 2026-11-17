@@ -1,0 +1,8 @@
+add_executable(vj_ips_test tests/ips_test.cpp src/ips.cpp src/sha256.cpp src/core_host.cpp src/paths.cpp)
+target_include_directories(vj_ips_test PRIVATE src)
+target_link_libraries(vj_ips_test PRIVATE vj_core vj_library ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_ips_test PRIVATE ws2_32 iphlpapi)
+endif()
+add_test(NAME ips_patch COMMAND vj_ips_test)
+set_tests_properties(ips_patch PROPERTIES TIMEOUT 60)

@@ -1,7 +1,11 @@
 # Windows Store listing draft — English (United States)
 
 Product: **Virtual Jaguar**, Store ID `9PP6567FHBMS`.
-Submission: `1152921505702250954` (draft; never submitted by the packaging workflow).
+Submission `1152921505702250954` for v3.12.0 failed certification under
+[Microsoft Store policy 10.13.10](https://learn.microsoft.com/windows/apps/publish/store-policies#1013-gaming-and-xbox),
+which excludes game-system emulators on all device families. The report also
+flagged the age rating, non-Windows screenshots, and app category. Those listing
+changes alone cannot resolve the emulator policy finding.
 Planning price: **USD 3.99**, regional prices to review in Partner Center.
 
 ## Short description

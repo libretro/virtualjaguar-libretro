@@ -91,7 +91,7 @@ $script:AppName   = 'Virtual Jaguar'
 # repository.  Empty until the maintainer generates the key (app/packaging/README.md, "Signed
 # checksums"); empty means the signature check is skipped with a note.  Pinned on purpose: a
 # key fetched from the same place as the files would prove nothing.
-$script:MinisignPubKey = ''
+$script:MinisignPubKey = 'RWRhK6qHY9zXq99Dq9Oz/T5da7oWwgkFe/j3Cb9UcZTx7ydUsZDiKcvp'
 if ($env:VJ_INSTALL_MINISIGN_PUBKEY) { $script:MinisignPubKey = $env:VJ_INSTALL_MINISIGN_PUBKEY }
 
 # ---------------------------------------------------------------------------

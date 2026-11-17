@@ -203,6 +203,13 @@ in place with `--clobber`, as before.
 - **Gating.** A tagged release needs the app job to succeed (or be skipped); re-run the failed jobs
   and the release follows. The nightly waits for it but does not require it, like the jagcd tools,
   so an Apple notarization outage cannot withhold the core nightly.
+- **Windows installer release qualification (#1206).** Before a stable tag publishes, three
+  Windows runner legs download the exact `release-staged` artifact, verify the x64 or ARM64 installer
+  against its `SHA256SUMS.txt` entry, silently install it, run the windowed YARC/GL qualification
+  from the installed tree, and silently uninstall it. The legs are native Windows x64, native
+  Windows ARM64, and x64 installer execution under Windows ARM emulation. That emulation leg is
+  reported separately and is not described as native x64. Core-only tags with no app package skip
+  this gate; nightly publication is unchanged.
 - **Signing** is secret-driven. Every macOS file we ship is Developer ID signed and notarized: the
   app, the macOS core dylibs, `cue2cdi-macos-universal` and the macOS chdman/jagcd tools (composite
   action `.github/actions/macos-sign`); same-repo PR app packages are too. Without the secrets (fork
@@ -237,9 +244,10 @@ in place with `--clobber`, as before.
   signing state in `docs/RELEASE_NOTES_vX.Y.Z.md`, the body carries the generated table. To prove a
   change to this pipeline before merging, dispatch `release.yml` on the branch with **Dry run**
   ticked: it builds, stages, signs, attests and runs the gate, and publishes nothing.
-- **After the release**, a maintainer fills the Homebrew, winget, Scoop and Flatpak templates from
-  the published `SHA256SUMS.txt` (`app/packaging/manifests/render.sh`) and submits them. CI never
-  submits to external repositories.
+- **After the release**, update the stable macOS cask in the [project Homebrew tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar)
+  with the release version and macOS ZIP checksum. A maintainer can also render the winget, Scoop
+  and Flatpak templates from the published `SHA256SUMS.txt` (`app/packaging/manifests/render.sh`).
+  CI never submits to external repositories.
 
 ### 4. Post-tag: update libretro-super
 

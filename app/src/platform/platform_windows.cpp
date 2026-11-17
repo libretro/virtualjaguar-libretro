@@ -12,9 +12,19 @@
 #include <shellapi.h>
 #include <shlobj.h>
 
+#include <array>
+#include <atomic>
+#include <charconv>
+#include <chrono>
 #include <cstdio>
+#include <future>
+#include <string_view>
+#include <system_error>
 
+#include "http.h"
+#include "neuro/neuro_json.h"
 #include "platform/platform_os.h"
+#include "platform/windows_portable_updates.h"
 
 namespace vj {
 namespace platform {
@@ -127,5 +137,101 @@ void shutdown() {}
 }  // namespace os
 }  // namespace platform
 }  // namespace vj
+
+namespace vj::windows_portable_updates {
+namespace {
+
+constexpr char kLatestRelease[] =
+    "https://api.github.com/repos/libretro/virtualjaguar-libretro/releases/latest";
+constexpr char kCheckError[] = "Could not check for a Virtual Jaguar update.";
+std::atomic<bool> cancelled{false};
+std::future<std::string> pending;
+
+bool parseVersion(std::string_view version, std::array<unsigned, 3>& parts)
+{
+    const char* position = version.data();
+    const char* end = position + version.size();
+    for (size_t i = 0; i < parts.size(); ++i) {
+        const auto parsed = std::from_chars(position, end, parts[i]);
+        if (parsed.ec != std::errc{})
+            return false;
+        if (i + 1 == parts.size())
+            return parsed.ptr == end;
+        if (parsed.ptr == end || *parsed.ptr != '.')
+            return false;
+        position = parsed.ptr + 1;
+    }
+    return false;
+}
+
+std::string check()
+{
+    http::Options options;
+    options.followRedirects = false;
+    http::Response response;
+    if (!http::get(kLatestRelease, response, 1024 * 1024, &cancelled, options) || response.status != 200)
+        return kCheckError;
+
+    neuro::Json release;
+    std::string error;
+    if (!neuro::Json::parse(std::string(response.body.begin(), response.body.end()), release, error))
+        return kCheckError;
+    const std::string& tag = release["tag_name"].asString();
+    std::array<unsigned, 3> remote{}, local{};
+    if (tag.size() < 2 || tag.front() != 'v' || !parseVersion(std::string_view(tag).substr(1), remote)
+        || !parseVersion(VJ_APP_VERSION, local))
+        return kCheckError;
+    if (remote <= local)
+        return "This portable build is up to date.";
+
+#if defined(_M_ARM64) || defined(__aarch64__)
+    constexpr char kZipSuffix[] = "-windows-arm64.zip";
+#else
+    constexpr char kZipSuffix[] = "-windows-x64.zip";
+#endif
+    const std::string zipName = "VirtualJaguar-" + tag.substr(1) + kZipSuffix;
+    for (const auto& asset : release["assets"].items()) {
+        if (asset["name"].asString() == zipName)
+            return "Virtual Jaguar " + tag.substr(1) + " is available. Open Help > View Stable Downloads.";
+    }
+    return "The latest release has no portable ZIP for this architecture.";
+}
+
+}  // namespace
+
+bool start()
+{
+    if (pending.valid())
+        return false;
+    cancelled.store(false);
+    try {
+        pending = std::async(std::launch::async, check);
+        return true;
+    } catch (const std::system_error&) {
+        return false;
+    }
+}
+
+std::string poll()
+{
+    if (!pending.valid() || pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return {};
+    try {
+        return pending.get();
+    } catch (const std::exception&) {
+        return kCheckError;
+    }
+}
+
+void stop()
+{
+    cancelled.store(true);
+    if (pending.valid()) {
+        pending.wait();
+        pending = {};
+    }
+}
+
+}  // namespace vj::windows_portable_updates
 
 #endif  // _WIN32

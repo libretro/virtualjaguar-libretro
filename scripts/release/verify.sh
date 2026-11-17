@@ -89,10 +89,15 @@ stapled() { have xcrun && xcrun stapler validate "$1" >/dev/null 2>&1; }
 pe_signature() { # <file> -> "Authenticode (CN)" | "none" | "invalid (...)" | "unknown (...)"
   have osslsigncode || { echo "unknown (osslsigncode missing)"; return; }
   local out cn
-  out=$(osslsigncode verify -in "$1" 2>&1 || true)
+  # Microsoft publishes this root for Artifact Signing and its timestamp service:
+  # https://www.microsoft.com/pkiops/docs/repository.htm
+  local root="$here/scripts/release/microsoft-artifact-signing-root.pem" verified=false
+  if out=$(osslsigncode verify -CAfile "$root" -TSA-CAfile "$root" -in "$1" 2>&1); then
+    verified=true
+  fi
   if printf '%s\n' "$out" | grep -qi 'No signature found'; then echo "none"; return; fi
   cn=$(printf '%s\n' "$out" | sed -n '/Signer.s certificate/,/Subject/{s/.*Subject: .*CN=\([^/,]*\).*/\1/p;}' | head -1)
-  if printf '%s\n' "$out" | grep -q 'Signature verification: ok'; then
+  if [ "$verified" = true ] && printf '%s\n' "$out" | grep -q 'Timestamp Server Signature verification: ok'; then
     echo "Authenticode (${cn:-?})"
   elif printf '%s\n' "$out" | grep -qi 'Subject:'; then
     echo "invalid (${cn:-?})"

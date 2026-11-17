@@ -167,6 +167,31 @@ Gamepads use SDL's standard layout (South/East/West = B/A/C, Back = Pause,
 Start = Option); the left stick also drives the D-pad. Controller types per
 Jaguar port (Team Tap, rotary, ...) are under **Settings > Input > Devices & players**.
 
+### IPS cartridge patches
+
+Choose an `.ips` file with **File > Open**, or drop it onto the window. A drop
+on a uniquely identified library cartridge uses that cartridge. Otherwise the
+dialog starts with the controller-focused or running cartridge if one is available. Use **Choose base
+cartridge** to select a different local `.j64`, `.jag`, `.rom`, or `.bin` file.
+
+Check the displayed base path and SHA-256. If the patch author supplies SHA-256
+values, enter them in the corresponding fields to check them before proceeding.
+The base hash covers the whole file. IPS offsets start at the cartridge payload
+when the loader detects a 512-byte copier header, and the patched output contains
+only the payload.
+
+- **Boot patched** runs the patched bytes in memory. Restart uses the same bytes.
+- **Save patched copy** writes an `IPS-<SHA-256>.j64` file in the selected folder.
+  Open it normally to play. Keep its filename to reuse the patched saves and states.
+- **Replace original** asks for confirmation and writes an adjacent
+  `<original filename>.ips-original` recovery copy before replacing the cartridge.
+  Keep that recovery file beside the replacement so the app can recognize the
+  patched save identity on later opens. To restore the original, close the game
+  and copy the recovery file over the cartridge.
+
+Patched SRAM and save states use the patched SHA-256 as their filename identity.
+CD images and archives are outside IPS cartridge support.
+
 ### Controls and the keypad
 
 **Settings > Input** edits the bindings: pick a device (the keyboard, every
@@ -760,38 +785,59 @@ single instance.
   same game and choose Netplay > Join with address `127.0.0.1` and the same port. Two copies that both
   host need different ports (the window offers 42171-42174).
 
-## Emulation Server libraries
+## Server libraries
 
-Choose **File > Server library...** or **Servers...** in the game library. Enter an
-Emulation Server origin such as `http://192.168.1.10:8473`, then paste a device or
-guest access token with read permission. A server that admits your LAN connection
-can accept an empty token. **Connect** saves the server address and lists the
-libraries you can read.
+Choose **File > Server library...** or **Servers...** in the game library. Use
+**Add server** to create a named tab. Enter the origin, including any port, and
+choose **Emulation Server** or **RomM**. In the new tab, enter the access token
+and choose **Connect / refresh server**. Use HTTPS when sending credentials
+outside a trusted local network.
 
-Select a library and **Jaguar cartridges** or **Jaguar CD**, search by title, and
-use **Load more** for additional pages. Select a game and choose **Download and
-play**. The transfer runs in the background, shows progress, and can be cancelled.
-A download can contain up to 512 files and 8 GiB.
-Completed files go under `<data>/content-server/`; the normal loader opens the
-local cartridge, CHD, CDI, CUE or playlist. **Open recent** can launch that local
-copy later. Each completed version has its own cache folder, so another download
-can coexist with a running game.
-Launch filenames include a stable game identifier to keep saves and states for
-different server games separate.
+- **Emulation Server** uses the native ECS v1 API. Use a device or guest token
+  with read access, or leave it empty if the server admits your LAN connection.
+- **RomM** uses the direct RomM 5.4.0 API. Use a RomM client API token with
+  `platforms.read` and `roms.read` permissions. See the
+  [RomM 5.4.0 API source](https://github.com/rommapp/romm/tree/5.4.0/backend/endpoints)
+  and [RomM download authentication](https://docs.romm.app/5.4.0/using/downloads/).
+  To browse the ECS RomM gateway, choose **RomM** and enter an ECS read token.
+  For grouped gateway downloads such as multi-file CDs, connect to the native
+  **Emulation Server** origin.
 
-Managed items verify the manifest's SHA-256 hashes. Indexed CUE/BIN sources stage
-the descriptor and its companions together, preserving their relative layout.
-Unsafe paths, missing companions, unsupported images, incomplete transfers and
-hash mismatches stop the launch. CUE `FILE` entries must use quoted, portable
-paths with forward slashes. Multi-disc playlists need a managed item containing
-all required disc files.
+Pick a library on ECS, select **Jaguar cartridges** or **Jaguar CD**, and search
+by title. **Load more** continues the current tab's result list. The app restores
+each tab's name, system, ECS library and last submitted search at startup.
+Loaded pages and errors stay with their tab during the session. Visible rows
+request PNG covers on demand. When RomM advertises a derived WebP cover, the
+app requests its original PNG. Missing or unsupported covers leave the row usable.
 
-**Remember token in credential store** uses Keychain on macOS, Credential Manager
-on Windows and Secret Service on Linux. If the store is unavailable, the token
-stays in memory for that session. The settings file keeps server addresses.
-**Forget server** removes its saved address and token. Downloads use the app's
-existing WinHTTP backend on Windows and libcurl on Linux and macOS. The server
-URL should identify the origin itself, with its port and no `/ui` suffix.
+Select **Download and play** to fetch game files. The background transfer shows
+progress and supports cancellation. Downloads can contain up to 512 files and
+8 GiB. RomM fetches a file list at launch and streams individual game files, so
+CUE tracks and on-disk M3U entries can keep their relative layout. Provide
+unpacked cartridge images or supported disc sets with their descriptors. For
+multiple discs, supply an M3U in the server's game folder.
+
+Managed ECS items verify manifest SHA-256 hashes. Both protocols validate
+paths, sizes and descriptor references before publishing files under
+`<data>/content-server/`. CUE `FILE` entries must use quoted, portable paths
+with forward slashes. The app opens the staged image through its regular
+loader. **Open recent** can launch that local copy later. Stable launch
+filenames distinguish games on different server origins, even with overlapping
+server-side IDs.
+
+Select a game to see its **Add-ons**. **Download** saves the selected file
+under `<data>/content-server/` and shows its local path. **Download and boot
+patched** downloads a Jaguar cartridge and its selected IPS, checks the base
+against any supplied size or checksum, then boots the patched bytes in memory.
+The server ROM and the downloaded base are preserved. Other formats are
+marked **Download only**. Current ECS servers expose saved patches for scanned
+games, including through the gateway. RomM lists add-ons from the game's
+file metadata.
+
+**Remember token in credential store** uses Keychain on macOS, Credential
+Manager on Windows and Secret Service on Linux. If the store is unavailable,
+the token stays in memory for the session. **Forget server** removes its saved
+tab and token. Completed downloads remain available locally.
 
 ## Where files go
 
@@ -1142,11 +1188,22 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 - **Audio scope**: waveforms and peak meters of the audio the core produces.
 - **F9** breaks into the game (continue when halted), **F10** steps while halted; a "HALTED" bar shows over the picture.
   The CPU debugger covers the 68000, GPU and DSP, with registers, disassembly, breakpoints and step-over.
+- **Symbols**: the names in your `.cof` / `.abs`; they label the CPU debugger's listing and can be typed wherever an
+  address goes.
+- **For homebrew**: **Break at start** halts every load at its first instruction so breakpoints can be set before
+  anything runs; **Reload when the file changes** picks up each rebuild, and breakpoints follow their symbols to the new
+  build; one **watchpoint** halts the 68000 when it reads or writes a range of memory.  From a build script:
+
+  ```bash
+  virtualjaguar --break-at-boot --reload-on-change --break main --watch score:2:w game.cof
+  ```
+
+  See [Homebrew workflow](../docs/app-debug-tools.md#homebrew-workflow).
 
 Writes go to RAM freely; hardware registers need "Allow register writes"; the CD registers (`$DFFF00-$DFFFFF`) and
 `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD` are never written from here.  Everything greys out (and closes) while
 RetroAchievements hardcore is on.  Extra app instances keep their own windows but do not dump textures.  Developers can
-open one at start-up: `--show-window memory|bitmap|palette|scanner|objects|blitter|textures|scope` (with `--screenshot`).
+open one at start-up: `--show-window memory|bitmap|palette|scanner|cpu|objects|blitter|textures|scope` (with `--screenshot`).
 
 ## Smoke tests
 

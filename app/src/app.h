@@ -3,6 +3,7 @@
 // object runs headless (no window, no GL, no ImGui) for the smoke tests.
 #pragma once
 
+#include "ips.h"
 #include <SDL3/SDL.h>
 
 #include <cstdint>
@@ -24,6 +25,7 @@
 #include "content_server_browser.h"
 #include "core_host.h"
 #include "debug/debug_session.h"
+#include "debug/file_watch.h"
 #include "display_lock.h"
 #include "desktop_nav_app.h"
 #include "fonts.h"
@@ -76,6 +78,12 @@ struct CliArgs {
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
     unsigned screenshotEmuFrames = 0;   // dev: ... and not before the core has shown this many frames (--screenshot-emu-frames; 0 = UI frames only)
+    // ---- the debugger from the command line (docs/app-debug-tools.md, "Homebrew workflow") ----
+    bool breakAtBoot = false;       // --break-at-boot: halt at the 68000's first instruction (this run; the setting is Tools > Break at start)
+    bool reloadOnChange = false;    // --reload-on-change: load the program again whenever its file is rewritten (this run)
+    std::vector<std::string> breaks;   // --break [68k:|gpu:|dsp:]ADDRESS|SYMBOL[+OFFSET], repeatable: set before the first instruction
+    std::string watch;              // --watch ADDRESS|SYMBOL[:LENGTH][:r|w|rw]: the memory watchpoint
+    std::string symbols;            // --symbols FILE: a .cof / .abs to take names from (instead of the content or its sidecar)
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage|-interface][:FILTER], states, about, cheats, library, login, achievements, keypad
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     std::string shader;             // --shader NAME|FILE|off: the shader preset for this run (not saved); "" = the setting (#1154)
@@ -237,6 +245,38 @@ public:
     // always seen: the halt bar shows it, calls give up, quitting resumes the core (the host stays attached).  RetroAchievements hardcore locks the stub
     // to "disabled" at the next load (syncHardcoreLock, UI thread); a hardcore flip with the stub open reloads the game.
     void attachGdbHostOnCore();      // emulation thread (inline: the UI thread between frames)
+    // ---- the developer loop (dev_workflow.cpp; docs/app-debug-tools.md, "Homebrew workflow") ---------------------
+    // Break at start: every load and every Reset halts at the 68000's first instruction, with the breakpoints already
+    // armed -- set them, then Continue.  Reload when the file changes: a rebuild of the loaded program is picked up by
+    // itself.  Both are off in RetroAchievements hardcore (the tools are).  Saved as debug.break_at_boot /
+    // debug.reload_on_change; the command line switches them on for one run without saving.
+    bool breakAtBoot = false;
+    bool reloadOnChange = false;
+    void setBreakAtBoot(bool on);      // the Tools menu: sets and saves
+    void setReloadOnChange(bool on);
+    // What the debugger wants from a load.  Planned on the UI thread before the load call (planDebugBoot), armed on the
+    // emulation thread inside it, after the new core is up and before its first frame (armDebugBootOnCore), and adopted
+    // on the UI thread after it (finishDebugBoot).
+    struct DebugBoot {
+        bool active = false;           // there is something to arm
+        bool haltAtBoot = false;
+        bool sameProgram = false;      // a reload of what is loaded: the list is kept and the tool windows stay open
+        bool armed = false;            // armDebugBootOnCore attached and armed it
+        DebugCarry carry;              // the breakpoints and the watchpoint, already moved to the new build's symbols
+        int moved = 0;                 // entries that followed their symbol to a new address
+        std::vector<std::string> notes;   // command-line requests that could not be honoured
+    };
+    DebugBoot planDebugBoot(const std::string& path);
+    void armDebugBootOnCore(DebugBoot& b);
+    void finishDebugBoot(const DebugBoot& b, bool ok, const std::string& path);
+    bool toolsAllowedNextGame() const;   // UI thread: not hardcore, now or at the next load
+    void pollContentChange();          // UI thread, once per UI frame: the reload-on-change watch
+    FileWatch contentWatch_;
+    double nextWatchPoll_ = 0;
+    bool reloadPending_ = false;       // the file changed while a reload was not possible (halted inline): do it when it is
+    std::vector<std::string> devBreaks_;   // --break / --watch / --symbols, honoured at the first load
+    std::string devWatch_;
+    bool devSpecsPending_ = false;
     void syncHardcoreLock();         // UI thread: gdbLockedByHardcore_ = ach.hardcoreNextGame()
     bool gdbStubOpen() const { return gdbStubOn_.load(); }   // the stub was enabled and unlocked at the last load
     discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
@@ -335,6 +375,8 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
+    bool bootServerPatch(const ContentServerTab::PatchLaunch& launch, std::string& error);
+    void drawIpsPatch();
     // Write this game's auto-save when the policy allows (lib::shouldAutoSave).  `giveUp`: releaseForCall()'s predicate when
     // the caller has just released a halt -- the save then waits out the resume instead of refusing.
     bool autoSave(const std::function<bool()>& giveUp = {});
@@ -465,6 +507,7 @@ private:
     void desktopShutdown();
     platform::MenuState menuState();
     void handleEvent(const SDL_Event& e, bool headless);
+    void ipsDialogResult(int action, const std::string& path);
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
@@ -609,7 +652,16 @@ private:
     void followDiscSwap();                     // UI thread: a disc swap moved host.contentPath(); catch up with it
     unsigned seenDiscSwaps_ = 0;               // host.discSwaps() the app has caught up with
     bool discListHeadlessCheck(unsigned want);             // --expect-discs
-    bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
+    bool openContentImpl(const std::string& path, const std::shared_ptr<const ips::Cartridge>& transient);
+    bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors,
+                           const ips::Bytes* cartridge, const std::string& identity);
+    void openIpsPatch(const std::string& path, const std::string& base = {});
+    void prepareIpsBase(const std::string& path);
+    std::shared_ptr<const ips::Cartridge> transientCart_;
+    ips::Cartridge ipsCart_;
+    std::string ipsPath_, ipsError_;
+    char ipsExpectedBase_[128] = {}, ipsExpectedOutput_[128] = {};
+    bool ipsPopupRequested_ = false, ipsDialogPending_ = false, ipsConfirmReplace_ = false, ipsReplaceAvailable_ = false;
     bool openNoContentOnCore(std::string& err);
     std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side
     std::atomic<uint64_t> retroTicks_{0};      // performance-counter ticks inside retro_run, since the UI last read them
@@ -687,6 +739,7 @@ void drawDesktopSettings(App& app);
 void drawLibraryHome(App& app, float x, float y, float w, float h);
 // Debug tools (debug/debug_ui.cpp): the Tools menu, the "halted" bar, and every tool window's draw hook.
 void drawToolsMenu(App& app);
+std::string debugHaltText(DebugSession& d);   // the halt bar's line (debug_ui.cpp)
 void drawDebugOverlay(App& app, float areaX, float areaY);   // the "halted" bar
 void drawDebugWindows(App& app);                            // every registered provider's and tool's draw hook
 void addDebugTools(App& app);                               // plug every tool window into app.debug (DebugSession::addProvider)

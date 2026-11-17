@@ -10,13 +10,16 @@ RetroArch: the interface is only handed to a frontend that asks for it (`VJ_CAP_
 [`app-frontend-extension.md`](app-frontend-extension.md)).  Every window is a tool for developers and tinkerers; none
 of them changes how the game plays unless you press an edit button.
 
+For writing your own Jaguar code, start at [Homebrew workflow](#homebrew-workflow): start halted, set breakpoints by
+name, watch a variable, and let the app reload your program every time you rebuild it.
+
 ## Pieces
 
 | | file |
 | --- | --- |
 | the contract (C89, shared verbatim by core and app) | `src/debug/vj_debug_iface.h` |
 | core side | `src/debug/vjdebug.c` (+ the halt pump in `src/debug/gdbtarget.c`, OP snapshot in `src/tom/op.c`, blit log in `src/tom/blitter_mmio.c`, `TexReplaceReload` in `src/tom/texreplace.c`) |
-| app side, no ImGui | `app/src/debug/debug_session.{h,cpp}` (the UI thread's object: availability, breakpoints, the Tools registry) |
+| app side, no ImGui | `app/src/debug/debug_session.{h,cpp}` (the UI thread's object: availability, breakpoints, the watchpoint, the Tools registry), `symbol_store.{h,cpp}` (the program's symbols, shared by every window), `file_watch.{h,cpp}` and `dev_boot.{h,cpp}` (reload-on-rebuild and the command line), `app/src/dev_workflow.cpp` (how a load arms the debugger) |
 | app side, the core's half | `app/src/debug/debug_core.{h,cpp}` (owns the core's debug interface and wraps every entry point; emulation thread) and `debug_views.{h,cpp}` (the windows' requests and the buffers the emulation thread fills) |
 | app side, ImGui | `app/src/debug/debug_ui.cpp` (Tools menu, halted bar, `addDebugTools`), one `*_ui.cpp` per tool, each with its pure logic beside it (`memory_view`, `cheat_scan`, `op_decode` / `op_view` / `op_render`, `texture_pack`, `blitter_log`, `audio_ring`) |
 | a fake core for tests | `app/tests/debug_mock.h` |
@@ -74,6 +77,77 @@ Without an attached host and without the GDB socket `GDBHalt()` returns at once,
 core.  When the GDB TCP stub is on as well, either side may resume the machine; a TCP client disconnecting clears the
 breakpoint tables as before (the app re-applies its list on the next attach).  A headless run has no UI to release a halt:
 a halt gdb holds waits for the gdb client or a quit signal (below); a halt the app itself caused is released at once (inline only: with the emulation thread on, the headless loop does not release it).
+
+## Homebrew workflow
+
+The loop the tools are built around: edit, build, and the emulator is already sitting at your `main` with your
+breakpoints in place.
+
+```bash
+virtualjaguar --break-at-boot --reload-on-change --break main --watch score:2:w game.cof
+```
+
+| what | where | command line |
+| --- | --- | --- |
+| **Break at start**: every load and every Reset halts at the 68000's first instruction, before anything has run.  Set breakpoints, then Continue (F9) | Tools > Break at start | `--break-at-boot` |
+| **Reload when the file changes**: a rebuild of the loaded program is loaded by itself | Tools > Reload when the file changes | `--reload-on-change` |
+| a breakpoint armed before the first instruction; repeatable | CPU debugger, Symbols | `--break [68k:\|gpu:\|dsp:]ADDRESS\|SYMBOL[+OFFSET]` |
+| the memory watchpoint | CPU debugger, Symbols | `--watch ADDRESS\|SYMBOL[:LENGTH][:r\|w\|rw]` |
+| take names from this `.cof` / `.abs` | Symbols > Load... | `--symbols FILE` |
+| open the debugger at start | Tools > CPU debugger... | `--show-window cpu` |
+
+The two Tools switches are settings (`debug.break_at_boot`, `debug.reload_on_change` in `config.ini`) and can be chosen
+with no game loaded; the command-line forms apply to that run only and are not saved.  A `--headless` run ignores the
+saved switches -- a script has no window to press Continue in -- and honours only the flags; it then releases each of
+its own halts at once and runs on, which is what the tests use (with `--emu-thread on` a headless run does not release
+them, as for any halt the app causes there).
+
+**Break at start.**  The halt is armed on the emulation thread inside the load itself, after the new core is up and
+before its first frame (`App::armDebugBootOnCore`), so the program counter is the reset entry: the BIOS's first
+instruction when one boots, the program's own entry otherwise.  The CPU debugger opens on it.  It is the same one-shot
+the GDB stub's `virtualjaguar_gdb_wait` uses, claimed as the app's own (`DebugCore::haltNextOwned`), so the bar says
+"HALTED", not "HALTED by gdb".  RetroAchievements hardcore switches it off with the rest of the tools.
+
+**Breakpoints survive a rebuild.**  Loading the program that is already loaded (Reload, reload-on-change, opening the
+same file again) keeps the breakpoint list and the watchpoint, and the CPU debugger, the memory viewer and the Symbols
+window stay open where they were.  Every breakpoint remembers the label it was set on, or just after (`main`,
+`main+$12`; within $400 bytes), and after the reload it is moved to where that label is in the new build, so a
+breakpoint on a function follows the function.  One set at an address with no label nearby stays at its address; one
+whose label is gone stays where it was.  The list's green name is what it is tied to.  Loading a *different* program
+drops the list, as before.  The list is armed in the new core before its first frame, so a breakpoint in start-up code
+is not missed.
+
+An offset into a function is only as good as the code before it: if you changed the lines above a `main+$12`
+breakpoint, it now points at different instructions (or between two).  Breakpoints on labels are exact.
+
+**Reload when the file changes.**  The app looks at the loaded file's size and modification time four times a second
+and reloads once a changed file has held still for two looks (a linker writes its output in pieces; a missing or empty
+file is never loaded).  It is a restart, like Reload: no auto-save is made or resumed.  With the emulation thread off
+(inline), a halted core cannot be reloaded from inside its own halt, so the app releases the halt first -- breakpoints
+and the watchpoint disarmed in the core, the list kept -- and reloads when the frame ends, a moment later.  If a gdb
+client's own breakpoint halts the game again before that, the reload waits until the core next runs.
+
+**Names everywhere.**  With symbols loaded (from the program itself, a `.cof` of the same name beside it, Symbols >
+Load..., or `--symbols`) the CPU debugger shows a label in place of the instruction's bytes on the line it names, adds
+`; name` to an instruction whose operand is a labelled address (`jsr $802340  ; draw_sprite`), accepts a name in **Go
+to** (`main`, `main+$12`) and in the watchpoint box, and the halt bar says where it stopped (`68000 at $802022
+main+$12`).  Equates count as names for exact addresses (a hardware register), never as the base of an offset, and an
+equate below `$1000` is taken for a constant, not a place.
+
+### Watchpoint
+
+"Who is writing over this variable?"  One watchpoint: a range of bytes and whether to stop on writes, reads or both.
+The 68000 halts in the middle of the instruction that touches any byte of the range -- a long write that only overlaps
+the last byte counts.  Set it in the CPU debugger's **Watch** row (an address or a symbol, a length, a kind), from a
+row's menu in the Symbols window, or with `--watch`.  The halt bar reads "68000 touched $004000"; the CPU debugger's
+listing is at the program counter, which has already moved past the instruction's opcode word, so the instruction that
+did it is the one just above (step once to finish it).
+
+Limits, all from the core's single slot (`watch_set` in `vj_debug_iface.h`, the same slot the GDB stub's `Z2`/`Z3`/`Z4`
+use): **one** watchpoint at a time, and **68000 bus accesses only** -- a write by the GPU, the DSP, the blitter or the
+Object Processor does not trigger it.  A gdb client that already holds the slot keeps it (the app's request is refused
+and says so).  Detach clears it with the breakpoints; it survives a rebuild like they do.  With the watchpoint unset
+nothing is checked: the six 68000 access functions test one flag that is false.
 
 ## Memory and the poke policy
 
@@ -175,8 +249,10 @@ Only the first 1000 candidates are listed; the rest are kept and shown once the 
 
 Tools > Symbols... lists the names and hex values from a `.cof` or `.abs` (#1195), with a search box that matches a name
 or the digits of a value (`$` or `0x` is optional) and columns that sort.  The symbols come from, in order: a file picked
-with Load..., the loaded content itself, then a `.cof` with the same name beside the content, which covers running a
-`.j64` or `.rom` from the same link.  Reload re-reads after a relink.  Nothing is read until the window opens.
+with Load... (or `--symbols`), the loaded content itself, then a `.cof` with the same name beside the content, which covers running a
+`.j64` or `.rom` from the same link.  Reload re-reads after a relink, and so does every load of the program.  The table
+is the session's (`SymbolStore`), shared with the CPU debugger's labels and the breakpoints' names; nothing is read until
+a window, a breakpoint or the command line asks for it.  A row's menu also sets the watchpoint on that address.
 
 The checkbox in a row sets a breakpoint on the processor that runs the address: `$F03000-$F03FFF` is the GPU,
 `$F1B000-$F1CFFF` the DSP, anything else the 68000.  GPU or DSP code run from main RAM needs the row's context menu, which
@@ -230,10 +306,11 @@ App only: nothing is recorded and the core is not involved; while the window is 
 
 **F9** breaks into the game at the next instruction of the 68000 (or continues when already halted); **F10** steps one
 instruction while halted (it does nothing otherwise).  The Tools menu and a "HALTED" bar over the picture show the same
-actions plus **Detach debugger**, which clears every breakpoint and resumes (with the GDB stub enabled the silent host is back one frame
+actions plus **Detach debugger**, which clears every breakpoint and the watchpoint and resumes (with the GDB stub enabled the silent host is back one frame
 later, see below).  While halted the tool windows keep drawing and
-refreshing, so you can read memory, palette and registers of the frozen machine.  Breakpoints are per game (they are dropped when
-a different game loads).
+refreshing, so you can read memory, palette and registers of the frozen machine.  Breakpoints are per game: they are dropped when
+a different game loads, and kept -- moved to their symbols -- when the same program is loaded again
+([Homebrew workflow](#homebrew-workflow)).
 
 ## Hardcore (RetroAchievements)
 
@@ -305,6 +382,11 @@ drop, a release keeps and re-arms the list, the release serial).  The GDB stub: 
 continues; SIGTERM mid-halt exits cleanly; `gdb_inline_halt(_hardcore)` run the same inline), `debug_on_threaded`,
 `gdb_enabled(_threaded)` (the silent host attaches at load), `gdb_hardcore_locked_*` and `gdb_hardcore_flip_*` (hardcore locks the
 stub; a mid-game flip reloads).
+
+The developer loop: `debug_dev_unit` (the symbol store on synthesized tables, the watchpoint, a list carried across a
+rebuild and moved to its symbols, the boot halt the app owns, the file watch, the command line), `dev_workflow_e2e` (the real app, headless: the halt before the first frame with
+the frame hash unchanged, breakpoints by name, address and offset, `--symbols`, the watchpoint by name), and the core's `test/test_debug_iface.c` part W (a write watch around the stack halts with the
+watched address, and never again once cleared).
 
 Per tool, a unit test over the pure logic
 (`debug_memory_unit`, `debug_scan_unit`, `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`), a headless ImGui smoke test

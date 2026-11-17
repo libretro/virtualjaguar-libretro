@@ -10,6 +10,7 @@
 #include "imgui.h"
 
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
@@ -98,6 +99,53 @@ int main() {
     s.requestRefresh();
     settle(s, 3);
     CHECK(cpu_test::haveRegs() && CountingIface::offCore() == 0);
+
+    // 5b. Names (the session's symbols): the Go to box takes one, with or without an offset, and the watchpoint row sets
+    //     the session's watchpoint by name.  Drawing the labels costs no core call.
+    {
+        // A two-symbol .abs served from memory (36-byte header, no text or data, 14-byte records).
+        static std::vector<unsigned char> image(36 + 2 * 14, 0);
+        image[0] = 0x60, image[1] = 0x1B, image[17] = 28;
+        auto record = [](size_t i, const char* name, uint16_t type, uint32_t value) {
+            unsigned char* r = image.data() + 36 + i * 14;
+            std::strncpy(reinterpret_cast<char*>(r), name, 8);
+            r[8] = (unsigned char)(type >> 8), r[9] = (unsigned char)type;
+            r[10] = (unsigned char)(value >> 24), r[11] = (unsigned char)(value >> 16), r[12] = (unsigned char)(value >> 8), r[13] = (unsigned char)value;
+        };
+        record(0, "gpu_loop", 0x8200, 0xF03010);   // text
+        record(1, "counter", 0x8100, 0x004000);    // bss
+        s.symbols().reader = [](const std::string&, std::vector<unsigned char>& out) {
+            out = image;
+            return true;
+        };
+        s.symbols().setContent("/mem/game.abs");
+        settle(s, 2);   // the window reads them on its next draw
+        CHECK(s.symbols().symbols().size() == 2);
+        CHECK(cpu_test::gotoText(s, "gpu_loop") && cpu_test::listingTop() == 0xF03010);
+        CHECK(cpu_test::gotoText(s, "gpu_loop+4") && cpu_test::listingTop() == 0xF03014);
+        CHECK(cpu_test::gotoText(s, "$F03000") && cpu_test::listingTop() == 0xF03000);
+        CHECK(!cpu_test::gotoText(s, "no_such_label") && cpu_test::listingTop() == 0xF03000);
+        settle(s, 6);   // the listing at $F03000 draws gpu_loop's label a few rows down
+        CHECK(cpu_test::haveRegs() && cpu_test::rowCount() >= 4 && CountingIface::offCore() == 0);
+        const UiFixture::Mark named = fx.mark();
+        for (int i = 0; i < 30; i++) frame(s);
+        CHECK(fx.quietSince(named));   // labels and annotations: no core call, no post
+
+        cpu_test::setWatch(s, "counter", 1, 0);   // 2 bytes, writes
+        CHECK(s.watch().set && s.watch().addr == 0x4000 && s.watch().len == 2 && s.watch().kind == VJ_DBG_WATCH_WRITE);
+        CHECK(s.watch().symbol == "counter" && cpu_test::status() == "Watchpoint set" && !cpu_test::statusIsError());
+        cpu_test::setWatch(s, "nowhere", 0, 0);
+        CHECK(cpu_test::statusIsError() && s.watch().addr == 0x4000);   // refused: the one already set stays
+        settle(s, 3);   // the row draws with the watchpoint's line
+        cpu_test::toggleBreakpoint(s, VJ_DBG_TARGET_GPU, 0xF03014);
+        CHECK(s.breakpoints().size() == 1 && s.breakpoints()[0].symbol == "gpu_loop" && s.breakpoints()[0].symbolOffset == 4);
+        settle(s, 3);   // ...and the breakpoint list with the name it is tied to
+        cpu_test::toggleBreakpoint(s, VJ_DBG_TARGET_GPU, 0xF03014);
+        s.clearWatch();
+        CHECK(!s.watch().set && s.breakpoints().empty() && CountingIface::offCore() == 0);
+        s.symbols().setContent("");
+        settle(s, 2);
+    }
 
     // 6. Closing the window drops its requests: the copier has nothing to serve.
     s.findTool("cpu")->toggle();

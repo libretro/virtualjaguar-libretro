@@ -49,6 +49,12 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
+        "debugger (Tools menu; docs/app-debug-tools.md, \"Homebrew workflow\"):\n"
+        "  --break-at-boot       halt at the 68000's first instruction of every load and reset: set breakpoints, then Continue (F9)\n"
+        "  --break WHERE         a breakpoint armed before the first instruction; repeatable.  WHERE is [68k:|gpu:|dsp:]ADDRESS|SYMBOL[+OFFSET]\n"
+        "  --watch WHERE         the memory watchpoint: ADDRESS|SYMBOL[:LENGTH][:r|w|rw] (68000 accesses; default 1 byte, writes)\n"
+        "  --symbols FILE        take symbol names from this .cof / .abs (default: the content, or a .cof beside it)\n"
+        "  --reload-on-change    load the program again when its file is rewritten (a rebuild); breakpoints follow their symbols\n"
         "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-halt] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
@@ -277,6 +283,11 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--screenshot-emu-frames")) a.screenshotEmuFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--break-at-boot")) a.breakAtBoot = true;
+        else if (!std::strcmp(s, "--reload-on-change")) a.reloadOnChange = true;
+        else if (!std::strcmp(s, "--break")) a.breaks.emplace_back(need(s));
+        else if (!std::strcmp(s, "--watch")) a.watch = need(s);
+        else if (!std::strcmp(s, "--symbols")) a.symbols = need(s);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
         else if (!std::strcmp(s, "--ui-scale")) a.uiScale = (float)std::strtod(need(s), nullptr);
         else if (!std::strcmp(s, "--low-dpi")) a.lowDpi = true;

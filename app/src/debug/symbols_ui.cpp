@@ -3,6 +3,7 @@
 
 #include "debug_session.h"
 #include "paths.h"
+#include "symbol_store.h"
 #include "symbol_table.h"
 #include "ui_util.h"
 #include "window_chrome.h"
@@ -30,17 +31,14 @@ struct State {
     bool open = false;
     bool hooked = false;
 
-    std::vector<Symbol> symbols;
-    std::vector<size_t> view;      // indices into symbols, searched and sorted
+    SymbolStore* store = nullptr;  // the session's table (DebugSession::symbols()): shared with the CPU debugger
+    uint64_t storeGen = ~0ull;     // SymbolStore::generation() the view and the status line were built for
+    bool shown = false;            // the window has looked at the store since it was last closed by force (forget)
+    std::vector<size_t> view;      // indices into the store's symbols, searched and sorted
     bool viewDirty = true;
     char search[128] = "";
     int sortColumn = kColValue;
     bool sortAscending = true;
-
-    bool loaded = false;           // the sources below have been read
-    std::string contentPath;       // the content they were read for
-    std::string pickedPath;        // a file chosen in the window; wins until the content changes
-    std::string sourcePath;        // where the current symbols came from
 
     std::string status;
     bool statusIsError = false;
@@ -50,103 +48,43 @@ struct State {
 };
 State g;
 
+const std::vector<Symbol>& symbols() {
+    static const std::vector<Symbol> none;
+    return g.store && g.shown ? g.store->symbols() : none;   // (a window closed by force lists nothing)
+}
+
 void setStatus(const std::string& m, bool err) {
     g.status = m;
     g.statusIsError = err;
 }
 
-std::string fileName(const std::string& path) {
-    const size_t slash = path.find_last_of("/\\");
-    return slash == std::string::npos ? path : path.substr(slash + 1);
-}
-
-// The same path with the extension replaced.  `path` with no extension just gains one.
-std::string withExtension(const std::string& path, const char* ext) {
-    const size_t dot = path.find_last_of('.');
-    const size_t slash = path.find_last_of("/\\");
-    const bool hasExt = dot != std::string::npos && (slash == std::string::npos || dot > slash);
-    return (hasExt ? path.substr(0, dot) : path) + ext;
-}
-
-SymbolParse readSymbols(const std::string& path, std::vector<Symbol>& out) {
-    out.clear();
+// How the store reads a file here: through the app's own file access, regular files only, with the size cap.
+bool readSymbolFile(const std::string& path, std::vector<unsigned char>& out) {
     SDL_PathInfo info;
-    if (!SDL_GetPathInfo(path.c_str(), &info) || info.type != SDL_PATHTYPE_FILE || info.size > (Uint64)kMaxFileBytes)
-        return SymbolParse::NotExecutable;
-    std::vector<unsigned char> bytes;
-    if (!readFile(path, bytes)) return SymbolParse::NotExecutable;
-    return parseSymbols(bytes.data(), bytes.size(), out);
+    if (!SDL_GetPathInfo(path.c_str(), &info) || info.type != SDL_PATHTYPE_FILE || info.size > (Uint64)kMaxFileBytes) return false;
+    return readFile(path, out);
 }
 
-const char* whyNot(SymbolParse r) {
-    switch (r) {
-        case SymbolParse::NoSymbols: return "has no symbol table. Link it with rln -s (add -l for local labels).";
-        case SymbolParse::Malformed: return "has a damaged symbol table.";
-        default: return "is not a .cof or .abs with symbols.";
-    }
-}
-
-void adopt(const std::string& path, std::vector<Symbol>& symbols) {
-    g.symbols.swap(symbols);
-    g.sourcePath = path;
-    g.viewDirty = true;
-    char line[64];
-    std::snprintf(line, sizeof line, "%zu symbols from ", g.symbols.size());
-    setStatus(line + fileName(path), false);
-}
-
-// Fills the table from the picked file, or else the content, or else a .cof beside the content.
-void loadSymbols() {
-    g.loaded = true;
-    g.symbols.clear();
-    g.sourcePath.clear();
-    g.viewDirty = true;
-    std::vector<Symbol> found;
-    if (!g.pickedPath.empty()) {
-        const SymbolParse r = readSymbols(g.pickedPath, found);
-        if (r == SymbolParse::Ok) adopt(g.pickedPath, found);
-        else setStatus(fileName(g.pickedPath) + " " + whyNot(r), true);
-        return;
-    }
-    if (g.contentPath.empty()) {
-        setStatus("No game is loaded", false);
-        return;
-    }
-    const SymbolParse own = readSymbols(g.contentPath, found);
-    if (own == SymbolParse::Ok) {
-        adopt(g.contentPath, found);
-        return;
-    }
-    for (const char* ext : {".cof", ".COF"}) {
-        const std::string beside = withExtension(g.contentPath, ext);
-        if (beside != g.contentPath && readSymbols(beside, found) == SymbolParse::Ok) {
-            adopt(beside, found);
-            return;
-        }
-    }
-    const std::string name = fileName(g.contentPath);
-    if (own == SymbolParse::NotExecutable) setStatus(name + " carries no symbols. Load a .cof, or put one with the same name beside it.", false);
-    else setStatus(name + " " + whyNot(own), own == SymbolParse::Malformed);
-}
-
-// The current source: the content may have moved (another game, a disc swap), and a picked file may have arrived.
-void syncSource() {
-    bool changed = !g.loaded;
-    const std::string path = g.ctx.contentPath ? g.ctx.contentPath() : std::string();
-    if (path != g.contentPath) {
-        g.contentPath = path;
-        g.pickedPath.clear();
-        changed = true;
-    }
+// The current source: the content may have moved (another game, a disc swap, a rebuild), and a picked file may have
+// arrived.  The store reads only when something changed; a new read rebuilds the view and the status line.
+void syncSource(bool reload = false) {
+    if (!g.store) return;
+    SymbolStore& st = *g.store;
+    st.setContent(g.ctx.contentPath ? g.ctx.contentPath() : std::string());
     {
         std::lock_guard<std::mutex> lk(g.pendingLock);
         if (!g.pendingPath.empty()) {
-            g.pickedPath.swap(g.pendingPath);
+            st.setPicked(g.pendingPath);
             g.pendingPath.clear();
-            changed = true;
         }
     }
-    if (changed) loadSymbols();
+    if (reload) st.invalidate();
+    st.ensure();
+    if (g.storeGen == st.generation() && g.shown) return;
+    g.shown = true;
+    g.storeGen = st.generation();
+    g.viewDirty = true;
+    setStatus(st.status(), st.statusIsError());
 }
 
 void rebuildView() {
@@ -154,13 +92,14 @@ void rebuildView() {
     g.viewDirty = false;
     g.view.clear();
     const std::string query = g.search;
-    for (size_t i = 0; i < g.symbols.size(); i++)
-        if (symbolMatches(g.symbols[i], query)) g.view.push_back(i);
+    const std::vector<Symbol>& all = symbols();
+    for (size_t i = 0; i < all.size(); i++)
+        if (symbolMatches(all[i], query)) g.view.push_back(i);
     const int column = g.sortColumn;
     const bool ascending = g.sortAscending;
-    std::stable_sort(g.view.begin(), g.view.end(), [column, ascending](size_t ia, size_t ib) {
-        const Symbol& a = g.symbols[ascending ? ia : ib];
-        const Symbol& b = g.symbols[ascending ? ib : ia];
+    std::stable_sort(g.view.begin(), g.view.end(), [column, ascending, &all](size_t ia, size_t ib) {
+        const Symbol& a = all[ascending ? ia : ib];
+        const Symbol& b = all[ascending ? ib : ia];
         int c = 0;
         if (column == kColName) c = a.name.compare(b.name);
         else if (column == kColKind) c = (int)a.kind - (int)b.kind;
@@ -190,6 +129,29 @@ void drawRowMenu(DebugSession& s, const Symbol& sym) {
     for (int target : {VJ_DBG_TARGET_M68K, VJ_DBG_TARGET_GPU, VJ_DBG_TARGET_DSP}) {
         std::string label = std::string("Breakpoint on ") + dbgTargetName(target);
         if (ImGui::MenuItem(label.c_str(), nullptr, s.hasBreakpoint(target, sym.value), canBreak)) toggleBreakpoint(s, target, sym);
+    }
+    // The memory watchpoint (one slot): for a variable, "who writes this?".
+    const bool canWatch = sym.value <= 0xFFFFFFu && s.watchSupported();
+    const DebugWatch& w = s.watch();
+    const bool watched = w.set && w.addr == sym.value;
+    if (ImGui::BeginMenu("Watch (68000)", canWatch)) {
+        static const struct {
+            const char* label;
+            unsigned len, kind;
+        } kWatch[] = {{"Writes to the byte", 1, VJ_DBG_WATCH_WRITE},  {"Writes to the word", 2, VJ_DBG_WATCH_WRITE},
+                      {"Writes to the long", 4, VJ_DBG_WATCH_WRITE},  {"Reads of the word", 2, VJ_DBG_WATCH_READ},
+                      {"Reads and writes of the long", 4, VJ_DBG_WATCH_WRITE | VJ_DBG_WATCH_READ}};
+        for (const auto& k : kWatch) {
+            if (!ImGui::MenuItem(k.label, nullptr, watched && w.len == k.len && w.kind == k.kind)) continue;
+            if (s.setWatch(sym.value, k.len, k.kind)) setStatus("Watching " + sym.name + ": the 68000 halts when it touches it", false);
+            else setStatus("Could not set the watchpoint (a gdb client holds the one slot, or the debugger is not attached)", true);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Clear the watchpoint", nullptr, false, w.set)) {
+            s.clearWatch();
+            setStatus("Watchpoint cleared", false);
+        }
+        ImGui::EndMenu();
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Show in CPU debugger", nullptr, false, canBreak && g.ctx.showCpu)) g.ctx.showCpu(symbolTarget(sym.value), sym.value);
@@ -259,7 +221,7 @@ void drawTable(DebugSession& s) {
     while (clipper.Step()) {
         for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
             ImGui::PushID(row);
-            drawRow(s, g.symbols[g.view[(size_t)row]]);
+            drawRow(s, symbols()[g.view[(size_t)row]]);
             ImGui::PopID();
         }
     }
@@ -279,7 +241,7 @@ void drawWindow(DebugSession& s) {
         if (ImGui::Button("Load...")) g.ctx.pickFile();
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Reload")) loadSymbols();
+        if (ImGui::Button("Reload")) syncSource(true);
         drawTable(s);
         if (g.statusIsError) ImGui::TextColored(ui::vec4(ui::pal().warning), "%s", g.status.c_str());
         else ImGui::TextDisabled("%s", g.status.c_str());
@@ -287,15 +249,15 @@ void drawWindow(DebugSession& s) {
     ImGui::End();
 }
 
+// The tools were switched off: the window closes and a file picked by hand is dropped (it belonged to that game).  The
+// table itself is the session's and stays for the CPU debugger; the next load points it at the new content.
 void forget() {
     g.open = false;
-    g.loaded = false;
-    g.symbols.clear();
     g.view.clear();
     g.viewDirty = true;
-    g.contentPath.clear();
-    g.pickedPath.clear();
-    g.sourcePath.clear();
+    g.storeGen = ~0ull;
+    g.shown = false;
+    if (g.store) g.store->dropPicked();
     setStatus("", false);
 }
 
@@ -309,9 +271,18 @@ void registerSymbolsTool(DebugSession& s, const SymbolsUiContext& ctx) {
     t.isOpen = [] { return g.open; };
     t.toggle = [] { g.open = !g.open; };
     s.registerTool(t);
+    g.store = &s.symbols();
+    g.store->reader = readSymbolFile;
     if (g.hooked) return;   // one session per process; the hook is added once
     g.hooked = true;
-    s.onForcedClose.push_back([](const char*) { forget(); });
+    s.onForcedClose.push_back([](const char* why) {
+        // A reload of the same program keeps the window: App marked the table stale, the next draw reads the new build.
+        if (why && !std::strcmp(why, "reload")) {
+            g.storeGen = ~0ull;
+            return;
+        }
+        forget();
+    });
 }
 
 void drawSymbolsTool(DebugSession& s) {
@@ -332,7 +303,7 @@ size_t rowCount() {
 }
 const std::string& rowName(size_t row) {
     rebuildView();
-    return g.symbols[g.view[row]].name;
+    return symbols()[g.view[row]].name;
 }
 void setSearch(const std::string& query) {
     std::snprintf(g.search, sizeof g.search, "%s", query.c_str());
@@ -340,7 +311,7 @@ void setSearch(const std::string& query) {
 }
 void toggleBreakpoint(DebugSession& s, size_t row) {
     rebuildView();
-    const Symbol& sym = g.symbols[g.view[row]];
+    const Symbol& sym = symbols()[g.view[row]];
     vj::toggleBreakpoint(s, symbolTarget(sym.value), sym);
 }
 const std::string& status() { return g.status; }

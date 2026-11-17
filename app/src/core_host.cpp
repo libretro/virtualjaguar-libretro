@@ -837,7 +837,8 @@ bool CoreHost::startSession(std::string& err) {
     return true;
 }
 
-bool CoreHost::finishLoad(const std::string& label, std::string& err, const std::string& opened) {
+bool CoreHost::finishLoad(const std::string& label, std::string& err, const std::string& opened,
+                          const std::string& saveName) {
     std::memset(&avInfo_, 0, sizeof avInfo_);
     retro_get_system_av_info(&avInfo_);
     loaded_ = true;
@@ -845,7 +846,7 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err, const std:
     discDirty_ = true;
     contentName_ = label;
     loadedPath_ = opened.empty() ? contentPath_ : opened;   // an .m3u: the playlist, while the content is its first disc
-    loadedName_ = opened.empty() ? label : pathStem(opened);
+    loadedName_ = saveName.empty() ? (opened.empty() ? label : pathStem(opened)) : saveName;
     // A desktop host always has a keyboard.  The core only polls its keypad key fallbacks
     // (the only route to keypad 7-9, * and #) once it has seen a keyboard event, and
     // retro_deinit forgets that on every load, so a gamepad-only player would otherwise
@@ -861,7 +862,8 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err, const std:
     return true;
 }
 
-bool CoreHost::loadContent(const std::string& path, std::string& err) {
+bool CoreHost::loadContent(const std::string& path, std::string& err,
+                           const std::vector<unsigned char>* cartridge, const std::string& identity) {
     if (noteOffOwner("loadContent")) { err = "called off the emulation thread"; return false; }
     if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     if (!startSession(err)) return false;
@@ -891,8 +893,14 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
             pos = bar + 1;
         }
     }
+    suppliedCartridge_ = false;
     contentData_.clear();
-    if (fullpath) {
+    if (cartridge) {
+        suppliedCartridge_ = true;
+        contentData_ = *cartridge;
+        gi.data = contentData_.data();
+        gi.size = contentData_.size();
+    } else if (fullpath) {
         if (!fileExists(boot)) {
             err = "cannot open " + boot;
             stopSession();
@@ -922,7 +930,7 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
         for (const std::string& d : discs)
             if (appendDiscImage(d) < 0) std::fprintf(stderr, "disc list: could not add %s (the list is full?)\n", d.c_str());
     }
-    return finishLoad(pathStem(boot), err, path);
+    return finishLoad(identity.empty() ? pathStem(boot) : identity, err, path, identity);
 }
 
 bool CoreHost::readPlaylist(const std::string& m3uPath, std::vector<std::string>& discs, std::string& err) {
@@ -989,6 +997,7 @@ void CoreHost::stopSession() {
         initialized_ = false;
     }
     // The core must not reference the image any more.
+    suppliedCartridge_ = false;
     contentData_.clear();
     contentData_.shrink_to_fit();
     contentPath_.clear();

@@ -38,6 +38,7 @@ enum class Cmd : int {
     AchSignIn, AchSignOut, AchEnable, AchHardcore, AchUnofficial, AchList, Netplay, NetplayDisconnect,
     // Tools (the debug windows: arg = index into MenuState::tools)
     Tool, DebugBreak /*Break, or Continue while halted*/, DebugStep, DebugDetach,
+    DebugBreakAtBoot, DebugReloadOnChange,   // the developer loop's two switches (dev_workflow.cpp)
     // Tray
     ShowWindow,
     Count_  // keep last
@@ -82,6 +83,8 @@ struct MenuState {
     std::vector<ToolEntry> tools;
     bool toolsOn = false;          // DebugSession::enabled(): a game runs, the core has the interface, no hardcore
     bool halted = false, attached = false;
+    bool breakAtBoot = false, reloadOnChange = false;   // Tools > Break at Start / Reload When the File Changes
+    bool toolsHardcore = false;    // RetroAchievements hardcore: Break at Start is greyed
     std::string toolsWhy;          // why the tools are off ("" when on); shown as a greyed first line
     std::string fileManager = "File Manager";   // "Finder" / "Explorer", for "Show in ..."
     bool operator==(const MenuState& o) const;
@@ -167,6 +170,8 @@ struct Actions {
     virtual void debugBreakContinue() = 0;
     virtual void debugStep() = 0;
     virtual void debugDetach() = 0;
+    virtual void debugToggleBreakAtBoot() = 0;
+    virtual void debugToggleReloadOnChange() = 0;
     virtual void showWindow() = 0;
 };
 

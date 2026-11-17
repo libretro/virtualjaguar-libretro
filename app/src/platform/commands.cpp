@@ -23,7 +23,8 @@ bool MenuState::operator==(const MenuState& o) const {
            achAvailable == o.achAvailable && achSignedIn == o.achSignedIn && achBusy == o.achBusy &&
            achEnabled == o.achEnabled && achHardcore == o.achHardcore && achUnofficial == o.achUnofficial &&
            netplayConfigured == o.netplayConfigured && fileManager == o.fileManager && tools == o.tools &&
-           toolsOn == o.toolsOn && halted == o.halted && attached == o.attached && toolsWhy == o.toolsWhy;
+           toolsOn == o.toolsOn && halted == o.halted && attached == o.attached && toolsWhy == o.toolsWhy &&
+           breakAtBoot == o.breakAtBoot && reloadOnChange == o.reloadOnChange && toolsHardcore == o.toolsHardcore;
 }
 
 const char* pauseTitle(bool paused) { return paused ? "Resume" : "Pause"; }
@@ -182,6 +183,10 @@ MenuBar buildMenuBar(const MenuState& s) {
         t.push_back(item(Cmd::DebugBreak, "Break / Continue (F9)", "", s.halted || s.toolsOn));
         t.push_back(item(Cmd::DebugStep, "Step (F10)", "", s.halted));
         t.push_back(item(Cmd::DebugDetach, "Detach Debugger", "", s.attached));
+        // The developer loop: settings, so they can be chosen with no game loaded.
+        t.push_back(sep());
+        t.push_back(item(Cmd::DebugBreakAtBoot, "Break at Start", "", !s.toolsHardcore, s.breakAtBoot));
+        t.push_back(item(Cmd::DebugReloadOnChange, "Reload When the File Changes", "", true, s.reloadOnChange));
         bar.menus.push_back(submenu(s.halted ? "Tools - HALTED" : "Tools", std::move(t)));
     }
 
@@ -324,6 +329,8 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount, int 
     case Cmd::DebugBreak: a.debugBreakContinue(); return true;
     case Cmd::DebugStep: a.debugStep(); return true;
     case Cmd::DebugDetach: a.debugDetach(); return true;
+    case Cmd::DebugBreakAtBoot: a.debugToggleBreakAtBoot(); return true;
+    case Cmd::DebugReloadOnChange: a.debugToggleReloadOnChange(); return true;
     case Cmd::ShowWindow: a.showWindow(); return true;
     case Cmd::None:
     case Cmd::Count_: break;

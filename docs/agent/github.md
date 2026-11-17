@@ -107,7 +107,8 @@ Signing and provenance (#1151/#1152): after the builds, `release.yml`'s `stage` 
 minisign-signs `SHA256SUMS.txt` and attests every file; `verify-signatures` (macOS runner,
 `scripts/release/verify.sh`) then checks each asset against its expected signing state, strict on
 tags and `release/**`, warn-only on `develop`, and the per-artifact table goes into the release body.
-Windows is expected `unsigned` until #1150 flips that one line. To prove a change to this pipeline,
+Windows signatures are required when the Azure Artifact Signing secrets and variables are
+configured. To prove a change to this pipeline,
 dispatch `release.yml` on the branch with **Dry run** ticked (builds everything, publishes nothing).
 Key setup: `app/packaging/README.md`, "Signed checksums" / "Signed AppImages".
 

@@ -92,6 +92,8 @@ public:
         iface_.texreplace_reload = &MockDebugIface::sTexReload;
         iface_.frame_number = &MockDebugIface::sFrame;
         iface_.halt_reason = &MockDebugIface::sHaltReason;
+        iface_.watch_set = &MockDebugIface::sWatchSet;
+        iface_.watch_clear = &MockDebugIface::sWatchClear;
         prev_ = current();
         current() = this;
     }
@@ -119,6 +121,10 @@ public:
     unsigned opArms = 0;
     std::vector<std::pair<int, unsigned>> breakpoints;   // (target, addr), in set order
     std::vector<int> haltNexts;                          // targets halt_next() was called for
+    bool watchArmed = false;                             // the one watchpoint slot, as watch_set() left it
+    unsigned watchAddr = 0, watchLen = 0, watchKind = 0;
+    int watchSets = 0, watchClears = 0;
+    bool watchHeldByGdb = false;                         // a gdb client holds the slot: watch_set() answers 0
     bool refuseAttach = false;                           // attach() answers 0
     bool opReady = true;                                 // op_snapshot_get() returns -1 while false
     void clearOpSnapshot() { op_.clear(); }              // op_snapshot_get() then returns 0 (an older core / no list)
@@ -330,6 +336,24 @@ private:
         if (host_) detachCalls++;
         host_ = nullptr;
         breakpoints.clear();
+        watchArmed = false;   // detach clears the watchpoint this interface armed
+    }
+    static int sWatchSet(unsigned addr, unsigned len, unsigned kind) {
+        MockDebugIface* m = M();
+        if (!m || !m->host_ || m->watchHeldByGdb) return 0;
+        if (!(kind & (VJ_DBG_WATCH_WRITE | VJ_DBG_WATCH_READ)) || len == 0 || addr > 0xFFFFFFu || len > 0x1000000u - addr) return 0;
+        m->watchSets++;
+        m->watchArmed = true;
+        m->watchAddr = addr;
+        m->watchLen = len;
+        m->watchKind = kind;
+        return 1;
+    }
+    static void sWatchClear() {
+        MockDebugIface* m = M();
+        if (!m) return;
+        if (m->watchArmed) m->watchClears++;
+        m->watchArmed = false;
     }
     static int sBreakSet(int target, unsigned addr) {
         MockDebugIface* m = M();

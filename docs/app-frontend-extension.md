@@ -81,6 +81,9 @@ whole feature does not exist.  What it gives the app (details, threading and the
   breakpoints and a halt on the existing GDB halt machinery, **without a socket**.  While a processor is halted the core
   calls the host's `halt_pump` repeatedly from inside `retro_run()` (the host runs one UI frame per call and answers
   continue / step / detach).  The GDB TCP stub keeps working beside it; either side may resume.
+- `watch_set` / `watch_clear`: the memory watchpoint -- one slot, a byte range, reads and / or writes, **68000 bus
+  accesses only**.  The halt's reason is `VJ_DBG_STOP_WATCHPOINT` and `halt_pump`'s `pc` is the watched address.  It is the
+  GDB stub's own slot (`Z2`/`Z3`/`Z4`), so a client that already holds it at another address wins.
 - `op_snapshot_arm` / `op_snapshot_get`: the whole display list (links followed, both arms of every branch object), read at the
   top of the next field before the OP rewrites `HEIGHT`/`DATA`/`REMAINDER`.
 - `blit_log_enable` / `blit_log_head` / `blit_log_get`: a ring of the last 256 blitter launches.

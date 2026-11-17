@@ -133,7 +133,8 @@ public:
     // retro_init, retro_load_game, then load SRAM.  Safe to call repeatedly.
     // An .m3u playlist (m3u.h) boots its first disc and puts every disc in the disc list.  The playlist is what was
     // opened (loadedPath / loadedName: the .srm, Restart, recents), the disc in the tray the content, as in RetroArch.
-    bool loadContent(const std::string& path, std::string& err);
+    bool loadContent(const std::string& path, std::string& err,
+                     const std::vector<unsigned char>* cartridge = nullptr, const std::string& identity = {});
     // Boot the console with an empty cartridge slot (SET_SUPPORT_NO_GAME).
     bool loadNoContent(std::string& err);
     void unloadContent();
@@ -147,6 +148,9 @@ public:
     // EEPROM pair and the Memory Track, libretro.c) across an insert and never reloads it, so the file must stay the
     // one it was read from.  A restart reopens it too.  An .m3u playlist is what was opened: one .srm per set.
     const std::string& loadedPath() const { noteWaitingRead("loadedPath"); return loadedPath_; }
+    const std::vector<unsigned char>* suppliedCartridge() const {
+        return suppliedCartridge_ ? &contentData_ : nullptr;
+    }   // owner thread only
     const std::string& loadedName() const { noteWaitingRead("loadedName"); return loadedName_; }
     unsigned discSwaps() const { return onOwner() ? discSwaps_ : ui_.discSwaps; }   // counts moves of contentPath
     // An .m3u's discs, resolved against its folder.  False (with `err`) when it cannot be read, lists nothing, or an
@@ -323,7 +327,8 @@ private:
     void captureOptions(const retro_core_options_v2* o);
     static std::string lockedValue(const OptionDef& d, const std::string& v);
     bool startSession(std::string& err);
-    bool finishLoad(const std::string& label, std::string& err, const std::string& opened = std::string());
+    bool finishLoad(const std::string& label, std::string& err, const std::string& opened = {},
+                    const std::string& saveName = {});
     void stopSession();
     void loadSaveRam();
 
@@ -345,6 +350,7 @@ private:
     std::string loadedPath_, loadedName_;     // what was opened
     unsigned discSwaps_ = 0;
     void followMountedDisc(bool ok);
+    bool suppliedCartridge_ = false;
     std::vector<unsigned char> contentData_;  // kept alive until unload
 
     retro_system_info sysInfo_{};

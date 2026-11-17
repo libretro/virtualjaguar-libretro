@@ -10,3 +10,17 @@
 </p>
 
 {{DOWNLOADS}}
+
+<section class="win" id="homebrew">
+  <h2>Install on macOS with Homebrew</h2>
+  <div class="win-body">
+    <p>The <a href="https://github.com/Provenance-Emu/homebrew-virtualjaguar">project tap</a>
+      installs the stable standalone app on Apple Silicon and Intel Macs.</p>
+    <pre><code>brew tap Provenance-Emu/virtualjaguar
+brew trust --cask Provenance-Emu/virtualjaguar/virtualjaguar
+brew install --cask Provenance-Emu/virtualjaguar/virtualjaguar</code></pre>
+    <p>For nightly builds, use the <a href="{{REPO}}/releases/tag/nightly">nightly macOS ZIP</a>
+      or the <a href="./#get">installer script</a> with
+      <code>--what app --channel nightly</code>.</p>
+  </div>
+</section>

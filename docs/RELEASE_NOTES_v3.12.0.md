@@ -50,6 +50,8 @@ provenance and the per-artifact verification table attached to the release.
 Windows website downloads are unsigned in this release; Microsoft Store
 packages are signed separately by Microsoft when published.
 
+The stable macOS app is also available from the [project Homebrew tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar).
+
 ## Compatibility and limitations
 
 The 155-title cartridge and 28-case CD boot sweeps have no backward moves

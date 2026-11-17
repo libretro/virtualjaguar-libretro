@@ -67,7 +67,21 @@ A standalone front end for the same core, in `app/`: SDL3 for window, audio and 
 | Linux x86_64, aarch64 | `VirtualJaguar-X.Y.Z-linux-<arch>.AppImage` or `virtualjaguar_X.Y.Z_<amd64\|arm64>.deb` |
 | Linux x86_64 (Flatpak) | `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` |
 
-The macOS app, core and command-line tools are signed with a Developer ID and notarized by Apple. The Windows installer is not code-signed yet, so SmartScreen may warn. Builds you make yourself are unsigned until you sign them. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
+The macOS app, core and command-line tools are signed with a Developer ID and notarized by Apple. Official Windows builds use Azure Artifact Signing when configured. Check the signing table on the release or nightly you downloaded for its Authenticode verification result. Builds you make yourself are unsigned until you sign them. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
+
+### Install on macOS with Homebrew
+
+The [project tap](https://github.com/Provenance-Emu/homebrew-virtualjaguar)
+installs the stable standalone app on Apple Silicon and Intel Macs.
+
+```sh
+brew tap Provenance-Emu/virtualjaguar
+brew trust --cask Provenance-Emu/virtualjaguar/virtualjaguar
+brew install --cask Provenance-Emu/virtualjaguar/virtualjaguar
+```
+
+For nightly builds, use the [nightly macOS ZIP](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly)
+or the [installer script](https://jaguar.provenance-emu.com/#get) with `--what app --channel nightly`.
 
 ## Features
 

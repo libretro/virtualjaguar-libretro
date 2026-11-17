@@ -97,6 +97,10 @@ set(VJ_EMU_THREAD_DEFAULT_VALUE 1)
 add_library(vj_build_channel INTERFACE)
 target_compile_definitions(vj_build_channel INTERFACE VJ_BUILD_CHANNEL="${VJ_BUILD_CHANNEL}" VJ_EMU_THREAD_DEFAULT=${VJ_EMU_THREAD_DEFAULT_VALUE})
 option(VJ_MAC_APP_STORE "Build the sandboxed Mac App Store edition" OFF)
+set(VJ_MAC_DIRECT_SPARKLE_SDK "" CACHE PATH "Sparkle SDK for the direct macOS distribution")
+if(VJ_MAC_DIRECT_SPARKLE_SDK AND (NOT APPLE OR VJ_MAC_APP_STORE))
+    message(FATAL_ERROR "Sparkle is only available for direct macOS builds")
+endif()
 if(VJ_MAC_APP_STORE AND NOT APPLE)
     message(FATAL_ERROR "VJ_MAC_APP_STORE requires macOS")
 endif()
@@ -363,6 +367,7 @@ endif()
 set(VJ_APP_SOURCES
     src/main.cpp
     src/app.cpp
+    src/dev_workflow.cpp
     src/gl_context.cpp
     src/paths.cpp
     src/instance.cpp
@@ -409,6 +414,8 @@ set(VJ_APP_SOURCES
     src/cheat_store.cpp
     src/cheats_core.cpp
     src/cheats_ui.cpp
+    src/ips.cpp
+    src/ips_ui.cpp
     src/sha256.cpp
     src/achievements.cpp
     src/ach_event.cpp
@@ -446,7 +453,10 @@ set(VJ_APP_SOURCES
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
     src/debug/symbol_table.cpp
+    src/debug/symbol_store.cpp
     src/debug/symbols_ui.cpp
+    src/debug/file_watch.cpp
+    src/debug/dev_boot.cpp
     src/desktop.cpp
     src/tv_script.cpp
     src/platform/commands.cpp
@@ -535,6 +545,20 @@ endif()
 include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
 add_executable(virtualjaguar ${VJ_APP_SOURCES})
+if(VJ_MAC_DIRECT_SPARKLE_SDK)
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "12.0")
+        message(FATAL_ERROR "Sparkle 2.10.1 requires -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 or newer")
+    endif()
+    set(_vj_sparkle_framework "${VJ_MAC_DIRECT_SPARKLE_SDK}/Sparkle.framework")
+    if(NOT EXISTS "${_vj_sparkle_framework}/Headers/Sparkle.h")
+        message(FATAL_ERROR "Expected the pinned Sparkle SDK (see packaging/macos/fetch-sparkle.sh)")
+    endif()
+    target_sources(virtualjaguar PRIVATE src/platform/sparkle_macos.mm)
+    set_source_files_properties(src/platform/sparkle_macos.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_compile_definitions(virtualjaguar PRIVATE VJ_MAC_DIRECT_SPARKLE=1)
+    target_link_libraries(virtualjaguar PRIVATE "${_vj_sparkle_framework}")
+    set_property(TARGET virtualjaguar APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
+endif()
 vj_app_shaders(virtualjaguar)
 vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
@@ -551,6 +575,7 @@ message(STATUS "TV mode default for a fresh config: ${VJ_TV_DEFAULT}")
 message(STATUS "Shader preset default for a fresh config: ${VJ_SHADER_DEFAULT}")
 message(STATUS "Build channel: ${VJ_BUILD_CHANNEL} (emulation thread default ${VJ_EMU_THREAD_DEFAULT_VALUE})")
 if(WIN32)
+    include(packaging/windows/winsparkle.cmake)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses; platform_windows.cpp: WSAStartup for the core
     target_link_libraries(virtualjaguar PRIVATE shell32)           # platform_windows.cpp: SHAddToRecentDocs, ShellExecuteW
 endif()
@@ -589,7 +614,7 @@ else()
     set(_vj_sign_dev_default OFF)
 endif()
 option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" ${_vj_sign_dev_default})
-if(VJ_APP_SIGN_DEV_BUILD AND APPLE AND NOT VJ_MAC_APP_STORE)
+if(VJ_APP_SIGN_DEV_BUILD AND APPLE AND NOT VJ_MAC_APP_STORE AND NOT VJ_MAC_DIRECT_SPARKLE_SDK)
     add_custom_command(TARGET virtualjaguar POST_BUILD
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/packaging/local-package.sh"
                 --sign-exe "$<TARGET_FILE:virtualjaguar>"
@@ -604,7 +629,8 @@ install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
 
 # The session's own sources (DebugSession marshals to DebugCore and fills DebugViews): every debug test that links
 # debug_session.cpp links all three.
-set(VJ_DEBUG_SESSION_SRCS src/debug/debug_session.cpp src/debug/debug_core.cpp src/debug/debug_views.cpp)
+set(VJ_DEBUG_SESSION_SRCS src/debug/debug_session.cpp src/debug/debug_core.cpp src/debug/debug_views.cpp
+    src/debug/symbol_store.cpp src/debug/symbol_table.cpp)
 
 # CPU debugger (debug tools WP4): vendored Musashi disassembler + cpu_view / cpu_ui + their tests.
 include(VJDebugCpu)
@@ -619,6 +645,7 @@ if(VJ_APP_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter)   # gdb_threaded_halt (VJEmuThreadTests.cmake) drives a gdb client from Python
     include(VJSmokeTests)
+    include(VJIpsTests)
     include(VJContentServerTests)
     include(VJAchTests)
     include(VJCheatTests)

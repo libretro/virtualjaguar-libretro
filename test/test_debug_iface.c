@@ -42,6 +42,7 @@
 #include "vj_frontend_ext.h"
 #include "vj_debug_iface.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -122,6 +123,9 @@ static unsigned g_pump_total;       /* every pump call since attach, past MAX_CA
 static unsigned g_break_on_first;   /* arm a breakpoint at the first halted PC */
 static unsigned g_break_pc;
 static unsigned g_break_hits;       /* halts at g_break_pc with reason BREAKPOINT */
+static unsigned g_watch_addr, g_watch_len;   /* part W: the armed watch range */
+static unsigned g_watch_hits;       /* halts with reason WATCHPOINT at g_watch_addr */
+static unsigned g_watch_arm_at_halt;   /* arm a write watch around the stack at the first halt */
 
 static int pump(void *user, int target, unsigned pc)
 {
@@ -140,6 +144,18 @@ static int pump(void *user, int target, unsigned pc)
         if (target == VJ_DBG_TARGET_M68K && g_if->get_regs(VJ_DBG_TARGET_M68K, &r))
             g_calls[idx].pc_matches_regs = (r.pc == pc);
         g_ncalls++;
+    }
+    if (g_watch_arm_at_halt && target == VJ_DBG_TARGET_M68K && g_if->get_regs(VJ_DBG_TARGET_M68K, &r)) {
+        /* The next push (a JSR, or the vertical blank's exception frame) lands in here. */
+        g_watch_arm_at_halt = 0;
+        g_watch_len = 128;
+        g_watch_addr = (r.a[7] - 64u) & 0x00FFFFFEu;
+        CHECK(g_if->watch_set(g_watch_addr, g_watch_len, VJ_DBG_WATCH_WRITE) == 1);
+    } else if (g_if->halt_reason() == VJ_DBG_STOP_WATCHPOINT) {
+        CHECK(target == VJ_DBG_TARGET_M68K);
+        CHECK(pc == g_watch_addr);                 /* the watched address, not a program counter */
+        g_watch_hits++;
+        g_if->watch_clear();                       /* once is enough */
     }
     if (g_break_on_first && !g_break_pc) {
         g_break_pc = pc;
@@ -164,6 +180,9 @@ static void reset_script(void)
     g_break_on_first = 0;
     g_break_pc = 0;
     g_break_hits = 0;
+    g_watch_addr = g_watch_len = 0;
+    g_watch_hits = 0;
+    g_watch_arm_at_halt = 0;
 }
 
 /* ---- helpers --------------------------------------------------------------- */
@@ -749,6 +768,47 @@ static void run_digest(int argc, char **argv, int with_debug)
     harness_shutdown(&cfg);
 }
 
+/* W) the memory watchpoint: refused without a host or a kind; a write watch
+ *    around the 68000's stack halts with reason WATCHPOINT at the watched
+ *    address; once cleared it never fires again. */
+static void partW(int argc, char **argv)
+{
+    harness_config cfg;
+    unsigned before;
+
+    CHECK(start(&cfg, argc, argv, VJ_CAP_EVENTS | VJ_CAP_DEBUG));
+    run_frames(&cfg, 30);
+    CHECK(g_if != NULL);
+    CHECK(g_if->size >= offsetof(struct vj_debug_iface, watch_clear) + sizeof(g_if->watch_clear));
+    CHECK(g_if->watch_set && g_if->watch_clear);
+
+    CHECK(g_if->watch_set(0x4000, 2, VJ_DBG_WATCH_WRITE) == 0);       /* no host attached */
+    g_if->watch_clear();                                              /* idempotent, nothing armed */
+
+    reset_script();
+    CHECK(g_if->attach(&g_host) == 1);
+    CHECK(g_if->watch_set(0x4000, 2, 0) == 0);                        /* no kind */
+    CHECK(g_if->watch_set(0x4000, 0, VJ_DBG_WATCH_WRITE) == 0);       /* no length */
+    CHECK(g_if->watch_set(0x1000000u, 2, VJ_DBG_WATCH_WRITE) == 0);   /* off the bus */
+    CHECK(g_if->watch_set(0xFFFFFF, 2, VJ_DBG_WATCH_WRITE) == 0);     /* runs off the bus */
+    CHECK(g_if->watch_set(0x4000, 2, VJ_DBG_WATCH_READ) == 1);
+    CHECK(g_if->watch_set(0x5000, 4, VJ_DBG_WATCH_WRITE | VJ_DBG_WATCH_READ) == 1);   /* ours: replaced */
+    g_if->watch_clear();
+
+    g_watch_arm_at_halt = 1;
+    g_if->halt_next(VJ_DBG_TARGET_M68K);
+    run_frames(&cfg, 10);
+    CHECK(g_watch_addr != 0);                  /* the halt came and armed the watch */
+    CHECK(g_watch_hits == 1);                  /* a push landed in the range */
+    before = g_pump_total;
+    run_frames(&cfg, 10);
+    CHECK(g_pump_total == before);             /* cleared: no further halt */
+    CHECK(g_watch_hits == 1);
+
+    g_if->detach();
+    harness_shutdown(&cfg);
+}
+
 static void partG(int argc, char **argv)
 {
     uint32_t fb_plain, ram_plain, fb_dbg, ram_dbg;
@@ -771,6 +831,7 @@ int main(int argc, char **argv)
     partDE(argc, argv);
     partF(argc, argv);
     partH(argc, argv);
+    partW(argc, argv);
     partG(argc, argv);
     harness_set_env_hook(NULL);
     printf("debug_iface: %d checks, %d failed\n", g_checks, g_fail);

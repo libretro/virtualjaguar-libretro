@@ -15,6 +15,11 @@ $script = Join-Path (Join-Path $here '..\..\tools') 'install.ps1'
 $script = (Resolve-Path $script).Path
 $T      = Join-Path ([IO.Path]::GetTempPath()) ('vjps-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $T | Out-Null
+# Keep the fixture's verification paths independent of the production key.
+$fixtureInstaller = (Get-Content -LiteralPath $script -Raw) -replace '(?m)^\$script:MinisignPubKey = .*', '$$script:MinisignPubKey = '''''
+$script = Join-Path $T 'install.ps1'
+Set-Content -LiteralPath $script -Value $fixtureInstaller -Encoding UTF8
+
 $hostExe = (Get-Process -Id $PID).Path
 
 $script:Pass = 0; $script:Fail = 0
