@@ -75,6 +75,18 @@ static std::string manifest(const std::string& path, const std::string& content,
            "\",\"contentPath\":\"https://untrusted.invalid/steal\"}]}";
 }
 
+static void nativeLinkedCopy(const fs::path& root) {
+    Fixture f;
+    f.responses["/api/v1/items/game-1/manifest"] = R"({"files":[]})";
+    f.responses["/api/v1/items/game-1/rom-copies"] =
+        R"({"items":[{"id":"offline","kind":"source","availability":"offline","format":"j64"},)"
+        R"({"id":"available","kind":"source","availability":"local","format":"j64",)"
+        R"("name":"Example.j64","sizeBytes":4,"grouped":false}]})";
+    f.responses["/api/v1/sources/available/content"] = "cart";
+    CHECK(bytes(f.client().download(item(), root.u8string(), nullptr)) == "cart");
+    CHECK(f.paths.size() == 3);
+}
+
 static void nativeAddons(const fs::path& root) {
     Fixture f;
     const ecs::Game game{"scanned", "Fixture", "source", "com.provenance.jaguar", {}};
@@ -151,6 +163,10 @@ static void rommGatewayContract(const fs::path& root) {
     const std::string rom = "cartridge";
     const std::string patch = "PATCHEOF";
     const std::string hash = sha256Hex(patch.data(), patch.size());
+    const std::string group = "/api/roms/43/ecs-files";
+    const std::string cue = "FILE \"Track.bin\" BINARY\n  TRACK 01 MODE1/2352\n";
+    const std::string cueId(64, 'a');
+    const std::string trackId(64, 'b');
     const std::string companion = "/api/roms/42/ecs-companions";
     const std::string content = companion + "/" + hash + "/content";
     std::vector<std::string> requests;
@@ -172,6 +188,17 @@ static void rommGatewayContract(const fs::path& root) {
                        R"(","sha256":")" + hash + R"(","contentPath":")" + content + R"("}]})";
             } else if (path == content) {
                 body = patch;
+            } else if (path == "/api/roms/43") {
+                body = R"({"id":43,"fs_name":"Fixture.zip"})";
+            } else if (path == group) {
+                body = "{\"items\":[{\"id\":" + neuro::jsonQuote(cueId) +
+                       ",\"relativePath\":\"Disc.cue\",\"sizeBytes\":" + std::to_string(cue.size()) +
+                       "},{\"id\":" + neuro::jsonQuote(trackId) +
+                       ",\"relativePath\":\"Track.bin\",\"sizeBytes\":5}]}";
+            } else if (path == group + "/" + cueId + "/content") {
+                body = cue;
+            } else if (path == group + "/" + trackId + "/content") {
+                body = "track";
             } else if (path == "/api/roms/42") {
                 body = R"({"id":42,"fs_name":"Fixture.j64","fs_size_bytes":9})";
             } else if (path == "/api/roms/42/content/Fixture.j64") {
@@ -203,6 +230,10 @@ static void rommGatewayContract(const fs::path& root) {
     CHECK(addons.front().canBoot(game));
     CHECK(bytes(gateway.downloadAddon(addons.front(), root.u8string(), nullptr)) == patch);
     CHECK(bytes(gateway.download(game, root.u8string(), nullptr)) == rom);
+    const ecs::Game disc{"43", "Fixture Disc", "gateway", "com.provenance.jaguarcd", Json::object()};
+    const auto discPath = fs::u8path(gateway.download(disc, root.u8string(), nullptr));
+    CHECK(bytes(discPath) == cue);
+    CHECK(bytes(discPath.parent_path() / "Track.bin") == "track");
 }
 
 static void rommArtworkPaths() {
@@ -255,6 +286,7 @@ static void persistedServerIdentity(const fs::path& root) {
 }
 
 static void tests(const fs::path& root) {
+    nativeLinkedCopy(root / "linked-copy");
     nativeAddons(root);
     rommAddons();
     rommGatewayContract(root);
