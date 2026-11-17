@@ -571,15 +571,39 @@ std::string Client::download(const Game& game, const std::string& cacheRoot, con
                              const std::function<void(uint64_t, uint64_t)>& progress) const {
     std::vector<File> files;
     std::string selected;
+    const auto addGroup = [&](const std::string& sourceId) {
+        const Json group = json("/api/v1/sources/" + lib::urlEncode(sourceId) + "/group", cancel);
+        require(group.has("error") && group["error"].isNull() && group["files"].isArray(),
+                "This disc group is incomplete. Rescan its server folder.");
+        for (const Json& file : group["files"].items()) {
+            const std::string id = text(file["id"]);
+            const std::string path = text(file.has("relativePath") ? file["relativePath"] : file["name"]);
+            require(file["availability"].asString() == "local", "A disc companion is offline or evicted.");
+            files.push_back({id, path, contentPath("sources", id), "", sizeOf(file["size"])});
+            if (id == sourceId) selected = path;
+        }
+        require(!selected.empty(), "The disc group does not include its descriptor.");
+    };
     if (game.entityType == "gateway") {
         const std::string path = "/api/roms/" + lib::urlEncode(game.id);
         const Json details = json(path, cancel);
         require(rommId(details["id"]) == game.id, "Invalid ECS gateway game.");
-        const std::string name = text(details["fs_name"]);
-        require(details["fs_size_bytes"].isNumber(),
-                "For grouped gateway downloads, add the native Emulation Server.");
-        files.push_back({game.id, name, path + "/content/" + lib::urlEncode(name),
-                         "", sizeOf(details["fs_size_bytes"])});
+        if (details["fs_size_bytes"].isNumber()) {
+            const std::string name = text(details["fs_name"]);
+            files.push_back({game.id, name, path + "/content/" + lib::urlEncode(name),
+                             "", sizeOf(details["fs_size_bytes"])});
+        } else {
+            const std::string groupPath = path + "/ecs-files";
+            const Json group = json(groupPath, cancel, true);
+            require(group["items"].isArray(),
+                    "Update the ECS gateway or add the native Emulation Server for grouped downloads.");
+            for (const Json& file : group["items"].items()) {
+                const std::string id = text(file["id"]);
+                require(hexHash(id), "Invalid ECS gateway file identifier.");
+                files.push_back({id, text(file["relativePath"]), groupPath + "/" + id + "/content",
+                                 "", sizeOf(file["sizeBytes"])});
+            }
+        }
     } else if (protocol_ == Protocol::RomM) {
         require(game.entityType == "romm" && !game.id.empty() &&
                     game.id.find_first_not_of("0123456789") == std::string::npos, "Invalid RomM game.");
@@ -615,18 +639,23 @@ std::string Client::download(const Game& game, const std::string& cacheRoot, con
             files.push_back({id, text(file["relativePath"]), contentPath("files", id), hash, sizeOf(file["size"]),
                              file["kind"].asString() == "rom"});
         }
+        if (files.empty()) {
+            const Json copies = json("/api/v1/items/" + lib::urlEncode(game.id) + "/rom-copies",
+                                     cancel, true);
+            for (const Json& copy : copies["items"].items()) {
+                if (copy["kind"].asString() != "source" || copy["availability"].asString() != "local") continue;
+                const std::string format = lower(copy["format"].asString());
+                if (!lib::isCartExt(format) && !lib::isDiscExt(format)) continue;
+                const std::string id = text(copy["id"]);
+                if (copy["grouped"].asBool()) addGroup(id);
+                else files.push_back({id, text(copy["name"]), contentPath("sources", id),
+                                      "", sizeOf(copy["sizeBytes"])});
+                break;
+            }
+        }
     } else if (game.entityType == "source" && (pathExt(game.payload["name"].asString()) == "cue" ||
                                                game.payload["groupFileCount"].asNumber() > 0)) {
-        const Json group = json("/api/v1/sources/" + lib::urlEncode(game.id) + "/group", cancel);
-        require(group.has("error") && group["error"].isNull() && group["files"].isArray(), "This disc group is incomplete. Rescan its server folder.");
-        for (const Json& file : group["files"].items()) {
-            const std::string id = text(file["id"]);
-            const std::string path = text(file.has("relativePath") ? file["relativePath"] : file["name"]);
-            require(file["availability"].asString() == "local", "A disc companion is offline or evicted.");
-            files.push_back({id, path, contentPath("sources", id), "", sizeOf(file["size"])});
-            if (id == game.id) selected = path;
-        }
-        require(!selected.empty(), "The disc group does not include its descriptor.");
+        addGroup(game.id);
     } else {
         require(game.entityType == "source" || game.entityType == "asset", "Unsupported game entry.");
         const Json& file = game.payload;
