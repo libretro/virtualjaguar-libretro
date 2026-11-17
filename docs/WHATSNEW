@@ -1,3 +1,35 @@
+Virtual Jaguar v3.13.0 libretro
+------------------------------
+
+IPS patches, RomM libraries and server add-ons in the app, a debugger loop for
+homebrew, and signed Windows downloads. Core options and v17 savestates carry over.
+Full notes: docs/RELEASE_NOTES_v3.13.0.md
+
+* Open or drop an IPS patch: pick the base cartridge, check both SHA-256
+  values, then boot from memory, save a copy, or replace the original after
+  a recovery copy is written (#1208).
+* Keep several server libraries as named tabs, and browse a RomM 5.4 server
+  directly (#1209).
+* Load a server game's add-ons, download them with size and SHA-256 checks,
+  and launch cartridge IPS add-ons through the in-memory patch path (#1216).
+* Debugger: Break at start halts every load and Reset at the first
+  instruction; breakpoints follow their symbols when the program is rebuilt;
+  Reload when the file changes; one memory watchpoint for 68000 accesses;
+  symbol names in the listing, Go to and the halt bar; --break-at-boot,
+  --break, --watch, --symbols and --reload-on-change (#1218).
+* GDB stub: Z2/Z3/Z4 watchpoints honour the requested length and trigger on
+  any overlapping 68000 access, not only an exact address match (#1218).
+* Windows downloads are Authenticode-signed with Azure Artifact Signing; the
+  release gate verifies them against Microsoft's root (#1150, #1200).
+* Checksums are minisign-signed and AppImages carry a GPG signature; the
+  public keys are published and pinned in both installers (#1199).
+* Stable releases are gated on installing, booting and uninstalling the exact
+  staged Windows installers on x64 and ARM64 (#1210).
+* Document the Homebrew tap for the stable macOS app (#1205).
+* Merge opt-in Sparkle and WinSparkle direct-update support and a verified
+  feed publisher; the downloads of this release do not include an updater
+  (#1213, #1214, #1215).
+
 Virtual Jaguar v3.12.0 libretro
 ------------------------------
 
