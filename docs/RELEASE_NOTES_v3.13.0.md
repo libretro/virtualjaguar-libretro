@@ -60,7 +60,8 @@ The stable macOS app is also available from the [project Homebrew tap](https://g
 
 ## Compatibility and limitations
 
-COMPAT_PLACEHOLDER
+The 155-title cartridge and 28-case CD boot sweeps have no backward moves
+from 3.12.0, and no row changed stage.
 
 Core options and v17 savestates carry over from 3.12.0. The emulated machine is
 unchanged in this release: the core changes are the debugger's watchpoint and
