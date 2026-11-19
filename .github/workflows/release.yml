@@ -69,6 +69,12 @@ jobs:
   guard:
     if: ${{ !inputs.verification_run }}
     name: Check dispatch ref
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AZURE_SIGNING_READY: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' }}
     outputs:
       previous_runs: ${{ steps.previous.outputs.runs }}
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
@@ -88,6 +94,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      - name: Verify Azure signing identity before building
+        if: ${{ env.AZURE_SIGNING_READY == 'true' && (github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/')) }}
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Locate previous release checkpoint artifacts
         id: previous
         uses: actions/github-script@v9
