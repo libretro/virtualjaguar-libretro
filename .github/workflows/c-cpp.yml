@@ -470,6 +470,7 @@ jobs:
       with:
         name: ${{ matrix.config.displayTargetName }}
         path: .ci-native-artifact/
+        include-hidden-files: true
         if-no-files-found: error
 
     # TEST_EXPORTS=1 -> production mode switch.  TEST_EXPORTS adds
