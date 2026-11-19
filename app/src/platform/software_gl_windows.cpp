@@ -59,14 +59,21 @@ std::wstring hardwareD3D12Adapter() {
     return found;
 }
 // Mesa's LLVM JIT can select x86 features that Windows ARM emulation cannot execute.
-// IsWow64Process2 reports the process and native machine independently of emulated CPUID.
+// IsWow64Process2 reports the native machine independently of emulated CPUID.
+// x64 emulation may report UNKNOWN (not a 32-bit WOW process), so use this
+// executable's compile target to distinguish it from native ARM64.
 bool emulatedX64OnArm64() {
+#if defined(_M_X64) || defined(__x86_64__)
     using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
     HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
     auto query = reinterpret_cast<IsWow64Process2Fn>(GetProcAddress(kernel, "IsWow64Process2"));
     USHORT process = 0, native = 0;
     return query && query(GetCurrentProcess(), &process, &native) &&
-           process == IMAGE_FILE_MACHINE_AMD64 && native == IMAGE_FILE_MACHINE_ARM64;
+           native == IMAGE_FILE_MACHINE_ARM64 &&
+           (process == IMAGE_FILE_MACHINE_AMD64 || process == IMAGE_FILE_MACHINE_UNKNOWN);
+#else
+    return false;
+#endif
 }
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
