@@ -7,6 +7,7 @@ const { execFileSync } = require('node:child_process');
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const lines = value => (value || '').split('\n').map(s => s.trim()).filter(Boolean);
 function jobDefinition(text, id) {
+  text = text.replace(/\r\n/g, '\n');
   const start = text.indexOf(`\n  ${id}:\n`);
   if (start < 0) throw new Error(`Missing workflow job ${id}`);
   const rest = text.slice(start + 1);
@@ -24,7 +25,7 @@ function sourceKey({ dependencies, job, configuration, runner, outputs }) {
   if (!files.length) throw new Error('Checkpoint dependencies matched no files');
   const [workflow, id] = job.split('#');
   if (!id) throw new Error('Expected workflow-file#job-id');
-  const workflowText = fs.readFileSync(workflow, 'utf8');
+  const workflowText = fs.readFileSync(workflow, 'utf8').replace(/\r\n/g, '\n');
   const inputs = files.map(file => [file, digest(fs.readFileSync(file)), fs.statSync(file).mode & 0o777]);
   // Global env and inputs also affect builds. Hash the header independently of other jobs' commands.
   return digest(JSON.stringify({ schema: 1, inputs, header: workflowText.split('\njobs:\n')[0],

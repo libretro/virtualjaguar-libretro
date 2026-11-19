@@ -927,7 +927,7 @@ jobs:
       - name: Retry the two timed-out presets independently
         run: |
           python3 -I "$QUALIFY" --os macos --exe 'candidate/app/Virtual Jaguar.app/Contents/MacOS/virtualjaguar' \
-            --shaders 'candidate/app/Virtual Jaguar.app/Contents/MacOS/shaders' --out diagnostic \
+            --shaders 'candidate/app/Virtual Jaguar.app/Contents/Resources/shaders' --out diagnostic \
             --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" \
             --jobs 1 --timeout 600 --low-dpi --seed-config "$LISTS/small-window.ini" --expect-renderer Apple \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" \

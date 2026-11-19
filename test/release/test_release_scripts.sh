@@ -47,6 +47,9 @@ mk app-package-flatpak VirtualJaguar-dev-linux-x86_64.flatpak
 mk app-package-flatpak-aarch64 VirtualJaguar-dev-linux-aarch64.flatpak
 mk librashader-x86_64-unknown-linux-gnu librashader.so
 mk ci-core-vita BUILD.json 100
+mk checkpoint-origin-test-save test.json 100
+mk checkpoint-origin-test-restore test.json 150
+mk windows-emulated-installer-evidence RESULT.txt 100
 if [ "$OS" = Darwin ]; then
   mkdir -p "$A/virtualjaguar_libretro-macos-arm64"
   printf 'int vj_t(void){return 1;}\n' > "$T/f.c"
@@ -62,6 +65,8 @@ check_rc "stage exits 0" "$RC" 0 "$OUT"
 check_has "shipped file staged" "$(ls "$T/rel")" "virtualjaguar_libretro-linux-x86_64.so"
 check_lacks "librashader intermediate excluded" "$(ls "$T/rel")" "librashader"
 check_lacks "ci-core intermediate excluded" "$(ls "$T/rel")" "BUILD.json"
+check_lacks "checkpoint evidence excluded" "$(ls "$T/rel")" "test.json"
+check_lacks "installer evidence excluded" "$(ls "$T/rel")" "RESULT.txt"
 check_lacks "windows-stage intermediate excluded" "$(ls "$T/rel")" "virtualjaguar.exe"
 check_lacks "signing sidecar is not a release asset" "$(ls "$T/rel")" ".status"
 check_has "sidecar collected for the gate" "$(ls "$T/status")" "virtualjaguar_libretro-macos-arm64.dylib.status"

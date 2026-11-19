@@ -61,6 +61,7 @@ test('only successful saves create receipts, restored bytes must match, and orig
 test('job extraction does not accidentally include later jobs', () => {
   const s = '\njobs:\n  build:\n    steps:\n      - run: build\n  sign:\n    steps:\n      - run: sign\n';
   assert(!jobDefinition(s, 'build').includes('run: sign'));
+  assert.equal(jobDefinition(s.replace(/\n/g, '\r\n'), 'build'), jobDefinition(s, 'build'));
   assert(jobDefinition(s, 'sign').includes('run: sign'));
   assert.throws(() => jobDefinition(s, 'missing'), /Missing/);
   assert.throws(() => inventory(['/tmp']), /repository-relative/);

@@ -48,7 +48,10 @@ while IFS= read -r f; do
 done < <(find "$art" -mindepth 2 -type f \
            -not -path "$art/librashader-*" -not -path "$art/ci-core-*" \
            -not -path "$art/windows-stage-*" -not -path "$art/gl-qualification-*" \
-           -not -path "$art/signing-status-*" \
+           -not -path "$art/signing-status-*" -not -path "$art/checkpoint-origin-*" \
+           -not -path "$art/windows-emulated-installer-evidence/*" \
+           -not -path "$art/windows-installer-qualification-*" \
+           -not -path "$art/recovery-signing-table/*" \
            -not -path "$art/release-staged/*" -not -path "$art/release-signing-status/*" \
            -not -path "$art/signing-table/*" | LC_ALL=C sort)
 
