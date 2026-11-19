@@ -711,6 +711,27 @@ def merge_main(args):
 # ---------------------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------------------
+def retry_timeouts(results, run_one, reset=None):
+    """Retry timed-out launches serially after every parallel worker has stopped."""
+    retried = list(results)
+    for index, first in enumerate(results):
+        if not first.get("timed_out") or not first.get("errors") or first.get("preset") == "off":
+            continue
+        previous_log = first.get("log", "")
+        if previous_log and pathlib.Path(previous_log).is_file():
+            saved_log = previous_log + ".parallel"
+            os.replace(previous_log, saved_log)
+            previous_log = saved_log
+        if reset:
+            reset()
+        result = run_one(first["preset"])
+        result["parallel_attempt"] = {"seconds": first.get("seconds"), "errors": list(first["errors"]), "log": previous_log}
+        result["notes"].append("retried serially after the parallel launch timed out")
+        retried[index] = result
+        print("  serial retry %-60s %s" % (first["preset"], "FAIL" if result["errors"] else result["verdict"]), flush=True)
+    return retried
+
+
 def resume_results(report, key, os_name, shard, presets):
     """A checkpoint verifies input identity and file hashes before this report is read."""
     if not report.is_file():
@@ -784,6 +805,7 @@ def main():
     ap.add_argument("--reset-cvms", action="store_true",
                     help="macOS hosted runners: before that retry, kill Apple's GL compile service (CVMServer/CVMCompiler, "
                          "sudo -n) so the next launch gets a fresh one")
+    ap.add_argument("--retry-timeout", action="store_true", help="retry timed-out presets once serially after the parallel batch, retaining the first logs")
     ap.add_argument("--resume", action="store_true", help="reuse passing presets from an input-matched CI checkpoint in --out")
     ap.add_argument("--merge", nargs="+", default=[], help="join these shard output folders into --out (no launches)")
     ap.add_argument("--expect-shards", type=int, default=0, help="with --merge: how many shards there must be")
@@ -887,6 +909,8 @@ def main():
                     print("gl_qualify: %d presets failed in a row; stopping (--fail-fast %d)" % (streak, args.fail_fast), flush=True)
                     ex.shutdown(wait=True, cancel_futures=True)
                     break
+        if args.retry_timeout:
+            results = retry_timeouts(results, one, reset_cvms if args.reset_cvms else None)
         if aborted:
             results.append({"preset": "(aborted)", "errors": ["%d consecutive failures: the remaining %d presets were not run" % (streak, len(presets) - (len(results) - 1))],
                             "notes": [], "verdict": "aborted", "exit": None, "seconds": 0, "log": "", "png": "", "shader": []})

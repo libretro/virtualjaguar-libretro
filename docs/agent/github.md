@@ -248,7 +248,8 @@ the job summary and `checkpoint-origin-*` artifacts. Compiled core metadata incl
 `built_from_sha` alongside the commit whose unchanged inputs were validated for this run.
 Failed checks do not produce complete checkpoints. A failed GL shard can preserve individual
 passing preset results under the same input key. Its next attempt rechecks the plain launch and
-retries failed or missing presets. Changed GL inputs invalidate those results.
+retries failed or missing presets. Timed-out macOS launches also get one serial retry after the
+parallel workers finish, with the original log retained. Changed GL inputs invalidate those results.
 
 Caches remain subject to GitHub branch scoping and eviction. A missing cache runs the checks.
 Set or change the repository variable `CI_CHECKPOINT_EPOCH` to require a fresh baseline, including

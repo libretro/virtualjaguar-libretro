@@ -375,21 +375,7 @@ jobs:
           lane: release-core-${{ matrix.config.platform }}
           workflow-job: .github/workflows/release.yml#build
           configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            exports.list
-            link.T
-            scripts
-            :(exclude)scripts/release
-            .github/actions/reuse-checkpoint
-            .github/scripts/checkpoint.cjs
+          profile: release-build
           paths: |
             ${{ matrix.config.artifact }}
       # checkpoint plumbing end
@@ -440,21 +426,7 @@ jobs:
           lane: release-core-${{ matrix.config.platform }}
           workflow-job: .github/workflows/release.yml#build
           configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            exports.list
-            link.T
-            scripts
-            :(exclude)scripts/release
-            .github/actions/reuse-checkpoint
-            .github/scripts/checkpoint.cjs
+          profile: release-build
           paths: |
             ${{ matrix.config.artifact }}
       # checkpoint plumbing end

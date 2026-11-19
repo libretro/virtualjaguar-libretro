@@ -232,29 +232,7 @@ jobs:
           lane: macos-package
           workflow-job: .github/workflows/app-package.yml#macos
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
-            .github/actions/macos-sign
-            scripts/release/signing-status.sh
+          profile: app-package-macos
           paths: |
             out
             signing-status
@@ -411,29 +389,7 @@ jobs:
           lane: macos-package
           workflow-job: .github/workflows/app-package.yml#macos
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
-            .github/actions/macos-sign
-            scripts/release/signing-status.sh
+          profile: app-package-macos
           paths: |
             out
             signing-status
@@ -518,27 +474,8 @@ jobs:
           mode: restore
           lane: windows-unsigned-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#windows
-          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging/windows/stage-software-gl.py
-            app/packaging/check-payload.sh
+          configuration: ${{ inputs.release_tag }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: app-package-windows
           paths: |
             stage
             stage-tests
@@ -679,27 +616,8 @@ jobs:
           mode: save
           lane: windows-unsigned-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#windows
-          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging/windows/stage-software-gl.py
-            app/packaging/check-payload.sh
+          configuration: ${{ inputs.release_tag }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: app-package-windows
           paths: |
             stage
             stage-tests
@@ -1065,27 +983,7 @@ jobs:
           lane: flatpak-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#flatpak
           configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging/flatpak
+          profile: app-package-flatpak
           paths: |
             VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
       # checkpoint plumbing end
@@ -1200,27 +1098,7 @@ jobs:
           lane: flatpak-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#flatpak
           configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging/flatpak
+          profile: app-package-flatpak
           paths: |
             VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
       # checkpoint plumbing end
@@ -1270,28 +1148,7 @@ jobs:
           lane: linux-package-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#linux
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
-            scripts/release/signing-status.sh
+          profile: app-package-linux
           paths: |
             out
             signing-status
@@ -1439,28 +1296,7 @@ jobs:
           lane: linux-package-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#linux
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
-            scripts/release/signing-status.sh
+          profile: app-package-linux
           paths: |
             out
             signing-status

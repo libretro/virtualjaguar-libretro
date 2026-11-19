@@ -56,8 +56,11 @@ function output(name, value) {
 function main(command) {
   const env = process.env;
   if (command === 'key') {
-    const key = sourceKey({ dependencies: env.CHECKPOINT_DEPENDENCIES, job: env.CHECKPOINT_JOB,
-      configuration: env.CHECKPOINT_CONFIGURATION, outputs: lines(env.CHECKPOINT_PATHS), runner: [env.RUNNER_OS, env.RUNNER_ARCH, env.ImageOS, env.ImageVersion] });
+    const key = sourceKey({ dependencies: env.CHECKPOINT_PROFILE ? JSON.parse(fs.readFileSync('.github/ci/checkpoints.json', 'utf8'))[env.CHECKPOINT_PROFILE]?.join('\n') : env.CHECKPOINT_DEPENDENCIES, job: env.CHECKPOINT_JOB,
+      configuration: { requested: env.CHECKPOINT_CONFIGURATION,
+        effective: Object.fromEntries(['LABEL', 'SHORT_VERSION', 'DEB_VERSION', 'CHANNEL', 'TV_DEFAULT', 'DISCORD_APP_ID',
+          'MIN_MACOS', 'SMOKE_HASH', 'SMOKE_ROM', 'ARCH', 'PRESET_SET', 'REFRESH_GOLDENS', 'CONTENT_ROM', 'SHOT_FRAME',
+          'SHOT_EMU_FRAMES', 'QUALIFY', 'LISTS', 'SLOW_LIMIT', 'SHARDS'].map(name => [name, env[name]])) }, outputs: lines(env.CHECKPOINT_PATHS), runner: [env.RUNNER_OS, env.RUNNER_ARCH, env.ImageOS, env.ImageVersion] });
     const lane = env.CHECKPOINT_LANE.replace(/[^a-zA-Z0-9_-]/g, '-');
     const receipt = `.ci-checkpoints/${lane}.json`;
     output('key', `vj-checkpoint-v1-${lane}-${key}`);

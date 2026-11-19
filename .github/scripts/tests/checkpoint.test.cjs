@@ -66,3 +66,22 @@ test('job extraction does not accidentally include later jobs', () => {
   assert.throws(() => jobDefinition(s, 'missing'), /Missing/);
   assert.throws(() => inventory(['/tmp']), /repository-relative/);
 });
+test('production dependency profiles separate signing tooling from compilation', () => {
+  const profiles = require('../../ci/checkpoints.json');
+  function selected(name) {
+    return execFileSync('git', ['ls-files', '-z', '--', ...profiles[name]], { cwd: path.resolve(__dirname, '../../..') })
+      .toString().split('\0');
+  }
+  const windows = selected('app-package-windows');
+  assert(windows.includes('app/packaging/windows/winsparkle.cmake'));
+  assert(windows.includes('app/packaging/windows/stage-software-gl.py'));
+  assert(!windows.includes('.github/actions/windows-sign/action.yml'));
+  assert(!windows.includes('scripts/release/verify.sh'));
+  assert(!windows.includes('test/release/test_release_scripts.sh'));
+  const mac = selected('app-package-macos');
+  assert(mac.includes('scripts/release/signing-status.sh'));
+  assert(mac.includes('.github/actions/macos-sign/action.yml'));
+  assert(!mac.includes('app/src/platform/software_gl_windows.cpp'));
+  assert(!mac.includes('app/packaging/windows/package.sh'));
+  assert(selected('release-build').includes('jni/Android.mk'));
+});

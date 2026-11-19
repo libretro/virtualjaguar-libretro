@@ -7,9 +7,12 @@ inputs:
   lane:
     description: Unique job and matrix configuration
     required: true
+  profile:
+    description: Dependency profile in .github/ci/checkpoints.json
+    default: ''
   dependencies:
-    description: Newline-separated git pathspecs for every source, test, tool and pinned dependency this lane uses
-    required: true
+    description: Explicit dependency pathspecs when no profile is selected
+    default: ''
   paths:
     description: Newline-separated output directories to preserve
     required: true
@@ -37,6 +40,7 @@ runs:
       shell: bash
       env:
         CHECKPOINT_LANE: ${{ inputs.lane }}
+        CHECKPOINT_PROFILE: ${{ inputs.profile }}
         CHECKPOINT_DEPENDENCIES: ${{ inputs.dependencies }}
         CHECKPOINT_PATHS: ${{ inputs.paths }}
         CHECKPOINT_JOB: ${{ inputs.workflow-job }}

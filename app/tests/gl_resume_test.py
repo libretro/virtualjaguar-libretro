@@ -43,6 +43,25 @@ class ResumeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing'):
                 gl.resume_results(report, 'inputs', 'macos', '0/1', data['selected'])
 
+    def test_timeout_retries_run_serially_and_repeated_failures_stay_failed(self):
+        calls = []
+        results = [{'preset': 'good', 'errors': [], 'verdict': 'built'},
+                   {'preset': 'bad-compile', 'errors': ['compile error']},
+                   {'preset': 'timeout', 'errors': ['timeout'], 'timed_out': 240, 'seconds': 240}]
+        def passing_one(preset):
+            calls.append(preset)
+            return {'preset': preset, 'errors': [], 'verdict': 'built', 'notes': []}
+        retried = gl.retry_timeouts(results, passing_one)
+        self.assertEqual(calls, ['timeout'])
+        self.assertEqual(retried[0], results[0])
+        self.assertEqual(retried[1], results[1])
+        self.assertEqual(retried[2]['errors'], [])
+        self.assertEqual(retried[2]['parallel_attempt']['errors'], ['timeout'])
+        def failing_one(preset):
+            return {'preset': preset, 'errors': ['timeout again'], 'verdict': 'failed', 'notes': []}
+        retried = gl.retry_timeouts(results, failing_one)
+        self.assertEqual(retried[2]['errors'], ['timeout again'])
+
     def test_no_report_starts_fresh(self):
         self.assertEqual(gl.resume_results(Path('/no-such-report.json'), None, 'macos', '0/1', []), {})
 

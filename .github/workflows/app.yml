@@ -124,28 +124,7 @@ jobs:
         lane: app-tests-${{ matrix.config.name }}
         workflow-job: .github/workflows/app.yml#app
         configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-        dependencies: |
-          src
-          libretro.c
-          libretro_core_options.h
-          libretro_core_options_intl.h
-          libretro-common
-          deps
-          Makefile
-          Makefile.common
-          exports.list
-          exports-test.list
-          link.T
-          link-test.T
-          scripts
-          :(exclude)scripts/release
-          test
-          :(exclude)test/roms/private
-          .github/ci
-          .github/scripts/checkpoint.cjs
-          .github/actions/reuse-checkpoint
-          app
-          .github/actions/macos-sign
+        profile: app-app
         paths: |
           .ci-app-artifact
     # checkpoint plumbing end
@@ -268,28 +247,7 @@ jobs:
         lane: app-tests-${{ matrix.config.name }}
         workflow-job: .github/workflows/app.yml#app
         configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-        dependencies: |
-          src
-          libretro.c
-          libretro_core_options.h
-          libretro_core_options_intl.h
-          libretro-common
-          deps
-          Makefile
-          Makefile.common
-          exports.list
-          exports-test.list
-          link.T
-          link-test.T
-          scripts
-          :(exclude)scripts/release
-          test
-          :(exclude)test/roms/private
-          .github/ci
-          .github/scripts/checkpoint.cjs
-          .github/actions/reuse-checkpoint
-          app
-          .github/actions/macos-sign
+        profile: app-app
         paths: |
           .ci-app-artifact
     # checkpoint plumbing end

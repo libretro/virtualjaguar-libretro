@@ -132,27 +132,7 @@ jobs:
           partial: 'true'
           workflow-job: .github/workflows/gl-qualification.yml#linux
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
+          profile: gl-qualification-linux
           paths: |
             glq
       # checkpoint plumbing end
@@ -237,27 +217,7 @@ jobs:
           partial: 'true'
           workflow-job: .github/workflows/gl-qualification.yml#linux
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
+          profile: gl-qualification-linux
           paths: |
             glq
       # checkpoint plumbing end
@@ -324,25 +284,7 @@ jobs:
           partial: 'true'
           workflow-job: .github/workflows/gl-qualification.yml#windows
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
+          profile: gl-qualification-windows
           paths: |
             glq
       # checkpoint plumbing end
@@ -580,25 +522,7 @@ jobs:
           partial: 'true'
           workflow-job: .github/workflows/gl-qualification.yml#windows
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
+          profile: gl-qualification-windows
           paths: |
             glq
       # checkpoint plumbing end
@@ -647,27 +571,7 @@ jobs:
           partial: 'true'
           workflow-job: .github/workflows/gl-qualification.yml#macos
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
+          profile: gl-qualification-macos
           paths: |
             glq
       # checkpoint plumbing end
@@ -764,7 +668,7 @@ jobs:
           python3 -I "$QUALIFY" --resume --os macos --summary '' --exe stage/bin/virtualjaguar --shaders stage/bin/shaders \
             --out glq --content "$CONTENT_ROM" --frame "$SHOT_FRAME" --emu-frames "$SHOT_EMU_FRAMES" --jobs 2 --timeout 240 --low-dpi \
             --shard "${{ matrix.shard }}/$SHARDS" --known-failures "$LISTS/known-failures.txt" --leg macos-arm64 \
-            --slow-threshold "$SLOW_LIMIT" --graceful-kill 10 --retry-no-gl --reset-cvms \
+            --slow-threshold "$SLOW_LIMIT" --graceful-kill 10 --retry-no-gl --retry-timeout --reset-cvms \
             --seed-config "$LISTS/small-window.ini" --expect-renderer 'Apple' \
             --refused-allowlist "$LISTS/refused-macos.txt" --identical-ok "$LISTS/identical-to-plain.txt" --known-broken "$LISTS/known-broken.txt" \
             --goldens app/test/golden/gl/macos --preset-set "$PRESET_SET" ${refresh[@]+"${refresh[@]}"}
@@ -795,27 +699,7 @@ jobs:
           partial: 'true'
           workflow-job: .github/workflows/gl-qualification.yml#macos
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          dependencies: |
-            src
-            libretro.c
-            libretro_core_options.h
-            libretro_core_options_intl.h
-            libretro-common
-            deps
-            Makefile
-            Makefile.common
-            app
-            :(exclude)app/packaging
-            :(exclude)app/src/platform/platform_windows.cpp
-            :(exclude)app/src/platform/software_gl_windows.cpp
-            scripts
-            :(exclude)scripts/release
-            test
-            :(exclude)test/roms/private
-            .github/workflows/librashader.yml
-            .github/scripts/checkpoint.cjs
-            .github/actions/reuse-checkpoint
-            app/packaging
+          profile: gl-qualification-macos
           paths: |
             glq
       # checkpoint plumbing end
