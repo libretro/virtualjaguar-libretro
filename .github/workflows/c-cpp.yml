@@ -187,15 +187,47 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    # checkpoint plumbing begin
+    - name: Restore successful tests
+      id: checkpoint
+      uses: ./.github/actions/reuse-checkpoint
+      with:
+        mode: restore
+        lane: core-tests-${{ matrix.config.displayTargetName }}
+        workflow-job: .github/workflows/c-cpp.yml#build
+        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+        dependencies: |
+          src
+          libretro.c
+          libretro_core_options.h
+          libretro_core_options_intl.h
+          libretro-common
+          deps
+          Makefile
+          Makefile.common
+          exports.list
+          exports-test.list
+          link.T
+          link-test.T
+          scripts
+          :(exclude)scripts/release
+          test
+          :(exclude)test/roms/private
+          .github/ci
+          .github/scripts/checkpoint.cjs
+          .github/actions/reuse-checkpoint
+        paths: |
+          .ci-native-artifact
+    # checkpoint plumbing end
     - name: Install multilib
-      if: matrix.config.multilib
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.multilib) }}
       run: |
         sudo dpkg --add-architecture i386
         sudo apt-get update
         sudo apt-get install -y gcc-multilib g++-multilib
 
     - name: Set up MSYS2
-      if: runner.os == 'Windows'
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (runner.os == 'Windows') }}
       uses: msys2/setup-msys2@v2
       with:
         msystem: ${{ matrix.config.msystem || 'MINGW64' }}
@@ -203,37 +235,37 @@ jobs:
         install: ${{ matrix.config.msys2_packages || 'mingw-w64-x86_64-gcc make' }}
 
     - name: Set up Emscripten
-      if: matrix.config.emscripten
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.emscripten) }}
       uses: mymindstorm/setup-emsdk@v16
 
     - name: Set up Android NDK
-      if: matrix.config.android
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.android) }}
       uses: nttld/setup-ndk@v1
       id: setup-ndk
       with:
         ndk-version: r26d
 
     - name: Build
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform) }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
     - name: Build (platform)
-      if: matrix.config.make_platform
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.make_platform) }}
       run: make -j4 platform=${{ matrix.config.make_platform }}
 
     - name: Build (Emscripten)
-      if: matrix.config.emscripten
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.emscripten) }}
       run: emmake make -j4 platform=emscripten
 
     - name: Build (Android NDK)
-      if: matrix.config.android
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.android) }}
       run: bash scripts/build-ndk-ci.sh "${{ steps.setup-ndk.outputs.ndk-path }}" "${{ matrix.config.android_abi }}" "${{ matrix.config.android_simd }}"
 
     # Mach-O symbol gating: production builds must export retro_* only.
     # Runs before the test step (which would relink with TEST_EXPORTS=1
     # and widen the symbol set).
     - name: Verify Mach-O symbol gating (production)
-      if: ${{ runner.os == 'macOS' && !matrix.config.emscripten && !matrix.config.android }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (runner.os == 'macOS' && !matrix.config.emscripten && !matrix.config.android) }}
       run: |
         LEAKS=$(nm -gU "${{ matrix.config.artifact }}" | grep -v ' _retro_' || true)
         if [ -n "$LEAKS" ]; then
@@ -254,7 +286,7 @@ jobs:
     # the step is best-effort there and `make test` falls back to skipping,
     # exactly as it does today.
     - name: Cache Tier-1 ROMs
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       uses: actions/cache@v6
       with:
         path: test/roms/tier1
@@ -262,7 +294,7 @@ jobs:
 
     - name: Fetch Tier-1 ROMs
       id: roms
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       continue-on-error: true
       env:
         # Two backends; rom-store.sh picks whichever is configured (GitHub
@@ -298,7 +330,7 @@ jobs:
 
     # Host/native toolchains only — skips cross-compile rows (e.g. aarch64 on x86 runner).
     - name: Run cheat engine unit tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       env:
         # Only set when the fetch actually produced a verified tree. Pointing
         # this at an empty directory would make find-rom.sh miss everything
@@ -309,7 +341,7 @@ jobs:
     # Standalone libchdr + committed fixtures. No core dlopen, so this
     # also runs on Windows MSYS2 where `make test` is skipped.
     - name: CHD fixture unit tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross) }}
       run: |
         # Compile with $CC directly. `make` of these targets after `make test`
         # flips the ABI stamp and deletes the core library.
@@ -341,7 +373,7 @@ jobs:
         ./test/test_chd_unit
 
     - name: Run SIMD blitter tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross) }}
       run: |
         ARCH=$(uname -m)
         CC="${{ matrix.config.cc }}"
@@ -375,7 +407,7 @@ jobs:
         ./test_dsp_mac40
 
     - name: Run memory map test
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       run: |
         CC="${{ matrix.config.cc }}"
         if [ "$(uname)" = "Linux" ]; then
@@ -387,7 +419,7 @@ jobs:
         ./test/tools/test_memory_map ./${{ matrix.config.artifact }}
 
     - name: Run DSP instruction set tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       run: |
         CC="${{ matrix.config.cc }}"
         if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
@@ -397,7 +429,7 @@ jobs:
         ./test/test_dsp_unit
 
     - name: Run GPU instruction set tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       run: |
         CC="${{ matrix.config.cc }}"
         if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
@@ -408,7 +440,7 @@ jobs:
         ./test/test_op_gpu_object ./${{ matrix.config.artifact }}
 
     - name: Run 68K instruction set tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       run: |
         CC="${{ matrix.config.cc }}"
         if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
@@ -416,7 +448,7 @@ jobs:
         ./test/test_m68k_ops
 
     - name: Run EEPROM lifecycle test
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       run: |
         CC="${{ matrix.config.cc }}"
         if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
@@ -429,25 +461,33 @@ jobs:
         ./test/test_eeprom_lifecycle ./${{ matrix.config.artifact }} "$RUNNER_TEMP/eeprom_lifecycle_test.j64"
 
     - name: Cache pinned rcheevos E2E build
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       uses: actions/cache@v6
       with:
         path: build/rcheevos-static
         key: rcheevos-e2e-fd57e900-${{ runner.os }}-${{ matrix.config.cc }}-${{ matrix.config.displayTargetName }}
 
     - name: RetroAchievements rc_libretro E2E test
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       env:
         # Immutable pin (rcheevos v12.3.0); tarball via .../archive/${SHA}.tar.gz
         RCHEEVOS_REF: fd57e900758a9e3de343e7b0316b8a6059dce228
         CC: ${{ matrix.config.cc }}
       run: bash test/tools/test_rcheevos_e2e.sh ./${{ matrix.config.artifact }}
 
+    # checkpoint plumbing begin
+    - name: Retain tested binary for the checkpoint
+      if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+      shell: bash
+      run: |
+        mkdir -p .ci-native-artifact
+        command cp -f '${{ matrix.config.artifact }}' .ci-native-artifact/
+    # checkpoint plumbing end
     - name: Upload artifact
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.config.displayTargetName }}
-        path: ${{ matrix.config.artifact }}
+        path: .ci-native-artifact/
         if-no-files-found: error
 
     # TEST_EXPORTS=1 -> production mode switch.  TEST_EXPORTS adds
@@ -459,11 +499,43 @@ jobs:
     # from the flush list).  Runs last so it cannot hand a production-ABI
     # library to the dlsym-based steps or to the uploaded artifact.
     - name: Verify TEST_EXPORTS -> production mode switch relinks
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
   # Independent lightweight checks share one checkout and runner allocation.
-  # !cancelled() keeps later checks running after a failure; any failure still fails the job.
+  # !cancelled() keeps later checks running after a failure; any failure still fails the job.    # checkpoint plumbing begin
+    - name: Save successful tests
+      if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+      uses: ./.github/actions/reuse-checkpoint
+      with:
+        mode: save
+        lane: core-tests-${{ matrix.config.displayTargetName }}
+        workflow-job: .github/workflows/c-cpp.yml#build
+        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+        dependencies: |
+          src
+          libretro.c
+          libretro_core_options.h
+          libretro_core_options_intl.h
+          libretro-common
+          deps
+          Makefile
+          Makefile.common
+          exports.list
+          exports-test.list
+          link.T
+          link-test.T
+          scripts
+          :(exclude)scripts/release
+          test
+          :(exclude)test/roms/private
+          .github/ci
+          .github/scripts/checkpoint.cjs
+          .github/actions/reuse-checkpoint
+        paths: |
+          .ci-native-artifact
+    # checkpoint plumbing end
+
   source-validation:
     name: Source validation (lists, EditorConfig, cppcheck, C89)
     runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}

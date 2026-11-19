@@ -730,6 +730,10 @@ def resume_results(report, key, os_name, shard, presets):
             if result.get(field):
                 local = report.parent / directory / pathlib.PurePath(result[field]).name
                 if not local.is_file():
+                    if field == "png" and (result.get("slow_capped") is not None or
+                                           result.get("verdict") in ("known-broken", "slow-built", "slow-nochain", "refused")):
+                        result[field] = ""
+                        continue
                     raise ValueError("GL resume evidence is missing: %s" % local)
                 result[field] = str(local)
         result["reused"] = True

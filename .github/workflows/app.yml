@@ -115,8 +115,42 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    # checkpoint plumbing begin
+    - name: Restore successful tests
+      id: checkpoint
+      uses: ./.github/actions/reuse-checkpoint
+      with:
+        mode: restore
+        lane: app-tests-${{ matrix.config.name }}
+        workflow-job: .github/workflows/app.yml#app
+        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+        dependencies: |
+          src
+          libretro.c
+          libretro_core_options.h
+          libretro_core_options_intl.h
+          libretro-common
+          deps
+          Makefile
+          Makefile.common
+          exports.list
+          exports-test.list
+          link.T
+          link-test.T
+          scripts
+          :(exclude)scripts/release
+          test
+          :(exclude)test/roms/private
+          .github/ci
+          .github/scripts/checkpoint.cjs
+          .github/actions/reuse-checkpoint
+          app
+          .github/actions/macos-sign
+        paths: |
+          .ci-app-artifact
+    # checkpoint plumbing end
     - name: Install Linux build dependencies (SDL3 needs the desktop dev packages)
-      if: runner.os == 'Linux'
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (runner.os == 'Linux') }}
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq cmake pkg-config \
@@ -127,7 +161,7 @@ jobs:
           libcurl4-openssl-dev
 
     - name: Set up MSYS2
-      if: matrix.config.msys2
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.msys2) }}
       uses: msys2/setup-msys2@v2
       with:
         msystem: ${{ matrix.config.msystem || 'MINGW64' }}
@@ -135,9 +169,11 @@ jobs:
         install: ${{ matrix.config.msys2_pkgs || 'mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja' }}
 
     - name: Configure
+      if: ${{ steps.checkpoint.outputs.hit != 'true' }}
       run: cmake -S app -B app/build -DCMAKE_BUILD_TYPE=Release ${{ matrix.config.msys2 && '-G Ninja' || '' }} ${{ matrix.config.cmake_extra || '' }}
 
     - name: Build
+      if: ${{ steps.checkpoint.outputs.hit != 'true' }}
       run: cmake --build app/build --config Release -j4
 
     # Makefile.common selects ONE blitter_simd_<arch>.c; this build compiles all
@@ -145,7 +181,7 @@ jobs:
     # guards itself.  Exactly one blitter_simd_ops may exist, or the blitter
     # would inline one implementation while the vtable tests another.
     - name: Exactly one SIMD vtable in the core library
-      if: ${{ !matrix.config.msvc }}
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.msvc) }}
       run: |
         lib=$(find app/build -name 'libvj_core.a' | head -1)
         [ -n "$lib" ] || { echo "libvj_core.a not found"; exit 1; }
@@ -158,12 +194,13 @@ jobs:
     # shaders_gl renders through the real librashader (fetched by default on macOS and
     # Windows) on a hidden GL context; a GPU-less runner hangs until the timeout.
     - name: Smoke tests (headless, SDL dummy drivers)
+      if: ${{ steps.checkpoint.outputs.hit != 'true' }}
       run: ctest --test-dir app/build -C Release --output-on-failure -E shaders_gl
 
     # Informational: emu_thread_unit's timer notes (sleep precision, fast-forward rate).  ctest shows a passing
     # test's output only with --verbose; this is where a coarse-timer runner (MinGW) is visible (#967).
     - name: Emulation-thread timer report
-      if: always()
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (always()) }}
       continue-on-error: true
       run: ctest --test-dir app/build -C Release -R "^emu_thread_unit$" --verbose
 
@@ -172,6 +209,7 @@ jobs:
     # flags) can be compared across the five platforms from the job logs.
     # Shared runners are noisy; read it as a trend, never as a gate.
     - name: Headless speed (informational)
+      if: ${{ steps.checkpoint.outputs.hit != 'true' }}
       run: |
         exe=$(find app/build -maxdepth 2 \( -name virtualjaguar -o -name virtualjaguar.exe \) -type f | head -1)
         echo "binary: $exe"
@@ -186,7 +224,7 @@ jobs:
     # keychain, which does not belong on the persistent Studio.  Signed packages come from
     # app-package.yml (hosted).
     - name: Developer ID sign and notarize (macOS)
-      if: runner.os == 'macOS' && runner.environment == 'github-hosted'
+      if: ${{ steps.checkpoint.outputs.hit != 'true' && (runner.os == 'macOS' && runner.environment == 'github-hosted') }}
       uses: ./.github/actions/macos-sign
       with:
         paths: app/build/virtualjaguar
@@ -198,14 +236,21 @@ jobs:
         apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
 
+    # checkpoint plumbing begin
+    - name: Retain tested binary for the checkpoint
+      if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+      shell: bash
+      run: |
+        mkdir -p .ci-app-artifact
+        for f in app/build/virtualjaguar app/build/virtualjaguar.exe app/build/Release/virtualjaguar.exe; do
+          if [ -f "$f" ]; then command cp -f "$f" .ci-app-artifact/; fi
+        done
+    # checkpoint plumbing end
     - name: Upload binary
       uses: actions/upload-artifact@v7
       with:
         name: virtualjaguar-${{ matrix.config.name }}
-        path: |
-          app/build/virtualjaguar
-          app/build/virtualjaguar.exe
-          app/build/Release/virtualjaguar.exe
+        path: .ci-app-artifact/
         if-no-files-found: error
         retention-days: 7
 
@@ -214,7 +259,41 @@ jobs:
   # InputSnapshot, AudioOut, CoreHost's owner model, the real core inline vs threaded, and the
   # headless smoke tests with --emu-thread on.  Any race report fails the job; tsan_canary proves
   # the sanitizer is really on.
-  # ------------------------------------------------------------------------------------------
+  # ------------------------------------------------------------------------------------------    # checkpoint plumbing begin
+    - name: Save successful tests
+      if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+      uses: ./.github/actions/reuse-checkpoint
+      with:
+        mode: save
+        lane: app-tests-${{ matrix.config.name }}
+        workflow-job: .github/workflows/app.yml#app
+        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+        dependencies: |
+          src
+          libretro.c
+          libretro_core_options.h
+          libretro_core_options_intl.h
+          libretro-common
+          deps
+          Makefile
+          Makefile.common
+          exports.list
+          exports-test.list
+          link.T
+          link-test.T
+          scripts
+          :(exclude)scripts/release
+          test
+          :(exclude)test/roms/private
+          .github/ci
+          .github/scripts/checkpoint.cjs
+          .github/actions/reuse-checkpoint
+          app
+          .github/actions/macos-sign
+        paths: |
+          .ci-app-artifact
+    # checkpoint plumbing end
+
   tsan:
     name: ThreadSanitizer (emulation thread)
     runs-on: ubuntu-latest

@@ -12,6 +12,11 @@ on:
     branches: [ master ]
     paths:
       - 'scripts/release/**'
+      - '.github/actions/reuse-checkpoint/**'
+      - '.github/scripts/checkpoint.cjs'
+      - '.github/scripts/tests/checkpoint.test.cjs'
+      - 'app/tests/gl_resume_test.py'
+      - 'app/test/gl-qualification/gl_qualify.py'
       - 'app/packaging/linux/verify-appimage.py'
       - 'app/packaging/linux/make-appimage.sh'
       - 'test/release/**'
@@ -20,6 +25,11 @@ on:
     branches: [ develop, master, 'release/**' ]
     paths:
       - 'scripts/release/**'
+      - '.github/actions/reuse-checkpoint/**'
+      - '.github/scripts/checkpoint.cjs'
+      - '.github/scripts/tests/checkpoint.test.cjs'
+      - 'app/tests/gl_resume_test.py'
+      - 'app/test/gl-qualification/gl_qualify.py'
       - 'app/packaging/linux/verify-appimage.py'
       - 'app/packaging/linux/make-appimage.sh'
       - 'test/release/**'
@@ -57,8 +67,61 @@ jobs:
       - name: shellcheck
         run: shellcheck -S warning scripts/release/*.sh app/packaging/linux/make-appimage.sh test/release/test_release_scripts.sh
 
+      - name: Checkpoint dependency and evidence tests
+        run: |
+          node --test .github/scripts/tests/checkpoint.test.cjs
+          python3 -I app/tests/gl_resume_test.py
+
       - name: Release script suite
         env:
           # Linux: also sign a real AppImage with the pinned appimagetool (network).
           VJ_TEST_REAL_APPIMAGE: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: bash test/release/test_release_scripts.sh
+
+  checkpoint-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: first
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: checkpoint-contract
+          workflow-job: .github/workflows/release-scripts.yml#checkpoint-contract
+          dependencies: |
+            .github/actions/reuse-checkpoint
+            .github/scripts/checkpoint.cjs
+          paths: .ci-checkpoint-proof
+      - name: Produce the successful output
+        if: steps.first.outputs.hit != 'true'
+        run: |
+          mkdir -p .ci-checkpoint-proof
+          echo verified-output > .ci-checkpoint-proof/result.txt
+      - if: steps.first.outputs.hit != 'true'
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: checkpoint-contract
+          workflow-job: .github/workflows/release-scripts.yml#checkpoint-contract
+          dependencies: |
+            .github/actions/reuse-checkpoint
+            .github/scripts/checkpoint.cjs
+          paths: .ci-checkpoint-proof
+      - name: Remove the local copy before restoring
+        run: command rm -f .ci-checkpoint-proof/result.txt .ci-checkpoints/checkpoint-contract.json
+      - id: second
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: checkpoint-contract
+          workflow-job: .github/workflows/release-scripts.yml#checkpoint-contract
+          dependencies: |
+            .github/actions/reuse-checkpoint
+            .github/scripts/checkpoint.cjs
+          paths: .ci-checkpoint-proof
+      - name: Require the verified cache hit
+        env:
+          HIT: ${{ steps.second.outputs.hit }}
+        run: |
+          test "$HIT" = true
+          grep -x verified-output .ci-checkpoint-proof/result.txt

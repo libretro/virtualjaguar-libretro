@@ -13,11 +13,11 @@ function jobDefinition(text, id) {
   const next = rest.slice(1).search(/\n  [\w-]+:\n/);
   const job = next < 0 ? rest : rest.slice(0, next + 1);
   // These two marker lines surround checkpoint plumbing only. Everything the job actually executes remains hashed.
-  return job.replace(/      # checkpoint plumbing begin[\s\S]*?      # checkpoint plumbing end\n/g, '')
+  return job.replace(/    +# checkpoint plumbing begin[\s\S]*?    +# checkpoint plumbing end\n/g, '')
     .replace(/steps\.checkpoint\.outputs\.hit != 'true' && /g, '')
     .replace(/        if: \$\{\{ steps\.checkpoint\.outputs\.hit != 'true' \}\}\n/g, '');
 }
-function sourceKey({ dependencies, job, configuration, runner }) {
+function sourceKey({ dependencies, job, configuration, runner, outputs }) {
   const specs = lines(dependencies);
   if (!specs.length) throw new Error('Checkpoint dependencies must be explicit');
   const files = execFileSync('git', ['ls-files', '-z', '--', ...specs]).toString().split('\0').filter(Boolean).sort();
@@ -25,10 +25,10 @@ function sourceKey({ dependencies, job, configuration, runner }) {
   const [workflow, id] = job.split('#');
   if (!id) throw new Error('Expected workflow-file#job-id');
   const workflowText = fs.readFileSync(workflow, 'utf8');
-  const inputs = files.map(file => [file, digest(fs.readFileSync(file))]);
+  const inputs = files.map(file => [file, digest(fs.readFileSync(file)), fs.statSync(file).mode & 0o777]);
   // Global env and inputs also affect builds. Hash the header independently of other jobs' commands.
   return digest(JSON.stringify({ schema: 1, inputs, header: workflowText.split('\njobs:\n')[0],
-    job: jobDefinition(workflowText, id), configuration, runner }));
+    job: jobDefinition(workflowText, id), configuration, runner, outputs }));
 }
 function inventory(roots) {
   const files = {};
@@ -56,7 +56,7 @@ function main(command) {
   const env = process.env;
   if (command === 'key') {
     const key = sourceKey({ dependencies: env.CHECKPOINT_DEPENDENCIES, job: env.CHECKPOINT_JOB,
-      configuration: env.CHECKPOINT_CONFIGURATION, runner: [env.RUNNER_OS, env.RUNNER_ARCH, env.ImageOS, env.ImageVersion] });
+      configuration: env.CHECKPOINT_CONFIGURATION, outputs: lines(env.CHECKPOINT_PATHS), runner: [env.RUNNER_OS, env.RUNNER_ARCH, env.ImageOS, env.ImageVersion] });
     const lane = env.CHECKPOINT_LANE.replace(/[^a-zA-Z0-9_-]/g, '-');
     const receipt = `.ci-checkpoints/${lane}.json`;
     output('key', `vj-checkpoint-v1-${lane}-${key}`);
