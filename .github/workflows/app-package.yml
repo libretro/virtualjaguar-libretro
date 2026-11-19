@@ -978,6 +978,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The image's SDK user can differ from the checkout owner. Checkout's
+      # temporary Git config does not persist into subsequent container steps.
+      - name: Trust this container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # checkpoint plumbing begin
       - name: Restore successful checkpoint
         id: checkpoint

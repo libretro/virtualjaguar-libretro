@@ -111,6 +111,22 @@ test('production dependency profiles separate signing tooling from compilation',
   assert(!mac.includes('app/packaging/windows/package.sh'));
   assert(selected('release-build').includes('jni/Android.mk'));
 });
+test('Flatpak checkpoint access trusts only its container checkout', t => {
+  const workflow = fs.readFileSync(path.resolve(__dirname, '../../workflows/app-package.yml'), 'utf8');
+  const trust = jobDefinition(workflow, 'flatpak').match(/name: Trust this container checkout[\s\S]*?run: ([^\n]+)/);
+  assert(trust, 'container checkout must be trusted before the checkpoint action invokes git');
+  const dir = fixture(t);
+  const env = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_COUNT: '0',
+    GIT_CONFIG_GLOBAL: path.join(dir, 'global.gitconfig'), GIT_CONFIG_NOSYSTEM: '1', GITHUB_WORKSPACE: dir };
+  const before = spawnSync('git', ['ls-files'], { cwd: dir, env, encoding: 'utf8' });
+  assert.notEqual(before.status, 0);
+  assert.match(before.stderr, /dubious ownership/);
+  execFileSync('bash', ['-c', trust[1]], { cwd: dir, env });
+  assert.match(execFileSync('git', ['ls-files'], { cwd: dir, env, encoding: 'utf8' }), /source.c/);
+  const other = fixture(t);
+  assert.notEqual(spawnSync('git', ['ls-files'], { cwd: other, env }).status, 0,
+    'trusting one checkout must not disable ownership protection elsewhere');
+});
 test('Flatpak saves use the pristine manifest key after per-build configuration edits', t => {
   const workflow = fs.readFileSync(path.resolve(__dirname, '../../workflows/app-package.yml'), 'utf8');
   const restore = jobDefinition(workflow, 'flatpak').match(/name: Restore the source manifest before checkpointing[\s\S]*?run: ([^\n]+)/);
