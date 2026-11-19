@@ -1094,6 +1094,12 @@ jobs:
             'import ctypes, os, platform; m = platform.machine(); print("sandbox", m); assert m == os.environ["VJ_EXPECT_ARCH"], m; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2, a' \
             || { echo "::error::librashader ABI check failed on $ARCH"; exit 1; }
 
+      # The TV/channel edits are generated build configuration, already represented
+      # by the effective options in the key. Save against the original source bytes.
+      - name: Restore the source manifest before checkpointing
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        run: git restore -- app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+
       # checkpoint plumbing begin
       - name: Save successful checkpoint
         if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}

@@ -111,6 +111,29 @@ test('production dependency profiles separate signing tooling from compilation',
   assert(!mac.includes('app/packaging/windows/package.sh'));
   assert(selected('release-build').includes('jni/Android.mk'));
 });
+test('Flatpak saves use the pristine manifest key after per-build configuration edits', t => {
+  const workflow = fs.readFileSync(path.resolve(__dirname, '../../workflows/app-package.yml'), 'utf8');
+  const restore = jobDefinition(workflow, 'flatpak').match(/name: Restore the source manifest before checkpointing[\s\S]*?run: ([^\n]+)/);
+  assert(restore, 'the Flatpak save must restore its tracked manifest before computing the key');
+  const dir = fixture(t), old = process.cwd(); process.chdir(dir); t.after(() => process.chdir(old));
+  const manifest = 'app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml';
+  fs.mkdirSync(path.dirname(manifest), { recursive: true });
+  const original = '      - -DVJ_APP_BUILD_TESTS=OFF\n      - -DVJ_BUILD_CHANNEL=release\n';
+  fs.writeFileSync(manifest, original);
+  fs.writeFileSync('workflow.yml', workflow);
+  execFileSync('git', ['add', '.']);
+  for (const arch of ['x86_64', 'aarch64']) {
+    for (const channel of ['release', 'nightly']) {
+      const opts = { dependencies: manifest, job: 'workflow.yml#flatpak', configuration: { arch, channel, tv: 'Manual' } };
+      const pristine = sourceKey(opts);
+      fs.writeFileSync(manifest, original.replace('TESTS=OFF', 'TESTS=OFF\n      - -DVJ_TV_DEFAULT=Manual')
+        .replace('CHANNEL=release', 'CHANNEL=' + channel));
+      assert.notEqual(sourceKey(opts), pristine, 'generated manifest bytes really change the key');
+      execFileSync('bash', ['-c', restore[1]]);
+      assert.equal(sourceKey(opts), pristine, 'save finds the same key as the next pristine restore');
+    }
+  }
+});
 test('cross-ref GL recovery verifies the source run, input key, archive digests and restored evidence', async t => {
   const { importCheckpoint, digest } = require('../checkpoint.cjs');
   const dir = fixture(t), oldCwd = process.cwd(), oldFetch = global.fetch;
