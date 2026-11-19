@@ -56,11 +56,12 @@ test('only successful saves create receipts, restored bytes must match, and orig
   fs.writeFileSync(path.join(dir, 'out/binary'), 'compiled bytes');
   const env = { ...process.env, GITHUB_OUTPUT: path.join(dir, 'outputs'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary'),
     CHECKPOINT_KEY: 'input-key', CHECKPOINT_PATHS: 'out', CHECKPOINT_RECEIPT: '.ci-checkpoints/build.json',
-    GITHUB_SHA: 'source-sha', GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', GITHUB_REPOSITORY: 'owner/repo' };
+    CHECKPOINT_SUCCESS: 'true', GITHUB_SHA: 'source-sha', GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', GITHUB_REPOSITORY: 'owner/repo' };
   const run = (mode, more = {}) => spawnSync(process.execPath, [script, 'receipt'], {
     cwd: dir, env: { ...env, CHECKPOINT_MODE: mode, ...more }, encoding: 'utf8' });
   assert.equal(run('restore', { CHECKPOINT_RESTORED: 'false' }).status, 0);
   assert(!fs.existsSync(path.join(dir, env.CHECKPOINT_RECEIPT)));
+  assert.notEqual(run('save', { CHECKPOINT_SUCCESS: 'false' }).status, 0);
   assert.equal(run('save').status, 0);
   assert.equal(run('restore', { CHECKPOINT_RESTORED: 'true', GITHUB_SHA: 'new-sha' }).status, 0);
   assert.match(fs.readFileSync(env.GITHUB_STEP_SUMMARY, 'utf8'), /123, attempt 2, commit source-sha/);

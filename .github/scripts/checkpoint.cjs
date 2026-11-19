@@ -157,7 +157,9 @@ async function main(command) {
   }
   const roots = lines(env.CHECKPOINT_PATHS);
   if (env.CHECKPOINT_MODE === 'save') {
-    const receipt = { schema: 1, complete: env.CHECKPOINT_PARTIAL !== 'true' || env.CHECKPOINT_SUCCESS === 'true', key: env.CHECKPOINT_KEY, sha: env.GITHUB_SHA, run: env.GITHUB_RUN_ID,
+    if (env.CHECKPOINT_PARTIAL !== 'true' && env.CHECKPOINT_SUCCESS !== 'true')
+      throw new Error('A failed job cannot save a complete checkpoint');
+    const receipt = { schema: 1, complete: env.CHECKPOINT_SUCCESS === 'true', key: env.CHECKPOINT_KEY, sha: env.GITHUB_SHA, run: env.GITHUB_RUN_ID,
       attempt: env.GITHUB_RUN_ATTEMPT, repository: env.GITHUB_REPOSITORY, files: inventory(roots) };
     fs.mkdirSync(path.dirname(env.CHECKPOINT_RECEIPT), { recursive: true });
     fs.writeFileSync(env.CHECKPOINT_RECEIPT, JSON.stringify(receipt));
@@ -165,7 +167,7 @@ async function main(command) {
   }
   if (env.CHECKPOINT_RESTORED !== 'true') { output('hit', 'false'); return; }
   const receipt = JSON.parse(fs.readFileSync(env.CHECKPOINT_RECEIPT));
-  if (receipt.schema !== 1 || receipt.key !== env.CHECKPOINT_KEY || receipt.repository !== env.GITHUB_REPOSITORY ||
+  if (receipt.schema !== 1 || typeof receipt.complete !== 'boolean' || receipt.key !== env.CHECKPOINT_KEY || receipt.repository !== env.GITHUB_REPOSITORY ||
       JSON.stringify(receipt.files) !== JSON.stringify(inventory(roots)))
     throw new Error('Checkpoint receipt or output checksums do not match');
   output('hit', receipt.complete ? 'true' : 'false');
