@@ -681,7 +681,6 @@ def merge_main(args):
                     if i != 0:
                         r["preset"] = "off (shard %d)" % i
                     results.append(r)
-                write_progress(args, presets, presets_total, results)
                 continue
             if r["preset"] != "(aborted)":
                 if r["preset"] in seen:
@@ -704,7 +703,7 @@ def merge_main(args):
     if args.known_failures and meta["slow_threshold"]:
         meta["slow_statement"] = slow_list_statement(read_known_slow(args.known_failures, meta["leg"]),
                                                      meta["leg"], meta["slow_threshold"])
-    (out / "results.json").write_text(json.dumps({"os": args.os, "shards": want, "presets_total": total,
+    (out / "results.json.tmp").write_text(json.dumps({"os": args.os, "shards": want, "presets_total": total,
                                                   "results": results}, indent=1), encoding="utf-8")
     os.replace(args.out / "results.json.tmp", args.out / "results.json")
     return 1 if write_report(out, meta, results, args.summary) else 0
@@ -908,6 +907,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
             for r in ex.map(one, presets):
                 results.append(r)
+                write_progress(args, presets, presets_total, results)
                 tag = "FAIL" if r["errors"] else r["verdict"]
                 print("  %-60s %-8s %5s s%s" % (r["preset"], tag, r["seconds"],
                       ("  " + "; ".join(r["errors"])) if r["errors"] else ""), flush=True)
@@ -959,6 +959,7 @@ def main():
         "did_not_exit": sum(1 for r in results if r.get("known_exit_hang")),
         "failed": sum(1 for r in results if r["errors"]),
         "results": results}, indent=1), encoding="utf-8")
+    os.replace(args.out / "results.json.tmp", args.out / "results.json")
     return 1 if write_report(args.out, meta, results, args.summary) else 0
 
 

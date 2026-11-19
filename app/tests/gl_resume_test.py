@@ -75,6 +75,50 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual(report['checkpoint_key'], 'inputs')
             self.assertFalse((args.out / 'results.json.tmp').exists())
 
+    def test_full_loop_persists_each_result_and_merges_complete_shards(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            exe = root / 'app'
+            exe.touch()
+            shaders = root / 'shaders'
+            shaders.mkdir()
+            for name in ['a', 'b']:
+                (shaders / (name + '.slangp')).touch()
+            reports = []
+            def launch(args, preset, shader, out):
+                return {'preset': preset, 'errors': [], 'notes': [], 'verdict': 'built',
+                        'exit': 0, 'renderer': 'fixture', 'seconds': 1, 'log': '', 'png': ''}
+            def progress(args, presets, total, results):
+                gl.write_progress_original(args, presets, total, results)
+                reports.append(json.loads((args.out / 'results.json').read_text()))
+            gl.write_progress_original = gl.write_progress
+            try:
+                with patch.object(gl, 'launch', side_effect=launch), \
+                     patch.object(gl, 'judge_shader'), patch.object(gl, 'judge_slow'), \
+                     patch.object(gl, 'analyse_png'), patch.object(gl, 'write_report', return_value=0), \
+                     patch.object(gl, 'write_progress', side_effect=progress):
+                    for shard in [0, 1]:
+                        out = root / ('shard%d' % shard)
+                        with patch('sys.argv', ['gl_qualify', '--exe', str(exe), '--shaders', str(shaders),
+                                               '--out', str(out), '--os', 'macos', '--shard', '%d/2' % shard]):
+                            self.assertEqual(gl.main(), 0)
+                        report = json.loads((out / 'results.json').read_text())
+                        self.assertEqual(len(report['results']), 2)
+                        self.assertEqual(report['presets'], 1)
+                        self.assertFalse((out / 'results.json.tmp').exists())
+            finally:
+                del gl.write_progress_original
+            self.assertEqual([len(r['results']) for r in reports], [1, 2, 1, 2])
+            args = SimpleNamespace(out=root / 'merged', os='macos', merge=[root / 'shard0', root / 'shard1'],
+                                   expect_shards=2, known_failures='', summary='')
+            with patch.object(gl, 'write_report', side_effect=lambda out, meta, results, summary:
+                              sum(bool(r['errors']) for r in results)):
+                self.assertEqual(gl.merge_main(args), 0)
+                merged = json.loads((args.out / 'results.json').read_text())
+                self.assertEqual([r['preset'] for r in merged['results']], ['off', 'a.slangp', 'b.slangp'])
+                args.merge = [root / 'shard0']
+                self.assertEqual(gl.merge_main(args), 1)
+
     def test_no_report_starts_fresh(self):
         self.assertEqual(gl.resume_results(Path('/no-such-report.json'), None, 'macos', '0/1', []), {})
 
