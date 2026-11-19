@@ -35,6 +35,10 @@ name: App packages
 on:
   workflow_call:
     inputs:
+      platform:
+        description: 'Package only this platform when recovering a release'
+        type: string
+        default: all
       release_tag:
         description: "v3.8.1 | nightly | prerelease | pr123 | dev"
         type: string
@@ -66,6 +70,10 @@ on:
         required: false
   workflow_dispatch:
     inputs:
+      platform:
+        description: 'Package only this platform when recovering a release'
+        type: string
+        default: all
       release_tag:
         description: "Label used in the file names (v3.8.1, nightly, dev, ...)"
         type: string
@@ -108,6 +116,11 @@ jobs:
       deb_version: ${{ steps.m.outputs.deb_version }}
     steps:
       - uses: actions/checkout@v7
+      - name: Validate selected platform
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          case "$PLATFORM" in all|windows|macos|linux|flatpak) ;; *) echo 'Unknown platform'; exit 1 ;; esac
       - id: m
         env:
           TAG: ${{ inputs.release_tag }}
@@ -154,6 +167,12 @@ jobs:
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
     uses: ./.github/workflows/librashader.yml
+    with:
+      targets: >-
+        ${{ inputs.platform == 'windows' && '["x86_64-pc-windows-msvc","aarch64-pc-windows-msvc"]'
+            || inputs.platform == 'macos' && '["x86_64-apple-darwin","aarch64-apple-darwin"]'
+            || inputs.platform == 'linux' && '["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu"]'
+            || '["x86_64-apple-darwin","aarch64-apple-darwin","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-pc-windows-msvc","aarch64-pc-windows-msvc"]' }}
 
   # ------------------------------------------------------------------------------------------
   # Package-manager templates must always render and parse (they are filled for real, with the
@@ -195,7 +214,7 @@ jobs:
   macos:
     name: macOS universal
     needs: [meta, librashader]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'macos')
     runs-on: macos-latest
     env:
       LABEL: ${{ needs.meta.outputs.label }}
@@ -442,7 +461,7 @@ jobs:
   windows:
     name: Windows ${{ matrix.arch }}
     needs: [meta, librashader]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
     runs-on: ${{ matrix.os }}
     # Both legs are required (the arm64 continue-on-error of v3.8.1 went with #1153: a red arm64
     # package now holds the release like every other asset).
@@ -711,7 +730,7 @@ jobs:
   windows-package:
     name: Windows sign and package
     needs: [meta, windows]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -870,7 +889,7 @@ jobs:
   windows-smoke:
     name: Windows smoke ${{ matrix.arch }}
     needs: [meta, windows-package]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -1008,7 +1027,7 @@ jobs:
   flatpak:
     name: Flatpak ${{ matrix.arch }}
     needs: [meta]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'flatpak')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -1144,7 +1163,7 @@ jobs:
   linux:
     name: Linux ${{ matrix.arch }}
     needs: [meta, librashader]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'linux')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -1373,3 +1392,34 @@ jobs:
           path: out/*
           if-no-files-found: error
           retention-days: 14
+
+  windows-emulated-smoke:
+    name: Windows x64 on ARM smoke
+    needs: [meta, windows-package]
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          name: app-package-windows-x64
+          path: candidate
+      - name: Install and render using x64 emulation
+        shell: pwsh
+        env:
+          LABEL: ${{ needs.meta.outputs.label }}
+        run: |
+          Get-ChildItem candidate -File | ForEach-Object {
+            $digest = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$digest  $($_.Name)" | Add-Content candidate/SHA256SUMS.txt
+          }
+          ./scripts/release/qualify-windows-installer.ps1 -ReleaseDirectory candidate -Tag $env:LABEL -Architecture x64 -Content test/roms/yarc.j64 -OutputDirectory evidence
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-emulated-installer-evidence
+          path: evidence/
