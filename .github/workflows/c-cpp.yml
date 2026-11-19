@@ -484,8 +484,7 @@ jobs:
       if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows') }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
-  # Independent lightweight checks share one checkout and runner allocation.
-  # !cancelled() keeps later checks running after a failure; any failure still fails the job.    # checkpoint plumbing begin
+    # checkpoint plumbing begin
     - name: Save successful tests
       if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
       uses: ./.github/actions/reuse-checkpoint
@@ -499,6 +498,9 @@ jobs:
         paths: |
           .ci-native-artifact
     # checkpoint plumbing end
+
+  # Independent lightweight checks share one checkout and runner allocation.
+  # !cancelled() keeps later checks running after a failure; any failure still fails the job.
 
   source-validation:
     name: Source validation (lists, EditorConfig, cppcheck, C89)

@@ -408,6 +408,7 @@ jobs:
           matrix: ${{ toJSON(matrix) }}
           paths: |
             ${{ matrix.config.artifact }}
+            ${{ runner.os == 'macOS' && format('{0}.dSYM', matrix.config.artifact) || '' }}
       # checkpoint plumbing end
       - name: Build
         if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform) }}
@@ -447,6 +448,12 @@ jobs:
             exit 1
           fi
 
+      # Mach-O links refer to local object files. Materialize DWARF before saving
+      # the linked binary, so a restored build never needs the original .o files.
+      - name: Preserve Apple debug symbols while objects are present
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && runner.os == 'macOS' }}
+        run: dsymutil "${{ matrix.config.artifact }}" -o "${{ matrix.config.artifact }}.dSYM"
+
       # checkpoint plumbing begin
       - name: Save successful core compilation
         if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
@@ -460,6 +467,7 @@ jobs:
           matrix: ${{ toJSON(matrix) }}
           paths: |
             ${{ matrix.config.artifact }}
+            ${{ runner.os == 'macOS' && format('{0}.dSYM', matrix.config.artifact) || '' }}
       # checkpoint plumbing end
       - name: Preserve unstripped compile-only core for PR validation
         if: ${{ matrix.config.emscripten || matrix.config.android || matrix.config.platform == 'macos-x86_64' || matrix.config.make_platform }}
@@ -552,8 +560,8 @@ jobs:
           EXT=$(echo "$SRC" | grep -o '\.[^.]*$')
           OUT="virtualjaguar_libretro-${{ matrix.config.platform }}${EXT}"
           cp "$SRC" "dist/${OUT}"
-          # dsymutil produces a .dSYM bundle next to the binary
-          dsymutil "dist/${OUT}" -o "dist/${OUT}.dSYM"
+          # The checkpoint retains complete DWARF, independent of local object files.
+          cp -R "${SRC}.dSYM" "dist/${OUT}.dSYM"
           # Strip debug info from the shipped binary (-S = local syms,
           # -x = remove non-globals); keeps externals so dlsym still works
           strip -S -x "dist/${OUT}"
