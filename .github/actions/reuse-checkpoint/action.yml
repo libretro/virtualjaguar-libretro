@@ -66,3 +66,12 @@ runs:
       with:
         path: ${{ steps.key.outputs.paths }}
         key: ${{ inputs.partial == 'true' && job.status != 'success' && format('{0}-partial-{1}-{2}', steps.key.outputs.key, github.run_id, github.run_attempt) || steps.key.outputs.key }}
+    - name: Retain the checkpoint provenance
+      if: ${{ !cancelled() && (inputs.mode == 'save' || steps.restore.outputs.cache-matched-key != '') }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: checkpoint-origin-${{ inputs.lane }}-${{ inputs.mode }}
+        path: ${{ steps.key.outputs.receipt }}
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 14

@@ -232,3 +232,43 @@ publishers' staging filters. Shipped binaries, split debug archives, their names
 collection remain unchanged. The C/C++ artifact aliases retain their normal artifact retention.
 The shared core verifier and shared app-package verifier must both pass before merging a
 release PR that uses these routes; a configured skip of duplicate build rows is not sufficient.
+
+## Recovering a release and reusing completed checks
+
+Build/test checkpoints are keyed by the lane's declared source files, its workflow job commands,
+shared workflow inputs, non-secret build options, runner image and `CI_CHECKPOINT_EPOCH`.
+Changing a signing action leaves the unsigned Windows build checkpoint valid. Packaging and
+signing run against the restored install trees, and the final signature gate verifies the resulting
+packages. Changing a compiler command, source file, test or pinned dependency invalidates its lane.
+
+Checkpoints cover the native C/C++ and app test matrices, release core compilation, unsigned
+Windows install trees, macOS/Linux/Flatpak packages and graphics qualification. Each restored
+output is checked against its saved SHA-256 inventory. The original commit/run/attempt appears in
+the job summary and `checkpoint-origin-*` artifacts. Compiled core metadata includes
+`built_from_sha` alongside the commit whose unchanged inputs were validated for this run.
+Failed checks do not produce complete checkpoints. A failed GL shard can preserve individual
+passing preset results under the same input key. Its next attempt rechecks the plain launch and
+retries failed or missing presets. Changed GL inputs invalidate those results.
+
+Caches remain subject to GitHub branch scoping and eviction. A missing cache runs the checks.
+Set or change the repository variable `CI_CHECKPOINT_EPOCH` to require a fresh baseline, including
+when deliberately refreshing external toolchains or test resources. Lightweight source validation,
+sanitisers, signature verification and installer qualification retain their independent checks.
+
+Two manual recovery paths use the workflow revision on the selected branch.
+
+```sh
+# Run the updated verifier on the original staged bytes and attestations.
+# The existing build artifacts remain the inputs to this check.
+gh workflow run release.yml --ref YOUR_FIX_BRANCH -f verification_run=SOURCE_RUN_ID
+
+# Build, sign if requested, package and qualify only Windows.
+gh workflow run app-package.yml --ref YOUR_FIX_BRANCH \
+  -f platform=windows -f release_tag=dev -f sign=true
+```
+
+`platform` also accepts `macos`, `linux`, `flatpak` and `all`. A full release still requires all
+platforms. `verification_run` performs a strict check of an existing trusted Release push run
+and uploads the new signing table. It creates no release and performs no compilation.
+The GL workflow's diagnostic dispatch uses an existing candidate for focused Windows ARM
+emulation or macOS preset checks.

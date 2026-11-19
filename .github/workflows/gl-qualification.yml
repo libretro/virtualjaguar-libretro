@@ -143,6 +143,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test
@@ -246,6 +248,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test
@@ -654,6 +658,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test
@@ -800,6 +806,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test

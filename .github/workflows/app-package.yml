@@ -243,6 +243,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test
@@ -420,6 +422,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test
@@ -1052,7 +1056,41 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: flatpak-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#flatpak
+          configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging/flatpak
+          paths: |
+            VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
+      # checkpoint plumbing end
       - name: Set the TV mode default and the build channel in the manifest
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         # The manifest itself stays on CMake's default (Auto); a release package gets Manual here, like the other packages.
         run: |
           set -eu
@@ -1063,6 +1101,7 @@ jobs:
           grep -qx "      - -DVJ_BUILD_CHANNEL=$CHANNEL" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
 
       - name: Note the start time and the host
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         id: t0
         run: |
           set -eu
@@ -1072,6 +1111,7 @@ jobs:
           test "$(uname -m)" = "$ARCH" || { echo "::error::runner is $(uname -m), expected a native $ARCH host"; exit 1; }
 
       - name: Look up the flatpak-builder cache (for the job summary only)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         # The same lookup the action makes inside the build step (its primary key is <cache-key>-<arch>,
         # its fallback the prefix flatpak-builder-<arch>), without restoring anything: the summary can
         # then say whether the wall time below is a cold or a warm figure.  File mtimes cannot tell
@@ -1085,6 +1125,7 @@ jobs:
           lookup-only: true
 
       - name: Build the bundle
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
         # own artifact would be named app-<arch>.flatpak and not app-package-*, and the release
         # jobs attach every artifact they find; the final file is uploaded below.
@@ -1101,7 +1142,7 @@ jobs:
         # Per leg, success or failure.  "cold" = no flatpak-builder cache existed for this leg (the
         # from-scratch figure the issue asks for); "warm" = the action restored the exact key, so the
         # app module and much of the Rust build came from cache; "partial" = an older key matched.
-        if: always() && steps.t0.outcome == 'success'
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (always() && steps.t0.outcome == 'success') }}
         env:
           START: ${{ steps.t0.outputs.start }}
           OUTCOME: ${{ steps.build.outcome }}
@@ -1125,6 +1166,7 @@ jobs:
           echo "flatpak $ARCH: build $OUTCOME in ${secs}s (cache $cache)"
 
       - name: Smoke-test the bundle (install, run headless against the public ROM)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           f="VirtualJaguar-${LABEL}-linux-${ARCH}.flatpak"
@@ -1149,6 +1191,39 @@ jobs:
             'import ctypes, os, platform; m = platform.machine(); print("sandbox", m); assert m == os.environ["VJ_EXPECT_ARCH"], m; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2, a' \
             || { echo "::error::librashader ABI check failed on $ARCH"; exit 1; }
 
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: flatpak-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#flatpak
+          configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging/flatpak
+          paths: |
+            VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
+      # checkpoint plumbing end
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
@@ -1206,6 +1281,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test
@@ -1373,6 +1450,8 @@ jobs:
             Makefile.common
             app
             :(exclude)app/packaging
+            :(exclude)app/src/platform/platform_windows.cpp
+            :(exclude)app/src/platform/software_gl_windows.cpp
             scripts
             :(exclude)scripts/release
             test

@@ -81,6 +81,17 @@ jobs:
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
         run: sleep 600
 
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Release preflight before the platform matrix
+        run: |
+          node --test .github/scripts/tests/checkpoint.test.cjs .github/scripts/tests/release-cores.test.cjs .github/scripts/tests/release-packages.test.cjs
+          python3 -I app/tests/gl_resume_test.py
+          bash scripts/check-info-version.sh
+          bash test/release/test_release_scripts.sh
+
       - name: Refuse a dispatch that would publish nothing
         if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
         run: |
