@@ -711,6 +711,32 @@ def merge_main(args):
 # ---------------------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------------------
+def resume_results(report, key, os_name, shard, presets):
+    """A checkpoint verifies input identity and file hashes before this report is read."""
+    if not report.is_file():
+        return {}
+    previous = json.loads(report.read_text(encoding="utf-8"))
+    if not key or previous.get("checkpoint_key") != key:
+        raise ValueError("GL resume requires a checkpoint with the same input key")
+    if previous.get("os") != os_name or previous.get("shard") != shard or previous.get("selected") != presets:
+        raise ValueError("GL resume context or preset selection changed")
+    passed = {}
+    for result in previous["results"]:
+        if result["preset"] not in presets or result["errors"]:
+            continue
+        result = dict(result)
+        # A report downloaded from another runner keeps its diagnostics beside it.
+        for field, directory in (("log", "logs"), ("png", "shots")):
+            if result.get(field):
+                local = report.parent / directory / pathlib.PurePath(result[field]).name
+                if not local.is_file():
+                    raise ValueError("GL resume evidence is missing: %s" % local)
+                result[field] = str(local)
+        result["reused"] = True
+        passed[result["preset"]] = result
+    return passed
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--exe", type=pathlib.Path, help="the app executable (install tree: <prefix>/bin/virtualjaguar[.exe])")
@@ -754,6 +780,7 @@ def main():
     ap.add_argument("--reset-cvms", action="store_true",
                     help="macOS hosted runners: before that retry, kill Apple's GL compile service (CVMServer/CVMCompiler, "
                          "sudo -n) so the next launch gets a fresh one")
+    ap.add_argument("--resume", action="store_true", help="reuse passing presets from an input-matched CI checkpoint in --out")
     ap.add_argument("--merge", nargs="+", default=[], help="join these shard output folders into --out (no launches)")
     ap.add_argument("--expect-shards", type=int, default=0, help="with --merge: how many shards there must be")
     args = ap.parse_args()
@@ -799,6 +826,12 @@ def main():
           % (args.os, len(presets), args.shard, presets_total, args.frame, args.jobs, args.timeout,
              sum(1 for p in presets if p in args.slow_listed)), flush=True)
 
+    resumed = resume_results(args.out / "results.json", os.environ.get("VJ_CHECKPOINT_KEY"), args.os,
+                             args.shard, presets) if args.resume else {}
+    if resumed:
+        print("gl_qualify: retaining %d passing preset results, retrying %d" %
+              (len(resumed), len(presets) - len(resumed)), flush=True)
+
     # The plain picture first: everything else is compared with it.
     off = launch(args, "off", "off", args.out)
     judge_shader(off, refused_ok, known_broken)
@@ -809,6 +842,8 @@ def main():
     results = [off]
     if not off["errors"]:
         def one(rel):
+            if rel in resumed:
+                return resumed[rel]
             r = launch(args, rel, str(args.shaders / rel), args.out)
             if args.retry_no_gl and r.get("gl_lines", 0) == 0:
                 # The window never came up: once more after a pause, the first attempt kept in the result.
@@ -872,6 +907,7 @@ def main():
             "leg": args.leg or args.os, "settings": settings,
             "slow_statement": slow_list_statement(args.slow_listed, args.leg, args.slow_threshold) if args.slow_threshold else ""}
     (args.out / "results.json").write_text(json.dumps({
+        "checkpoint_key": os.environ.get("VJ_CHECKPOINT_KEY"),
         "os": args.os, "exe": str(args.exe), "frame": args.frame, "presets": len(presets),
         "presets_total": presets_total, "shard": args.shard, "selected": presets, "preset_set": meta["set"],
         "leg": meta["leg"], "known_exit_hang": args.known_exit_hang, "slow_threshold": args.slow_threshold,

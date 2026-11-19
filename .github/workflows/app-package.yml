@@ -204,13 +204,49 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: macos-package
+          workflow-job: .github/workflows/app-package.yml#macos
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging
+            .github/actions/macos-sign
+            scripts/release/signing-status.sh
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - name: Get the librashader runtimes (built from source, both architectures)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: actions/download-artifact@v8
         with:
           pattern: librashader-*-apple-darwin
           path: librashader
 
       - name: Build both architectures
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cat librashader/*/BUILD-INFO.txt
@@ -228,6 +264,7 @@ jobs:
           done
 
       - name: Smoke tests (arm64 native; x86_64 under Rosetta when present)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           # shaders_gl renders through the real librashader on a hidden GL context; on a GPU-less
@@ -246,6 +283,7 @@ jobs:
           fi
 
       - name: Assemble the universal app
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           P=app/packaging/macos
@@ -259,6 +297,7 @@ jobs:
           done
 
       - name: Smoke-test the BUNDLE
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           app="$PWD/dist/Virtual Jaguar.app"
@@ -289,7 +328,7 @@ jobs:
       # Without the APPLE_* secrets (fork PRs) it only prints a warning and signs nothing.
       - name: Developer ID sign, notarize and staple the app
         id: devid
-        if: inputs.sign
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (inputs.sign) }}
         uses: ./.github/actions/macos-sign
         with:
           paths: dist/Virtual Jaguar.app
@@ -303,7 +342,7 @@ jobs:
       # Apple Silicon refuses an unsigned binary ("damaged"), so a build that was not Developer ID
       # signed still gets an ad-hoc signature.  Gatekeeper still refuses it until right-click > Open.
       - name: Ad-hoc sign the app (no Developer ID signature)
-        if: steps.devid.outputs.signed != 'true'
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (steps.devid.outputs.signed != 'true') }}
         run: |
           set -eu
           echo "::warning::macOS package is NOT Developer ID signed or notarized" \
@@ -312,6 +351,7 @@ jobs:
           bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app" adhoc
 
       - name: Make the zip (the only macOS package) and check what it unpacks to
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           mkdir -p out
@@ -333,6 +373,7 @@ jobs:
 
       # What the gate cannot re-derive from the zip on its own: whether Apple issued the ticket.
       - name: Record the signing outcome for the release gate
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: bash scripts/release/signing-status.sh "VirtualJaguar-${LABEL}-macos-universal.zip" "${{ steps.devid.outputs.signed || 'false' }}" "${{ steps.devid.outputs.notarized || 'false' }}" developer-id signing-status
       - uses: actions/upload-artifact@v7
         with:
@@ -340,6 +381,40 @@ jobs:
           path: signing-status/
           retention-days: 14
 
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: macos-package
+          workflow-job: .github/workflows/app-package.yml#macos
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging
+            .github/actions/macos-sign
+            scripts/release/signing-status.sh
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - uses: actions/upload-artifact@v7
         with:
           name: app-package-macos-universal
@@ -412,13 +487,48 @@ jobs:
       # The shader runtime, built from the pinned source for this CPU (librashader.yml; the MSVC-target
       # DLL loads into the MinGW-built exe through the plain C ABI).  Lands beside the executable, in
       # the portable zip and in the installer.
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: windows-unsigned-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#windows
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging/windows/stage-software-gl.py
+            app/packaging/check-payload.sh
+          paths: |
+            stage
+            stage-tests
+      # checkpoint plumbing end
       - name: Get the librashader runtime (built from source)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: actions/download-artifact@v8
         with:
           name: librashader-${{ matrix.triple }}
           path: librashader
 
       - name: Set up MSYS2
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
@@ -426,6 +536,7 @@ jobs:
           install: ${{ matrix.pkgs }}
 
       - name: Configure and build (GUI subsystem, static runtime)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cat librashader/BUILD-INFO.txt
@@ -439,6 +550,7 @@ jobs:
 
       # Exactly one blitter_simd_ops (NEON on ARM64, SSE2 on x64), see app.yml.
       - name: Exactly one SIMD vtable in the core library
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           lib=$(find build -name 'libvj_core.a' | head -1)
@@ -453,9 +565,11 @@ jobs:
       # shaders_gl needs an OpenGL 3.3 context, which the hosted runners' GDI driver does not give;
       # Windows GL rendering is qualified by windows-gl-test.yml (#1155).
       - name: Smoke tests (GUI-subsystem exe, output through pipes)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
 
       - name: The shader runtime beside the executable loads (ABI 2) and parses the bundled presets
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           test -f build/librashader.dll
@@ -463,6 +577,7 @@ jobs:
           VJ_REQUIRE_LIBRASHADER=1 VJ_LIBRASHADER="$(cygpath -m "$PWD/build/librashader.dll")" build/vj_shader_tests.exe library
 
       - name: The exe must import only Windows system DLLs
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           OBJDUMP="$(command -v objdump || command -v llvm-objdump)"
@@ -483,6 +598,7 @@ jobs:
       # checks the PACKAGES against this tree).  stage-tests/ carries the shader test binary the
       # smoke job runs against the packaged DLL; it is not part of the install prefix.
       - name: Install tree
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cmake --install build --prefix "$PWD/stage"
@@ -500,6 +616,7 @@ jobs:
       # Bounded: 124 = killed by timeout = the hang is back.  Hosted x64 runners have no OpenGL 3.3
       # of their own, so this is also the only Windows x64 leg where shaders_gl renders at all.
       - name: The GL test programs exit on the bundled Mesa (#1179)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
@@ -531,6 +648,39 @@ jobs:
             || echo "::warning::shaders_gl FAILED on the bundled Mesa (it did exit, which is what #1179 is about): $(grep -c 'shader_tests: FAIL' "$out/shaders-gl.txt") check(s), see the step log"
 
       # Intermediate (never a release asset: scripts/release/stage.sh skips windows-stage-*).
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: windows-unsigned-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#windows
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging/windows/stage-software-gl.py
+            app/packaging/check-payload.sh
+          paths: |
+            stage
+            stage-tests
+      # checkpoint plumbing end
       - name: Upload the unsigned install tree
         uses: actions/upload-artifact@v7
         with:
@@ -1017,13 +1167,48 @@ jobs:
 
       # Upstream publishes no Linux librashader: this is built from the pinned source on this same
       # image (glibc 2.35), see librashader.yml.  It lands beside the executable and in both packages.
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: linux-package-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#linux
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging
+            scripts/release/signing-status.sh
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - name: Get the librashader runtime (built from source)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: actions/download-artifact@v8
         with:
           name: librashader-${{ matrix.triple }}
           path: librashader
 
       - name: Install build dependencies
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake pkg-config curl dpkg-dev desktop-file-utils appstream \
@@ -1034,6 +1219,7 @@ jobs:
             libcurl4-openssl-dev
 
       - name: Build
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cat librashader/BUILD-INFO.txt
@@ -1046,6 +1232,7 @@ jobs:
           VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
 
       - name: Validate the desktop file and appstream metadata
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cmake --install build --prefix "$RUNNER_TEMP/inst"
@@ -1061,7 +1248,7 @@ jobs:
       # AppImage is built unsigned, as before, and the log says so.
       - name: Import the AppImage signing key
         id: gpgkey
-        if: inputs.sign
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (inputs.sign) }}
         env:
           APPIMAGE_GPG_PRIVATE_KEY: ${{ secrets.APPIMAGE_GPG_PRIVATE_KEY }}
         run: |
@@ -1087,6 +1274,7 @@ jobs:
           echo "AppImage signing key: $fpr"
 
       - name: Package
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         env:
           VJ_APPIMAGE_SIGN_KEY: ${{ steps.gpgkey.outputs.fingerprint }}
           APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGE_GPG_PASSPHRASE }}
@@ -1097,6 +1285,7 @@ jobs:
           bash app/packaging/linux/make-deb.sh build "out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb" "${{ matrix.debarch }}" "$DEB_VERSION"
 
       - name: Record the signing outcome for the release gate
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         env:
           FPR: ${{ steps.gpgkey.outputs.fingerprint }}
         run: |
@@ -1115,6 +1304,7 @@ jobs:
           retention-days: 14
 
       - name: Smoke-test the AppImage
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           f="out/VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage"
@@ -1131,6 +1321,7 @@ jobs:
           rm -rf squashfs-root
 
       - name: Smoke-test the .deb (install, run through /usr/bin, check payload, remove)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           f="out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb"
@@ -1143,6 +1334,39 @@ jobs:
           bash app/packaging/linux/check-librashader.sh /usr/lib/virtualjaguar "${{ matrix.arch }}" build/vj_shader_tests
           sudo apt-get remove -y -qq virtualjaguar
 
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: linux-package-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#linux
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            app
+            :(exclude)app/packaging
+            scripts
+            :(exclude)scripts/release
+            test
+            :(exclude)test/roms/private
+            .github/workflows/librashader.yml
+            .github/scripts/checkpoint.cjs
+            .github/actions/reuse-checkpoint
+            app/packaging
+            scripts/release/signing-status.sh
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - uses: actions/upload-artifact@v7
         with:
           name: app-package-linux-${{ matrix.arch }}

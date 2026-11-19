@@ -350,29 +350,56 @@ jobs:
         with:
           ndk-version: r26d
 
+      # checkpoint plumbing begin
+      - name: Restore successful core compilation
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: release-core-${{ matrix.config.platform }}
+          workflow-job: .github/workflows/release.yml#build
+          configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            exports.list
+            link.T
+            scripts
+            :(exclude)scripts/release
+            .github/actions/reuse-checkpoint
+            .github/scripts/checkpoint.cjs
+          paths: |
+            ${{ matrix.config.artifact }}
+      # checkpoint plumbing end
       - name: Build
-        if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
         run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
       - name: Build (platform)
-        if: matrix.config.make_platform
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.make_platform) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
         run: make -j4 platform=${{ matrix.config.make_platform }}
 
       - name: Build (Emscripten)
-        if: matrix.config.emscripten
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.emscripten) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
         run: emmake make -j4 platform=emscripten
 
       - name: Build (Android NDK)
-        if: matrix.config.android
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.android) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
@@ -388,11 +415,39 @@ jobs:
             exit 1
           fi
 
+      # checkpoint plumbing begin
+      - name: Save successful core compilation
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: release-core-${{ matrix.config.platform }}
+          workflow-job: .github/workflows/release.yml#build
+          configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          dependencies: |
+            src
+            libretro.c
+            libretro_core_options.h
+            libretro_core_options_intl.h
+            libretro-common
+            deps
+            Makefile
+            Makefile.common
+            exports.list
+            link.T
+            scripts
+            :(exclude)scripts/release
+            .github/actions/reuse-checkpoint
+            .github/scripts/checkpoint.cjs
+          paths: |
+            ${{ matrix.config.artifact }}
+      # checkpoint plumbing end
       - name: Preserve unstripped compile-only core for PR validation
         if: ${{ matrix.config.emscripten || matrix.config.android || matrix.config.platform == 'macos-x86_64' || matrix.config.make_platform }}
         env:
           TEST_EXPORTS: '0'
           RELEASE_DEBUG_INFO: '1'
+          VJ_REUSED_SOURCE_SHA: ${{ steps.checkpoint.outputs.source-sha }}
         run: bash scripts/stage-ci-core.sh "${{ matrix.config.platform }}" "${{ matrix.config.artifact }}" ci-core
 
       - name: Upload production CI intermediate

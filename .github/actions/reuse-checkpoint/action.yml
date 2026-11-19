@@ -1,0 +1,68 @@
+name: Reuse a successful build or test checkpoint
+description: Content-addressed outputs and a successful verdict, scoped to this job's declared inputs.
+inputs:
+  mode:
+    description: restore or save
+    required: true
+  lane:
+    description: Unique job and matrix configuration
+    required: true
+  dependencies:
+    description: Newline-separated git pathspecs for every source, test, tool and pinned dependency this lane uses
+    required: true
+  paths:
+    description: Newline-separated output directories to preserve
+    required: true
+  workflow-job:
+    description: Workflow file and job ID, separated by a hash
+    required: true
+  configuration:
+    description: Non-secret build options, release label and cache epoch
+    default: ''
+  partial:
+    description: Preserve passing individual GL results from a failed shard
+    default: 'false'
+outputs:
+  hit:
+    value: ${{ steps.receipt.outputs.hit }}
+    description: True only after the restored outputs and success receipt have been verified
+  source-sha:
+    value: ${{ steps.receipt.outputs.source_sha }}
+    description: Commit that originally produced the restored files
+runs:
+  using: composite
+  steps:
+    - id: key
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        CHECKPOINT_LANE: ${{ inputs.lane }}
+        CHECKPOINT_DEPENDENCIES: ${{ inputs.dependencies }}
+        CHECKPOINT_PATHS: ${{ inputs.paths }}
+        CHECKPOINT_JOB: ${{ inputs.workflow-job }}
+        CHECKPOINT_CONFIGURATION: ${{ inputs.configuration }}
+      run: node .github/scripts/checkpoint.cjs key
+    - id: restore
+      if: inputs.mode == 'restore'
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.key.outputs.paths }}
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: ${{ inputs.partial == 'true' && format('{0}-partial-', steps.key.outputs.key) || '' }}
+    - id: receipt
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        CHECKPOINT_MODE: ${{ inputs.mode }}
+        CHECKPOINT_KEY: ${{ steps.key.outputs.key }}
+        CHECKPOINT_PATHS: ${{ inputs.paths }}
+        CHECKPOINT_RECEIPT: ${{ steps.key.outputs.receipt }}
+        CHECKPOINT_RESTORED: ${{ steps.restore.outputs.cache-matched-key != '' }}
+        CHECKPOINT_PARTIAL: ${{ inputs.partial }}
+        CHECKPOINT_SUCCESS: ${{ job.status == 'success' }}
+      run: node .github/scripts/checkpoint.cjs receipt
+    - if: ${{ !cancelled() && inputs.mode == 'save' }}
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ steps.key.outputs.paths }}
+        key: ${{ inputs.partial == 'true' && job.status != 'success' && format('{0}-partial-{1}-{2}', steps.key.outputs.key, github.run_id, github.run_attempt) || steps.key.outputs.key }}

@@ -22,5 +22,5 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
   checksum=$(shasum -a 256 "$out/$file" | cut -d' ' -f1)
 fi
-printf '{"head_sha":"%s","platform":"%s","file":"%s","test_exports":0,"release_debug_info":1,"sha256":"%s"}\n' \
-  "$GITHUB_SHA" "$platform" "$file" "$checksum" > "$out/BUILD.json"
+printf '{"head_sha":"%s","platform":"%s","file":"%s","test_exports":0,"release_debug_info":1,"sha256":"%s","built_from_sha":"%s"}\n' \
+  "$GITHUB_SHA" "$platform" "$file" "$checksum" "${VJ_REUSED_SOURCE_SHA:-$GITHUB_SHA}" > "$out/BUILD.json"
