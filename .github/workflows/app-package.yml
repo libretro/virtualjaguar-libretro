@@ -231,7 +231,7 @@ jobs:
           mode: restore
           lane: macos-package
           workflow-job: .github/workflows/app-package.yml#macos
-          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
           profile: app-package-macos
           matrix: ${{ toJSON(matrix) }}
           paths: |
@@ -389,7 +389,7 @@ jobs:
           mode: save
           lane: macos-package
           workflow-job: .github/workflows/app-package.yml#macos
-          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
           profile: app-package-macos
           matrix: ${{ toJSON(matrix) }}
           paths: |
@@ -1153,7 +1153,7 @@ jobs:
           mode: restore
           lane: linux-package-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#linux
-          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPIMAGE_GPG_PRIVATE_KEY != '' }}
           profile: app-package-linux
           matrix: ${{ toJSON(matrix) }}
           paths: |
@@ -1302,7 +1302,7 @@ jobs:
           mode: save
           lane: linux-package-${{ matrix.arch }}
           workflow-job: .github/workflows/app-package.yml#linux
-          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPIMAGE_GPG_PRIVATE_KEY != '' }}
           profile: app-package-linux
           matrix: ${{ toJSON(matrix) }}
           paths: |
