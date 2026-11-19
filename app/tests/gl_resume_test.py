@@ -1,0 +1,127 @@
+"""Regression tests for retaining individual passing GL results across a failed shard."""
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location("gl_qualify", Path(__file__).resolve().parents[1] / "test/gl-qualification/gl_qualify.py")
+gl = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gl)
+
+
+class ResumeTests(unittest.TestCase):
+    def test_matching_evidence_keeps_passes_and_retries_failures(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'logs').mkdir()
+            (root / 'shots').mkdir()
+            (root / 'logs/good.log').write_text('shader built')
+            (root / 'shots/good.png').write_bytes(b'captured bytes')
+            (root / 'logs/slow.log').write_text('known slow timeout')
+            report = root / 'results.json'
+            data = {'checkpoint_key': 'inputs', 'os': 'macos', 'shard': '0/1', 'selected': ['good', 'bad', 'slow'],
+                    'results': [
+                        {'preset': 'good', 'errors': [], 'verdict': 'built', 'log': '/old/logs/good.log', 'png': '/old/shots/good.png'},
+                        {'preset': 'bad', 'errors': ['timeout'], 'verdict': 'failed'},
+                        {'preset': 'slow', 'errors': [], 'verdict': 'slow-nochain', 'slow_capped': 120,
+                         'log': '/old/logs/slow.log', 'png': '/old/shots/slow.png'}]}
+            report.write_text(json.dumps(data))
+            results = gl.resume_results(report, 'inputs', 'macos', '0/1', data['selected'])
+            self.assertEqual(set(results), {'good', 'slow'})
+            self.assertTrue(results['good']['reused'])
+            self.assertEqual(results['good']['log'], str(root / 'logs/good.log'))
+            self.assertEqual(results['slow']['png'], '')
+            for key, os_name, shard, selected in [('', 'macos', '0/1', data['selected']),
+                                                 ('different', 'macos', '0/1', data['selected']),
+                                                 ('inputs', 'linux', '0/1', data['selected']),
+                                                 ('inputs', 'macos', '1/2', data['selected']),
+                                                 ('inputs', 'macos', '0/1', ['different'])]:
+                with self.assertRaises(ValueError):
+                    gl.resume_results(report, key, os_name, shard, selected)
+            (root / 'shots/good.png').unlink()
+            with self.assertRaisesRegex(ValueError, 'missing'):
+                gl.resume_results(report, 'inputs', 'macos', '0/1', data['selected'])
+
+    def test_timeout_retries_run_serially_and_repeated_failures_stay_failed(self):
+        calls = []
+        results = [{'preset': 'good', 'errors': [], 'verdict': 'built'},
+                   {'preset': 'bad-compile', 'errors': ['compile error']},
+                   {'preset': 'timeout', 'errors': ['timeout'], 'timed_out': 240, 'seconds': 240}]
+        def passing_one(preset):
+            calls.append(preset)
+            return {'preset': preset, 'errors': [], 'verdict': 'built', 'notes': []}
+        retried = gl.retry_timeouts(results, passing_one)
+        self.assertEqual(calls, ['timeout'])
+        self.assertEqual(retried[0], results[0])
+        self.assertEqual(retried[1], results[1])
+        self.assertEqual(retried[2]['errors'], [])
+        self.assertEqual(retried[2]['parallel_attempt']['errors'], ['timeout'])
+        def failing_one(preset):
+            return {'preset': preset, 'errors': ['timeout again'], 'verdict': 'failed', 'notes': []}
+        retried = gl.retry_timeouts(results, failing_one)
+        self.assertEqual(retried[2]['errors'], ['timeout again'])
+
+    def test_progress_is_atomic_and_retains_only_completed_results(self):
+        with tempfile.TemporaryDirectory() as folder:
+            args = SimpleNamespace(out=Path(folder), os='macos', shard='0/1')
+            with patch.dict('os.environ', {'VJ_CHECKPOINT_KEY': 'inputs'}):
+                gl.write_progress(args, ['done', 'pending'], 2, [{'preset': 'done', 'errors': []}])
+            report = json.loads((args.out / 'results.json').read_text())
+            self.assertEqual(report['selected'], ['done', 'pending'])
+            self.assertEqual(report['results'], [{'preset': 'done', 'errors': []}])
+            self.assertEqual(report['checkpoint_key'], 'inputs')
+            self.assertFalse((args.out / 'results.json.tmp').exists())
+
+    def test_full_loop_persists_each_result_and_merges_complete_shards(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            exe = root / 'app'
+            exe.touch()
+            shaders = root / 'shaders'
+            shaders.mkdir()
+            for name in ['a', 'b']:
+                (shaders / (name + '.slangp')).touch()
+            reports = []
+            def launch(args, preset, shader, out):
+                return {'preset': preset, 'errors': [], 'notes': [], 'verdict': 'built',
+                        'exit': 0, 'renderer': 'fixture', 'seconds': 1, 'log': '', 'png': ''}
+            def progress(args, presets, total, results):
+                gl.write_progress_original(args, presets, total, results)
+                reports.append(json.loads((args.out / 'results.json').read_text()))
+            gl.write_progress_original = gl.write_progress
+            try:
+                with patch.object(gl, 'launch', side_effect=launch), \
+                     patch.object(gl, 'judge_shader'), patch.object(gl, 'judge_slow'), \
+                     patch.object(gl, 'analyse_png'), patch.object(gl, 'write_report', return_value=0), \
+                     patch.object(gl, 'write_progress', side_effect=progress):
+                    for shard in [0, 1]:
+                        out = root / ('shard%d' % shard)
+                        with patch('sys.argv', ['gl_qualify', '--exe', str(exe), '--shaders', str(shaders),
+                                               '--out', str(out), '--os', 'macos', '--shard', '%d/2' % shard]):
+                            self.assertEqual(gl.main(), 0)
+                        report = json.loads((out / 'results.json').read_text())
+                        self.assertEqual(len(report['results']), 2)
+                        self.assertEqual(report['presets'], 1)
+                        self.assertFalse((out / 'results.json.tmp').exists())
+            finally:
+                del gl.write_progress_original
+            self.assertEqual([len(r['results']) for r in reports], [1, 2, 1, 2])
+            args = SimpleNamespace(out=root / 'merged', os='macos', merge=[root / 'shard0', root / 'shard1'],
+                                   expect_shards=2, known_failures='', summary='')
+            with patch.object(gl, 'write_report', side_effect=lambda out, meta, results, summary:
+                              sum(bool(r['errors']) for r in results)):
+                self.assertEqual(gl.merge_main(args), 0)
+                merged = json.loads((args.out / 'results.json').read_text())
+                self.assertEqual([r['preset'] for r in merged['results']], ['off', 'a.slangp', 'b.slangp'])
+                args.merge = [root / 'shard0']
+                self.assertEqual(gl.merge_main(args), 1)
+
+    def test_no_report_starts_fresh(self):
+        self.assertEqual(gl.resume_results(Path('/no-such-report.json'), None, 'macos', '0/1', []), {})
+
+
+if __name__ == '__main__':
+    unittest.main()

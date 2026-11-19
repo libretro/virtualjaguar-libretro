@@ -35,6 +35,10 @@ name: App packages
 on:
   workflow_call:
     inputs:
+      platform:
+        description: 'Package only this platform when recovering a release'
+        type: string
+        default: all
       release_tag:
         description: "v3.8.1 | nightly | prerelease | pr123 | dev"
         type: string
@@ -66,6 +70,10 @@ on:
         required: false
   workflow_dispatch:
     inputs:
+      platform:
+        description: 'Package only this platform when recovering a release'
+        type: string
+        default: all
       release_tag:
         description: "Label used in the file names (v3.8.1, nightly, dev, ...)"
         type: string
@@ -108,6 +116,11 @@ jobs:
       deb_version: ${{ steps.m.outputs.deb_version }}
     steps:
       - uses: actions/checkout@v7
+      - name: Validate selected platform
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          case "$PLATFORM" in all|windows|macos|linux|flatpak) ;; *) echo 'Unknown platform'; exit 1 ;; esac
       - id: m
         env:
           TAG: ${{ inputs.release_tag }}
@@ -152,8 +165,14 @@ jobs:
   librashader:
     name: librashader runtime
     needs: [meta]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && inputs.platform != 'flatpak'
     uses: ./.github/workflows/librashader.yml
+    with:
+      targets: >-
+        ${{ inputs.platform == 'windows' && '["x86_64-pc-windows-msvc","aarch64-pc-windows-msvc"]'
+            || inputs.platform == 'macos' && '["x86_64-apple-darwin","aarch64-apple-darwin"]'
+            || inputs.platform == 'linux' && '["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu"]'
+            || '["x86_64-apple-darwin","aarch64-apple-darwin","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-pc-windows-msvc","aarch64-pc-windows-msvc"]' }}
 
   # ------------------------------------------------------------------------------------------
   # Package-manager templates must always render and parse (they are filled for real, with the
@@ -195,7 +214,7 @@ jobs:
   macos:
     name: macOS universal
     needs: [meta, librashader]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'macos')
     runs-on: macos-latest
     env:
       LABEL: ${{ needs.meta.outputs.label }}
@@ -204,13 +223,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: macos-package
+          workflow-job: .github/workflows/app-package.yml#macos
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          profile: app-package-macos
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - name: Get the librashader runtimes (built from source, both architectures)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: actions/download-artifact@v8
         with:
           pattern: librashader-*-apple-darwin
           path: librashader
 
       - name: Build both architectures
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cat librashader/*/BUILD-INFO.txt
@@ -228,6 +264,7 @@ jobs:
           done
 
       - name: Smoke tests (arm64 native; x86_64 under Rosetta when present)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           # shaders_gl renders through the real librashader on a hidden GL context; on a GPU-less
@@ -246,6 +283,7 @@ jobs:
           fi
 
       - name: Assemble the universal app
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           P=app/packaging/macos
@@ -259,6 +297,7 @@ jobs:
           done
 
       - name: Smoke-test the BUNDLE
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           app="$PWD/dist/Virtual Jaguar.app"
@@ -289,7 +328,7 @@ jobs:
       # Without the APPLE_* secrets (fork PRs) it only prints a warning and signs nothing.
       - name: Developer ID sign, notarize and staple the app
         id: devid
-        if: inputs.sign
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (inputs.sign) }}
         uses: ./.github/actions/macos-sign
         with:
           paths: dist/Virtual Jaguar.app
@@ -303,7 +342,7 @@ jobs:
       # Apple Silicon refuses an unsigned binary ("damaged"), so a build that was not Developer ID
       # signed still gets an ad-hoc signature.  Gatekeeper still refuses it until right-click > Open.
       - name: Ad-hoc sign the app (no Developer ID signature)
-        if: steps.devid.outputs.signed != 'true'
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (steps.devid.outputs.signed != 'true') }}
         run: |
           set -eu
           echo "::warning::macOS package is NOT Developer ID signed or notarized" \
@@ -312,6 +351,7 @@ jobs:
           bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app" adhoc
 
       - name: Make the zip (the only macOS package) and check what it unpacks to
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           mkdir -p out
@@ -333,6 +373,7 @@ jobs:
 
       # What the gate cannot re-derive from the zip on its own: whether Apple issued the ticket.
       - name: Record the signing outcome for the release gate
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: bash scripts/release/signing-status.sh "VirtualJaguar-${LABEL}-macos-universal.zip" "${{ steps.devid.outputs.signed || 'false' }}" "${{ steps.devid.outputs.notarized || 'false' }}" developer-id signing-status
       - uses: actions/upload-artifact@v7
         with:
@@ -340,6 +381,21 @@ jobs:
           path: signing-status/
           retention-days: 14
 
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: macos-package
+          workflow-job: .github/workflows/app-package.yml#macos
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          profile: app-package-macos
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - uses: actions/upload-artifact@v7
         with:
           name: app-package-macos-universal
@@ -367,7 +423,7 @@ jobs:
   windows:
     name: Windows ${{ matrix.arch }}
     needs: [meta, librashader]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
     runs-on: ${{ matrix.os }}
     # Both legs are required (the arm64 continue-on-error of v3.8.1 went with #1153: a red arm64
     # package now holds the release like every other asset).
@@ -412,13 +468,30 @@ jobs:
       # The shader runtime, built from the pinned source for this CPU (librashader.yml; the MSVC-target
       # DLL loads into the MinGW-built exe through the plain C ABI).  Lands beside the executable, in
       # the portable zip and in the installer.
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: windows-unsigned-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#windows
+          configuration: ${{ inputs.release_tag }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: app-package-windows
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            stage
+            stage-tests
+      # checkpoint plumbing end
       - name: Get the librashader runtime (built from source)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: actions/download-artifact@v8
         with:
           name: librashader-${{ matrix.triple }}
           path: librashader
 
       - name: Set up MSYS2
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
@@ -426,6 +499,7 @@ jobs:
           install: ${{ matrix.pkgs }}
 
       - name: Configure and build (GUI subsystem, static runtime)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cat librashader/BUILD-INFO.txt
@@ -439,6 +513,7 @@ jobs:
 
       # Exactly one blitter_simd_ops (NEON on ARM64, SSE2 on x64), see app.yml.
       - name: Exactly one SIMD vtable in the core library
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           lib=$(find build -name 'libvj_core.a' | head -1)
@@ -453,9 +528,11 @@ jobs:
       # shaders_gl needs an OpenGL 3.3 context, which the hosted runners' GDI driver does not give;
       # Windows GL rendering is qualified by windows-gl-test.yml (#1155).
       - name: Smoke tests (GUI-subsystem exe, output through pipes)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
 
       - name: The shader runtime beside the executable loads (ABI 2) and parses the bundled presets
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           test -f build/librashader.dll
@@ -463,6 +540,7 @@ jobs:
           VJ_REQUIRE_LIBRASHADER=1 VJ_LIBRASHADER="$(cygpath -m "$PWD/build/librashader.dll")" build/vj_shader_tests.exe library
 
       - name: The exe must import only Windows system DLLs
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           OBJDUMP="$(command -v objdump || command -v llvm-objdump)"
@@ -483,6 +561,7 @@ jobs:
       # checks the PACKAGES against this tree).  stage-tests/ carries the shader test binary the
       # smoke job runs against the packaged DLL; it is not part of the install prefix.
       - name: Install tree
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cmake --install build --prefix "$PWD/stage"
@@ -500,6 +579,7 @@ jobs:
       # Bounded: 124 = killed by timeout = the hang is back.  Hosted x64 runners have no OpenGL 3.3
       # of their own, so this is also the only Windows x64 leg where shaders_gl renders at all.
       - name: The GL test programs exit on the bundled Mesa (#1179)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
@@ -531,6 +611,21 @@ jobs:
             || echo "::warning::shaders_gl FAILED on the bundled Mesa (it did exit, which is what #1179 is about): $(grep -c 'shader_tests: FAIL' "$out/shaders-gl.txt") check(s), see the step log"
 
       # Intermediate (never a release asset: scripts/release/stage.sh skips windows-stage-*).
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: windows-unsigned-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#windows
+          configuration: ${{ inputs.release_tag }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: app-package-windows
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            stage
+            stage-tests
+      # checkpoint plumbing end
       - name: Upload the unsigned install tree
         uses: actions/upload-artifact@v7
         with:
@@ -561,7 +656,7 @@ jobs:
   windows-package:
     name: Windows sign and package
     needs: [meta, windows]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -720,7 +815,7 @@ jobs:
   windows-smoke:
     name: Windows smoke ${{ matrix.arch }}
     needs: [meta, windows-package]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -858,7 +953,7 @@ jobs:
   flatpak:
     name: Flatpak ${{ matrix.arch }}
     needs: [meta]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'flatpak')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -876,6 +971,11 @@ jobs:
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
+      # SDK updates rename preinstalled deployments, which image-layer overlayfs
+      # can reject with EXDEV. Docker copies the existing SDK into this volume.
+      # https://docs.docker.com/engine/storage/volumes/#mounting-a-volume-over-existing-data
+      volumes:
+        - /var/lib/flatpak
     env:
       LABEL: ${{ needs.meta.outputs.label }}
       ARCH: ${{ matrix.arch }}
@@ -883,7 +983,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The image's SDK user can differ from the checkout owner. Checkout's
+      # temporary Git config does not persist into subsequent container steps.
+      - name: Trust this container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: flatpak-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#flatpak
+          configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: app-package-flatpak
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
+      # checkpoint plumbing end
       - name: Set the TV mode default and the build channel in the manifest
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         # The manifest itself stays on CMake's default (Auto); a release package gets Manual here, like the other packages.
         run: |
           set -eu
@@ -894,6 +1014,7 @@ jobs:
           grep -qx "      - -DVJ_BUILD_CHANNEL=$CHANNEL" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
 
       - name: Note the start time and the host
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         id: t0
         run: |
           set -eu
@@ -903,6 +1024,7 @@ jobs:
           test "$(uname -m)" = "$ARCH" || { echo "::error::runner is $(uname -m), expected a native $ARCH host"; exit 1; }
 
       - name: Look up the flatpak-builder cache (for the job summary only)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         # The same lookup the action makes inside the build step (its primary key is <cache-key>-<arch>,
         # its fallback the prefix flatpak-builder-<arch>), without restoring anything: the summary can
         # then say whether the wall time below is a cold or a warm figure.  File mtimes cannot tell
@@ -916,6 +1038,7 @@ jobs:
           lookup-only: true
 
       - name: Build the bundle
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
         # own artifact would be named app-<arch>.flatpak and not app-package-*, and the release
         # jobs attach every artifact they find; the final file is uploaded below.
@@ -932,7 +1055,7 @@ jobs:
         # Per leg, success or failure.  "cold" = no flatpak-builder cache existed for this leg (the
         # from-scratch figure the issue asks for); "warm" = the action restored the exact key, so the
         # app module and much of the Rust build came from cache; "partial" = an older key matched.
-        if: always() && steps.t0.outcome == 'success'
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (always() && steps.t0.outcome == 'success') }}
         env:
           START: ${{ steps.t0.outputs.start }}
           OUTCOME: ${{ steps.build.outcome }}
@@ -956,6 +1079,7 @@ jobs:
           echo "flatpak $ARCH: build $OUTCOME in ${secs}s (cache $cache)"
 
       - name: Smoke-test the bundle (install, run headless against the public ROM)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           f="VirtualJaguar-${LABEL}-linux-${ARCH}.flatpak"
@@ -980,6 +1104,26 @@ jobs:
             'import ctypes, os, platform; m = platform.machine(); print("sandbox", m); assert m == os.environ["VJ_EXPECT_ARCH"], m; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2, a' \
             || { echo "::error::librashader ABI check failed on $ARCH"; exit 1; }
 
+      # The TV/channel edits are generated build configuration, already represented
+      # by the effective options in the key. Save against the original source bytes.
+      - name: Restore the source manifest before checkpointing
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        run: git restore -- app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: flatpak-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#flatpak
+          configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: app-package-flatpak
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
+      # checkpoint plumbing end
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
@@ -994,7 +1138,7 @@ jobs:
   linux:
     name: Linux ${{ matrix.arch }}
     needs: [meta, librashader]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'linux')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -1017,13 +1161,30 @@ jobs:
 
       # Upstream publishes no Linux librashader: this is built from the pinned source on this same
       # image (glibc 2.35), see librashader.yml.  It lands beside the executable and in both packages.
+      # checkpoint plumbing begin
+      - name: Restore successful checkpoint
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: linux-package-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#linux
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPIMAGE_GPG_PRIVATE_KEY != '' }}
+          profile: app-package-linux
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - name: Get the librashader runtime (built from source)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         uses: actions/download-artifact@v8
         with:
           name: librashader-${{ matrix.triple }}
           path: librashader
 
       - name: Install build dependencies
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake pkg-config curl dpkg-dev desktop-file-utils appstream \
@@ -1034,6 +1195,7 @@ jobs:
             libcurl4-openssl-dev
 
       - name: Build
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cat librashader/BUILD-INFO.txt
@@ -1046,6 +1208,7 @@ jobs:
           VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
 
       - name: Validate the desktop file and appstream metadata
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           cmake --install build --prefix "$RUNNER_TEMP/inst"
@@ -1061,7 +1224,7 @@ jobs:
       # AppImage is built unsigned, as before, and the log says so.
       - name: Import the AppImage signing key
         id: gpgkey
-        if: inputs.sign
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (inputs.sign) }}
         env:
           APPIMAGE_GPG_PRIVATE_KEY: ${{ secrets.APPIMAGE_GPG_PRIVATE_KEY }}
         run: |
@@ -1087,6 +1250,7 @@ jobs:
           echo "AppImage signing key: $fpr"
 
       - name: Package
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         env:
           VJ_APPIMAGE_SIGN_KEY: ${{ steps.gpgkey.outputs.fingerprint }}
           APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGE_GPG_PASSPHRASE }}
@@ -1097,6 +1261,7 @@ jobs:
           bash app/packaging/linux/make-deb.sh build "out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb" "${{ matrix.debarch }}" "$DEB_VERSION"
 
       - name: Record the signing outcome for the release gate
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         env:
           FPR: ${{ steps.gpgkey.outputs.fingerprint }}
         run: |
@@ -1115,6 +1280,7 @@ jobs:
           retention-days: 14
 
       - name: Smoke-test the AppImage
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           f="out/VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage"
@@ -1131,6 +1297,7 @@ jobs:
           rm -rf squashfs-root
 
       - name: Smoke-test the .deb (install, run through /usr/bin, check payload, remove)
+        if: ${{ steps.checkpoint.outputs.hit != 'true' }}
         run: |
           set -eu
           f="out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb"
@@ -1143,9 +1310,55 @@ jobs:
           bash app/packaging/linux/check-librashader.sh /usr/lib/virtualjaguar "${{ matrix.arch }}" build/vj_shader_tests
           sudo apt-get remove -y -qq virtualjaguar
 
+      # checkpoint plumbing begin
+      - name: Save successful checkpoint
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: linux-package-${{ matrix.arch }}
+          workflow-job: .github/workflows/app-package.yml#linux
+          configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.APPIMAGE_GPG_PRIVATE_KEY != '' }}
+          profile: app-package-linux
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            out
+            signing-status
+      # checkpoint plumbing end
       - uses: actions/upload-artifact@v7
         with:
           name: app-package-linux-${{ matrix.arch }}
           path: out/*
           if-no-files-found: error
           retention-days: 14
+
+  windows-emulated-smoke:
+    name: Windows x64 on ARM smoke
+    needs: [meta, windows-package]
+    if: needs.meta.outputs.run == 'true' && (inputs.platform == 'all' || inputs.platform == 'windows')
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          name: app-package-windows-x64
+          path: candidate
+      - name: Install and render using x64 emulation
+        shell: pwsh
+        env:
+          LABEL: ${{ needs.meta.outputs.label }}
+        run: |
+          Get-ChildItem candidate -File | ForEach-Object {
+            $digest = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$digest  $($_.Name)" | Add-Content candidate/SHA256SUMS.txt
+          }
+          ./scripts/release/qualify-windows-installer.ps1 -ReleaseDirectory candidate -Tag $env:LABEL -Architecture x64 -Content test/roms/yarc.j64 -OutputDirectory evidence
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-emulated-installer-evidence
+          path: evidence/

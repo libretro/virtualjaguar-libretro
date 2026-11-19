@@ -36,6 +36,10 @@ on:
     branches: [develop, 'release/**']
   workflow_dispatch:
     inputs:
+      verification_run:
+        description: 'Recheck signatures of an existing Release run with the current verifier, without building or publishing'
+        type: string
+        default: ''
       dry_run:
         description: "Dry run: build, stage, sign, attest and verify on this branch; publish nothing"
         type: boolean
@@ -43,6 +47,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # Tag pushes always run to completion — a release build must never be
 # cancelled.  Develop pushes cancel superseded runs, because only the newest
@@ -62,7 +67,16 @@ jobs:
   # ref one of the two publishing jobs accepts.
   # ----------------------------------------------------------------
   guard:
+    if: ${{ !inputs.verification_run }}
     name: Check dispatch ref
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AZURE_SIGNING_READY: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' }}
+    outputs:
+      previous_runs: ${{ steps.previous.outputs.runs }}
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       # Debounce for the rolling nightly.  A burst of merges to develop would
@@ -75,6 +89,37 @@ jobs:
       - name: Wait for the develop burst to settle
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
         run: sleep 600
+
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Verify Azure signing identity before building
+        if: ${{ env.AZURE_SIGNING_READY == 'true' && (github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/')) }}
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Locate previous release checkpoint artifacts
+        id: previous
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const branch = context.ref.startsWith('refs/tags/')
+              ? 'release/' + context.ref.slice('refs/tags/'.length) : context.ref.slice('refs/heads/'.length);
+            const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id:'release.yml', branch, event:'push', per_page:20});
+            const runs = data.workflow_runs.filter(r => r.id !== context.runId && r.head_repository?.full_name === `${context.repo.owner}/${context.repo.repo}`)
+              .slice(0,10).map(r => r.id);
+            core.setOutput('runs',JSON.stringify(runs));
+
+      - name: Release preflight before the platform matrix
+        run: |
+          node --test .github/scripts/tests/checkpoint.test.cjs .github/scripts/tests/release-cores.test.cjs .github/scripts/tests/release-packages.test.cjs
+          python3 -I app/tests/gl_resume_test.py
+          bash scripts/check-info-version.sh
+          bash test/release/test_release_scripts.sh
 
       - name: Refuse a dispatch that would publish nothing
         if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
@@ -350,29 +395,44 @@ jobs:
         with:
           ndk-version: r26d
 
+      # checkpoint plumbing begin
+      - name: Restore successful core compilation
+        id: checkpoint
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: restore
+          lane: release-core-${{ matrix.config.platform }}
+          workflow-job: .github/workflows/release.yml#build
+          configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: release-build
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            ${{ matrix.config.artifact }}
+            ${{ runner.os == 'macOS' && format('{0}.dSYM', matrix.config.artifact) || '' }}
+      # checkpoint plumbing end
       - name: Build
-        if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
         run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
       - name: Build (platform)
-        if: matrix.config.make_platform
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.make_platform) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
         run: make -j4 platform=${{ matrix.config.make_platform }}
 
       - name: Build (Emscripten)
-        if: matrix.config.emscripten
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.emscripten) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
         run: emmake make -j4 platform=emscripten
 
       - name: Build (Android NDK)
-        if: matrix.config.android
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && (matrix.config.android) }}
         env:
           RELEASE_DEBUG_INFO: '1'
           TEST_EXPORTS: '0'
@@ -388,11 +448,33 @@ jobs:
             exit 1
           fi
 
+      # Mach-O links refer to local object files. Materialize DWARF before saving
+      # the linked binary, so a restored build never needs the original .o files.
+      - name: Preserve Apple debug symbols while objects are present
+        if: ${{ steps.checkpoint.outputs.hit != 'true' && runner.os == 'macOS' }}
+        run: dsymutil "${{ matrix.config.artifact }}" -o "${{ matrix.config.artifact }}.dSYM"
+
+      # checkpoint plumbing begin
+      - name: Save successful core compilation
+        if: ${{ success() && steps.checkpoint.outputs.hit != 'true' }}
+        uses: ./.github/actions/reuse-checkpoint
+        with:
+          mode: save
+          lane: release-core-${{ matrix.config.platform }}
+          workflow-job: .github/workflows/release.yml#build
+          configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+          profile: release-build
+          matrix: ${{ toJSON(matrix) }}
+          paths: |
+            ${{ matrix.config.artifact }}
+            ${{ runner.os == 'macOS' && format('{0}.dSYM', matrix.config.artifact) || '' }}
+      # checkpoint plumbing end
       - name: Preserve unstripped compile-only core for PR validation
         if: ${{ matrix.config.emscripten || matrix.config.android || matrix.config.platform == 'macos-x86_64' || matrix.config.make_platform }}
         env:
           TEST_EXPORTS: '0'
           RELEASE_DEBUG_INFO: '1'
+          VJ_REUSED_SOURCE_SHA: ${{ steps.checkpoint.outputs.source-sha }}
         run: bash scripts/stage-ci-core.sh "${{ matrix.config.platform }}" "${{ matrix.config.artifact }}" ci-core
 
       - name: Upload production CI intermediate
@@ -478,8 +560,8 @@ jobs:
           EXT=$(echo "$SRC" | grep -o '\.[^.]*$')
           OUT="virtualjaguar_libretro-${{ matrix.config.platform }}${EXT}"
           cp "$SRC" "dist/${OUT}"
-          # dsymutil produces a .dSYM bundle next to the binary
-          dsymutil "dist/${OUT}" -o "dist/${OUT}.dSYM"
+          # The checkpoint retains complete DWARF, independent of local object files.
+          cp -R "${SRC}.dSYM" "dist/${OUT}.dSYM"
           # Strip debug info from the shipped binary (-S = local syms,
           # -x = remove non-globals); keeps externals so dlsym still works
           strip -S -x "dist/${OUT}"
@@ -772,10 +854,14 @@ jobs:
   gl-qualification:
     name: GL qualification
     needs: [guard]
+    permissions:
+      contents: read
+      actions: read
     if: ${{ github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/') }}
     uses: ./.github/workflows/gl-qualification.yml
     with:
       preset_set: all
+      source_runs: ${{ needs.guard.outputs.previous_runs }}
 
   # ----------------------------------------------------------------
   # Stage (#1151): flatten every artifact into release/, write
@@ -1433,3 +1519,52 @@ jobs:
             echo "::warning::could not pin issue #${NUM} (already pinned, 3-pin cap, or permission)"
 
           echo "==> Tracking issue: ${GITHUB_SERVER_URL}/${REPO}/issues/${NUM}"
+
+  recover-signatures:
+    name: Recheck an existing staged release
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verification_run != '' }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate the source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.verification_run }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || exit 1
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN")
+          [ "$(jq -r .path <<< "$run")" = .github/workflows/release.yml ]
+          [ "$(jq -r .event <<< "$run")" = push ]
+          [ "$(jq -r .head_repository.full_name <<< "$run")" = "$GITHUB_REPOSITORY" ]
+          echo "Verifying existing artifacts from run $SOURCE_RUN, commit $(jq -r .head_sha <<< "$run")" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.verification_run }}
+          name: release-staged
+          path: release
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.verification_run }}
+          name: release-signing-status
+          path: signing-status
+      - name: Verification tools
+        run: brew install minisign osslsigncode
+      - name: Verify signatures and original attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOWS_APP_EXPECT: signed
+          WINDOWS_EXPECT: signed
+        run: bash scripts/release/verify.sh release signing-status strict signing-table.md
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: recovery-signing-table
+          path: signing-table.md

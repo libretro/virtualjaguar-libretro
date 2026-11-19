@@ -703,14 +703,76 @@ def merge_main(args):
     if args.known_failures and meta["slow_threshold"]:
         meta["slow_statement"] = slow_list_statement(read_known_slow(args.known_failures, meta["leg"]),
                                                      meta["leg"], meta["slow_threshold"])
-    (out / "results.json").write_text(json.dumps({"os": args.os, "shards": want, "presets_total": total,
+    (out / "results.json.tmp").write_text(json.dumps({"os": args.os, "shards": want, "presets_total": total,
                                                   "results": results}, indent=1), encoding="utf-8")
+    os.replace(args.out / "results.json.tmp", args.out / "results.json")
     return 1 if write_report(out, meta, results, args.summary) else 0
 
 
 # ---------------------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------------------
+def write_progress(args, presets, presets_total, results):
+    """Keep completed preset judgements available if the runner stops this process."""
+    report = {"checkpoint_key": os.environ.get("VJ_CHECKPOINT_KEY"), "os": args.os,
+              "shard": args.shard, "selected": presets, "presets_total": presets_total,
+              "results": results}
+    temporary = args.out / "results.json.tmp"
+    temporary.write_text(json.dumps(report, indent=1), encoding="utf-8")
+    os.replace(temporary, args.out / "results.json")
+
+
+def retry_timeouts(results, run_one, reset=None):
+    """Retry timed-out launches serially after every parallel worker has stopped."""
+    retried = list(results)
+    for index, first in enumerate(results):
+        if not first.get("timed_out") or not first.get("errors") or first.get("preset") == "off":
+            continue
+        previous_log = first.get("log", "")
+        if previous_log and pathlib.Path(previous_log).is_file():
+            saved_log = previous_log + ".parallel"
+            os.replace(previous_log, saved_log)
+            previous_log = saved_log
+        if reset:
+            reset()
+        result = run_one(first["preset"])
+        result["parallel_attempt"] = {"seconds": first.get("seconds"), "errors": list(first["errors"]), "log": previous_log}
+        result["notes"].append("retried serially after the parallel launch timed out")
+        retried[index] = result
+        print("  serial retry %-60s %s" % (first["preset"], "FAIL" if result["errors"] else result["verdict"]), flush=True)
+    return retried
+
+
+def resume_results(report, key, os_name, shard, presets):
+    """A checkpoint verifies input identity and file hashes before this report is read."""
+    if not report.is_file():
+        return {}
+    previous = json.loads(report.read_text(encoding="utf-8"))
+    if not key or previous.get("checkpoint_key") != key:
+        raise ValueError("GL resume requires a checkpoint with the same input key")
+    if previous.get("os") != os_name or previous.get("shard") != shard or previous.get("selected") != presets:
+        raise ValueError("GL resume context or preset selection changed")
+    passed = {}
+    for result in previous["results"]:
+        if result["preset"] not in presets or result["errors"]:
+            continue
+        result = dict(result)
+        # A report downloaded from another runner keeps its diagnostics beside it.
+        for field, directory in (("log", "logs"), ("png", "shots")):
+            if result.get(field):
+                local = report.parent / directory / pathlib.PurePath(result[field]).name
+                if not local.is_file():
+                    if field == "png" and (result.get("slow_capped") is not None or
+                                           result.get("verdict") in ("known-broken", "slow-built", "slow-nochain", "refused")):
+                        result[field] = ""
+                        continue
+                    raise ValueError("GL resume evidence is missing: %s" % local)
+                result[field] = str(local)
+        result["reused"] = True
+        passed[result["preset"]] = result
+    return passed
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--exe", type=pathlib.Path, help="the app executable (install tree: <prefix>/bin/virtualjaguar[.exe])")
@@ -754,6 +816,8 @@ def main():
     ap.add_argument("--reset-cvms", action="store_true",
                     help="macOS hosted runners: before that retry, kill Apple's GL compile service (CVMServer/CVMCompiler, "
                          "sudo -n) so the next launch gets a fresh one")
+    ap.add_argument("--retry-timeout", action="store_true", help="retry timed-out presets once serially after the parallel batch, retaining the first logs")
+    ap.add_argument("--resume", action="store_true", help="reuse passing presets from an input-matched CI checkpoint in --out")
     ap.add_argument("--merge", nargs="+", default=[], help="join these shard output folders into --out (no launches)")
     ap.add_argument("--expect-shards", type=int, default=0, help="with --merge: how many shards there must be")
     args = ap.parse_args()
@@ -799,6 +863,12 @@ def main():
           % (args.os, len(presets), args.shard, presets_total, args.frame, args.jobs, args.timeout,
              sum(1 for p in presets if p in args.slow_listed)), flush=True)
 
+    resumed = resume_results(args.out / "results.json", os.environ.get("VJ_CHECKPOINT_KEY"), args.os,
+                             args.shard, presets) if args.resume else {}
+    if resumed:
+        print("gl_qualify: retaining %d passing preset results, retrying %d" %
+              (len(resumed), len(presets) - len(resumed)), flush=True)
+
     # The plain picture first: everything else is compared with it.
     off = launch(args, "off", "off", args.out)
     judge_shader(off, refused_ok, known_broken)
@@ -807,8 +877,11 @@ def main():
           ("  ERRORS: " + "; ".join(off["errors"])) if off["errors"] else ""), flush=True)
 
     results = [off]
+    write_progress(args, presets, presets_total, results)
     if not off["errors"]:
         def one(rel):
+            if rel in resumed:
+                return resumed[rel]
             r = launch(args, rel, str(args.shaders / rel), args.out)
             if args.retry_no_gl and r.get("gl_lines", 0) == 0:
                 # The window never came up: once more after a pause, the first attempt kept in the result.
@@ -834,6 +907,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
             for r in ex.map(one, presets):
                 results.append(r)
+                write_progress(args, presets, presets_total, results)
                 tag = "FAIL" if r["errors"] else r["verdict"]
                 print("  %-60s %-8s %5s s%s" % (r["preset"], tag, r["seconds"],
                       ("  " + "; ".join(r["errors"])) if r["errors"] else ""), flush=True)
@@ -848,6 +922,8 @@ def main():
                     print("gl_qualify: %d presets failed in a row; stopping (--fail-fast %d)" % (streak, args.fail_fast), flush=True)
                     ex.shutdown(wait=True, cancel_futures=True)
                     break
+        if args.retry_timeout:
+            results = retry_timeouts(results, one, reset_cvms if args.reset_cvms else None)
         if aborted:
             results.append({"preset": "(aborted)", "errors": ["%d consecutive failures: the remaining %d presets were not run" % (streak, len(presets) - (len(results) - 1))],
                             "notes": [], "verdict": "aborted", "exit": None, "seconds": 0, "log": "", "png": "", "shader": []})
@@ -871,7 +947,8 @@ def main():
             "known_exit_hang": args.known_exit_hang, "slow_threshold": args.slow_threshold,
             "leg": args.leg or args.os, "settings": settings,
             "slow_statement": slow_list_statement(args.slow_listed, args.leg, args.slow_threshold) if args.slow_threshold else ""}
-    (args.out / "results.json").write_text(json.dumps({
+    (args.out / "results.json.tmp").write_text(json.dumps({
+        "checkpoint_key": os.environ.get("VJ_CHECKPOINT_KEY"),
         "os": args.os, "exe": str(args.exe), "frame": args.frame, "presets": len(presets),
         "presets_total": presets_total, "shard": args.shard, "selected": presets, "preset_set": meta["set"],
         "leg": meta["leg"], "known_exit_hang": args.known_exit_hang, "slow_threshold": args.slow_threshold,
@@ -882,6 +959,7 @@ def main():
         "did_not_exit": sum(1 for r in results if r.get("known_exit_hang")),
         "failed": sum(1 for r in results if r["errors"]),
         "results": results}, indent=1), encoding="utf-8")
+    os.replace(args.out / "results.json.tmp", args.out / "results.json")
     return 1 if write_report(args.out, meta, results, args.summary) else 0
 
 

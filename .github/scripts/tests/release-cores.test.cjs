@@ -123,7 +123,7 @@ test('the stage job excludes raw intermediates and both Release publishers ship 
   assert.equal((release.match(/bash scripts\/release\/stage\.sh artifacts release signing-status/g) || []).length, 1);
   for (const x of ['ci-core-*', 'librashader-*', 'signing-status-*']) assert(stage.includes(`-not -path "$art/${x}"`), x);
   // The release and nightly jobs publish the staged artifact, never a second flatten.
-  assert.equal((release.match(/name: release-staged/g) || []).length, 5);   // one upload; downloads by the gates, release and nightly
+  assert.equal((release.match(/name: release-staged/g) || []).length, 6);   // one upload; downloads by the gates, release, nightly and recovery verifier
   assert(!release.includes("-exec cp {} release/"));
   const windowsQualification = release.slice(
     release.indexOf('  windows-installer-qualification:'),

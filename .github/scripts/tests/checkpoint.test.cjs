@@ -1,0 +1,195 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync, spawnSync } = require('node:child_process');
+const { jobDefinition, sourceKey, inventory } = require('../checkpoint.cjs');
+const script = path.resolve(__dirname, '../checkpoint.cjs');
+function fixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vj-checkpoint-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', dir]);
+  fs.writeFileSync(path.join(dir, 'source.c'), 'source');
+  fs.writeFileSync(path.join(dir, 'sign.ps1'), 'sign');
+  fs.writeFileSync(path.join(dir, 'workflow.yml'), 'name: Test\nenv:\n  CHANNEL: release\njobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - run: compile-and-test\n  sign:\n    steps:\n      - run: sign\n');
+  execFileSync('git', ['-C', dir, 'add', '.']);
+  return dir;
+}
+test('changing signing commands preserves the build key, changing source or compiler commands invalidates it', t => {
+  const dir = fixture(t), old = process.cwd(); process.chdir(dir); t.after(() => process.chdir(old));
+  const opts = { dependencies: 'source.c', job: 'workflow.yml#build', configuration: 'x64', runner: ['Windows', 'X64', 'image-v1'] };
+  const first = sourceKey(opts);
+  fs.appendFileSync('sign.ps1', 'changed');
+  fs.appendFileSync('workflow.yml', '      - run: another-signing-step\n');
+  assert.equal(sourceKey(opts), first);
+  fs.writeFileSync('source.c', 'changed');
+  assert.notEqual(sourceKey(opts), first);
+  fs.writeFileSync('source.c', 'source');
+  fs.writeFileSync('workflow.yml', fs.readFileSync('workflow.yml', 'utf8').replace('compile-and-test', 'new-compiler-and-test'));
+  assert.notEqual(sourceKey(opts), first);
+});
+test('a sibling matrix-row change preserves this row while a selected-row change invalidates it', t => {
+  const dir = fixture(t), old = process.cwd(); process.chdir(dir); t.after(() => process.chdir(old));
+  const workflow = 'name: Test\njobs:\n  build:\n    strategy:\n      matrix:\n        config: [x64, arm64]\n    steps:\n      - run: compile-and-test\n';
+  fs.writeFileSync('workflow.yml', workflow);
+  const opts = { dependencies: 'source.c', job: 'workflow.yml#build', matrix: '{"arch":"x64"}' };
+  const first = sourceKey(opts);
+  fs.writeFileSync('workflow.yml', workflow.replace('x64, arm64', 'x64, a-different-arm-compiler'));
+  assert.equal(sourceKey(opts), first);
+  assert.notEqual(sourceKey({ ...opts, matrix: '{"arch":"arm64"}' }), first);
+});
+test('configuration, runner image and shared env are inputs', t => {
+  const dir = fixture(t), old = process.cwd(); process.chdir(dir); t.after(() => process.chdir(old));
+  const opts = { dependencies: 'source.c', job: 'workflow.yml#build', configuration: 'x64', runner: ['Windows', 'image-v1'] };
+  const first = sourceKey(opts);
+  assert.notEqual(sourceKey({ ...opts, configuration: 'arm64' }), first);
+  assert.notEqual(sourceKey({ ...opts, runner: ['Windows', 'image-v2'] }), first);
+  fs.writeFileSync('workflow.yml', fs.readFileSync('workflow.yml', 'utf8').replace('CHANNEL: release', 'CHANNEL: nightly'));
+  assert.notEqual(sourceKey(opts), first);
+  assert.throws(() => sourceKey({ ...opts, dependencies: '' }), /explicit/);
+  assert.throws(() => sourceKey({ ...opts, dependencies: 'absent' }), /no files/);
+});
+test('only successful saves create receipts, restored bytes must match, and original provenance is retained', t => {
+  const dir = fixture(t);
+  fs.mkdirSync(path.join(dir, 'out'));
+  fs.writeFileSync(path.join(dir, 'out/binary'), 'compiled bytes');
+  const env = { ...process.env, GITHUB_OUTPUT: path.join(dir, 'outputs'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary'),
+    CHECKPOINT_KEY: 'input-key', CHECKPOINT_PATHS: 'out', CHECKPOINT_RECEIPT: '.ci-checkpoints/build.json',
+    CHECKPOINT_SUCCESS: 'true', GITHUB_SHA: 'source-sha', GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', GITHUB_REPOSITORY: 'owner/repo' };
+  const run = (mode, more = {}) => spawnSync(process.execPath, [script, 'receipt'], {
+    cwd: dir, env: { ...env, CHECKPOINT_MODE: mode, ...more }, encoding: 'utf8' });
+  assert.equal(run('restore', { CHECKPOINT_RESTORED: 'false' }).status, 0);
+  assert(!fs.existsSync(path.join(dir, env.CHECKPOINT_RECEIPT)));
+  assert.notEqual(run('save', { CHECKPOINT_SUCCESS: 'false' }).status, 0);
+  assert.equal(run('save').status, 0);
+  assert.equal(run('restore', { CHECKPOINT_RESTORED: 'true', GITHUB_SHA: 'new-sha' }).status, 0);
+  assert.match(fs.readFileSync(env.GITHUB_STEP_SUMMARY, 'utf8'), /123, attempt 2, commit source-sha/);
+  fs.writeFileSync(path.join(dir, 'out/binary'), 'tampered');
+  assert.notEqual(run('restore', { CHECKPOINT_RESTORED: 'true' }).status, 0);
+  assert.notEqual(run('save', { CHECKPOINT_PATHS: 'missing' }).status, 0);
+});
+test('partial checkpoints retain files without approving the whole lane', t => {
+  const dir = fixture(t);
+  fs.mkdirSync(path.join(dir, 'glq')); fs.writeFileSync(path.join(dir, 'glq/results.json'), '{}');
+  const env = { ...process.env, GITHUB_OUTPUT: path.join(dir, 'outputs'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary'),
+    CHECKPOINT_KEY: 'partial-key', CHECKPOINT_PATHS: 'glq', CHECKPOINT_RECEIPT: '.ci-checkpoints/gl.json',
+    GITHUB_SHA: 'original-sha', GITHUB_RUN_ID: '123', GITHUB_REPOSITORY: 'owner/repo',
+    CHECKPOINT_PARTIAL: 'true', CHECKPOINT_SUCCESS: 'false' };
+  for (const mode of ['save', 'restore']) {
+    const result = spawnSync(process.execPath, [script, 'receipt'], { cwd: dir,
+      env: { ...env, CHECKPOINT_MODE: mode, CHECKPOINT_RESTORED: 'true' }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, env.CHECKPOINT_RECEIPT))).complete, false);
+  assert.match(fs.readFileSync(env.GITHUB_OUTPUT, 'utf8'), /hit<<CHECKPOINT_END\nfalse/);
+});
+test('job extraction does not accidentally include later jobs', () => {
+  const s = '\njobs:\n  build:\n    steps:\n      - run: build\n  sign:\n    steps:\n      - run: sign\n';
+  assert(!jobDefinition(s, 'build').includes('run: sign'));
+  assert.equal(jobDefinition(s.replace(/\n/g, '\r\n'), 'build'), jobDefinition(s, 'build'));
+  assert(jobDefinition(s, 'sign').includes('run: sign'));
+  assert.throws(() => jobDefinition(s, 'missing'), /Missing/);
+  assert.throws(() => inventory(['/tmp']), /repository-relative/);
+});
+test('production dependency profiles separate signing tooling from compilation', () => {
+  const profiles = require('../../ci/checkpoints.json');
+  function selected(name) {
+    return execFileSync('git', ['ls-files', '-z', '--', ...profiles[name]], { cwd: path.resolve(__dirname, '../../..') })
+      .toString().split('\0');
+  }
+  const windows = selected('app-package-windows');
+  assert(windows.includes('app/packaging/windows/winsparkle.cmake'));
+  assert(windows.includes('app/packaging/windows/stage-software-gl.py'));
+  assert(!windows.includes('.github/actions/windows-sign/action.yml'));
+  assert(!windows.includes('scripts/release/verify.sh'));
+  assert(!windows.includes('test/release/test_release_scripts.sh'));
+  const mac = selected('app-package-macos');
+  assert(mac.includes('scripts/release/signing-status.sh'));
+  assert(mac.includes('.github/actions/macos-sign/action.yml'));
+  assert(!mac.includes('app/src/platform/software_gl_windows.cpp'));
+  assert(!mac.includes('app/packaging/windows/package.sh'));
+  assert(selected('release-build').includes('jni/Android.mk'));
+});
+test('Flatpak checkpoint access trusts only its container checkout', t => {
+  const workflow = fs.readFileSync(path.resolve(__dirname, '../../workflows/app-package.yml'), 'utf8');
+  const trust = jobDefinition(workflow, 'flatpak').match(/name: Trust this container checkout[\s\S]*?run: ([^\n]+)/);
+  assert(trust, 'container checkout must be trusted before the checkpoint action invokes git');
+  const dir = fixture(t);
+  const env = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_COUNT: '0',
+    GIT_CONFIG_GLOBAL: path.join(dir, 'global.gitconfig'), GIT_CONFIG_NOSYSTEM: '1', GITHUB_WORKSPACE: dir };
+  const before = spawnSync('git', ['ls-files'], { cwd: dir, env, encoding: 'utf8' });
+  assert.notEqual(before.status, 0);
+  assert.match(before.stderr, /dubious ownership/);
+  execFileSync('bash', ['-c', trust[1]], { cwd: dir, env });
+  assert.match(execFileSync('git', ['ls-files'], { cwd: dir, env, encoding: 'utf8' }), /source.c/);
+  const other = fixture(t);
+  assert.notEqual(spawnSync('git', ['ls-files'], { cwd: other, env }).status, 0,
+    'trusting one checkout must not disable ownership protection elsewhere');
+});
+test('Flatpak saves use the pristine manifest key after per-build configuration edits', t => {
+  const workflow = fs.readFileSync(path.resolve(__dirname, '../../workflows/app-package.yml'), 'utf8');
+  const restore = jobDefinition(workflow, 'flatpak').match(/name: Restore the source manifest before checkpointing[\s\S]*?run: ([^\n]+)/);
+  assert(restore, 'the Flatpak save must restore its tracked manifest before computing the key');
+  const dir = fixture(t), old = process.cwd(); process.chdir(dir); t.after(() => process.chdir(old));
+  const manifest = 'app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml';
+  fs.mkdirSync(path.dirname(manifest), { recursive: true });
+  const original = '      - -DVJ_APP_BUILD_TESTS=OFF\n      - -DVJ_BUILD_CHANNEL=release\n';
+  fs.writeFileSync(manifest, original);
+  fs.writeFileSync('workflow.yml', workflow);
+  execFileSync('git', ['add', '.']);
+  for (const arch of ['x86_64', 'aarch64']) {
+    for (const channel of ['release', 'nightly']) {
+      const opts = { dependencies: manifest, job: 'workflow.yml#flatpak', configuration: { arch, channel, tv: 'Manual' } };
+      const pristine = sourceKey(opts);
+      fs.writeFileSync(manifest, original.replace('TESTS=OFF', 'TESTS=OFF\n      - -DVJ_TV_DEFAULT=Manual')
+        .replace('CHANNEL=release', 'CHANNEL=' + channel));
+      assert.notEqual(sourceKey(opts), pristine, 'generated manifest bytes really change the key');
+      execFileSync('bash', ['-c', restore[1]]);
+      assert.equal(sourceKey(opts), pristine, 'save finds the same key as the next pristine restore');
+    }
+  }
+});
+test('cross-ref GL recovery verifies the source run, input key, archive digests and restored evidence', async t => {
+  const { importCheckpoint, digest } = require('../checkpoint.cjs');
+  const dir = fixture(t), oldCwd = process.cwd(), oldFetch = global.fetch;
+  const savedEnv = { ...process.env };
+  process.chdir(dir);
+  t.after(() => {
+    process.chdir(oldCwd); global.fetch = oldFetch;
+    for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+    Object.assign(process.env, savedEnv);
+  });
+  fs.mkdirSync('glq'); fs.writeFileSync('glq/results.json', '{"passed":"original evidence"}');
+  const receipt = { schema: 1, complete: true, key: 'same-inputs', repository: 'owner/repo', files: inventory(['glq']) };
+  fs.writeFileSync('origin.json', JSON.stringify(receipt));
+  const python = process.platform === 'win32' ? 'python' : 'python3';
+  execFileSync(python, ['-c', 'import zipfile; z=zipfile.ZipFile("origin.zip","w"); z.write("origin.json"); z.close(); z=zipfile.ZipFile("evidence.zip","w"); z.write("glq/results.json","results.json"); z.close()']);
+  const origin = fs.readFileSync('origin.zip'), evidence = fs.readFileSync('evidence.zip');
+  fs.rmSync('glq', { recursive: true });
+  Object.assign(process.env, { GITHUB_REPOSITORY: 'owner/repo', GITHUB_API_URL: 'https://fixture.invalid',
+    CHECKPOINT_SOURCE_RUNS: '[123]', CHECKPOINT_PATHS: 'glq', CHECKPOINT_KEY: 'same-inputs',
+    CHECKPOINT_LANE: 'gl-test', CHECKPOINT_ARTIFACT: 'gl-evidence', CHECKPOINT_RECEIPT: '.ci-checkpoints/gl-test.json',
+    GITHUB_OUTPUT: path.join(dir, 'output'), GH_TOKEN: 'fixture-token' });
+  const artifacts = [{ id: 1, name: 'checkpoint-origin-gl-test-save', size_in_bytes: origin.length, digest: 'sha256:' + digest(origin) },
+    { id: 2, name: 'gl-evidence', size_in_bytes: evidence.length, digest: 'sha256:' + digest(evidence) }];
+  let repository = 'foreign/repo';
+  global.fetch = async url => {
+    if (url.endsWith('/123')) return new Response(JSON.stringify({ path: '.github/workflows/release.yml', event: 'push', head_repository: { full_name: repository } }));
+    if (url.includes('?per_page')) return new Response(JSON.stringify({ artifacts }));
+    return new Response(url.endsWith('/1/zip') ? origin : evidence);
+  };
+  await importCheckpoint();
+  assert(!fs.existsSync('glq'));
+  repository = 'owner/repo';
+  process.env.CHECKPOINT_KEY = 'changed-inputs';
+  await importCheckpoint();
+  assert(!fs.existsSync('glq'));
+  process.env.CHECKPOINT_KEY = 'same-inputs';
+  artifacts[1].digest = 'sha256:wrong';
+  await assert.rejects(importCheckpoint(), /digest mismatch/);
+  artifacts[1].digest = 'sha256:' + digest(evidence);
+  await importCheckpoint();
+  assert.equal(fs.readFileSync('glq/results.json', 'utf8'), '{"passed":"original evidence"}');
+  assert.deepEqual(JSON.parse(fs.readFileSync('.ci-checkpoints/gl-test.json')).files, receipt.files);
+});

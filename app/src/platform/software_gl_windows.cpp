@@ -58,6 +58,23 @@ std::wstring hardwareD3D12Adapter() {
     FreeLibrary(dxgi);
     return found;
 }
+// Mesa's LLVM JIT can select x86 features that Windows ARM emulation cannot execute.
+// IsWow64Process2 reports the native machine independently of emulated CPUID.
+// x64 emulation may report UNKNOWN (not a 32-bit WOW process), so use this
+// executable's compile target to distinguish it from native ARM64.
+bool emulatedX64OnArm64() {
+#if defined(_M_X64) || defined(__x86_64__)
+    using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    auto query = reinterpret_cast<IsWow64Process2Fn>(GetProcAddress(kernel, "IsWow64Process2"));
+    USHORT process = 0, native = 0;
+    return query && query(GetCurrentProcess(), &process, &native) &&
+           native == IMAGE_FILE_MACHINE_ARM64 &&
+           (process == IMAGE_FILE_MACHINE_AMD64 || process == IMAGE_FILE_MACHINE_UNKNOWN);
+#else
+    return false;
+#endif
+}
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
     int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int)text.size(), nullptr, 0);
@@ -148,6 +165,13 @@ bool retrySoftwareOpenGL(int argc, char** argv, const std::string& dataDir, int&
             entries.push_back(L"LIBGL_ALWAYS_SOFTWARE=true");
             std::fprintf(stderr, "[gl] no hardware Direct3D 12 adapter; bundled Mesa will render in software (llvmpipe)\n");
         }
+    }
+    // https://docs.mesa3d.org/envvars.html#envvar-GALLIUM_OVERRIDE_CPU_CAPS
+    // The release installer diagnostic on windows-11-arm reproduced 0xC000001D with the default
+    // CPU caps and rendered YARC plus the bundled shader successfully with this SSE2 ceiling.
+    if (emulatedX64OnArm64() && !GetEnvironmentVariableW(L"GALLIUM_OVERRIDE_CPU_CAPS", nullptr, 0)) {
+        entries.push_back(L"GALLIUM_OVERRIDE_CPU_CAPS=sse2");
+        std::fprintf(stderr, "[gl] x64 emulation on ARM64: limiting Mesa code generation to SSE2\n");
     }
     std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
     std::vector<wchar_t> environment;
