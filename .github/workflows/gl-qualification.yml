@@ -51,6 +51,10 @@ on:
       - '.github/workflows/librashader.yml'
   workflow_call:
     inputs:
+      source_runs:
+        description: 'JSON array of prior trusted Release runs to reuse matching GL evidence from'
+        type: string
+        default: ''
       preset_set:
         description: "all | smoke"
         type: string
@@ -62,6 +66,10 @@ on:
     - cron: '45 5 * * *'   # nightly, after the develop nightly's own matrix has settled
   workflow_dispatch:
     inputs:
+      source_runs:
+        description: 'JSON array of prior trusted Release runs to reuse matching GL evidence from'
+        type: string
+        default: ''
       diagnostic_os:
         description: 'Diagnostic host for an existing candidate'
         type: choice
@@ -87,6 +95,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   PRESET_SET: ${{ inputs.preset_set || 'all' }}
@@ -133,6 +142,8 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#linux
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-linux
+          source-runs: ${{ inputs.source_runs }}
+          artifact: gl-qualification-linux-x86_64
           paths: |
             glq
       # checkpoint plumbing end
@@ -218,6 +229,8 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#linux
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-linux
+          source-runs: ${{ inputs.source_runs }}
+          artifact: gl-qualification-linux-x86_64
           paths: |
             glq
       # checkpoint plumbing end
@@ -285,6 +298,8 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#windows
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-windows
+          source-runs: ${{ inputs.source_runs }}
+          artifact: gl-qualification-windows-${{ matrix.arch }}
           paths: |
             glq
       # checkpoint plumbing end
@@ -523,6 +538,8 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#windows
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-windows
+          source-runs: ${{ inputs.source_runs }}
+          artifact: gl-qualification-windows-${{ matrix.arch }}
           paths: |
             glq
       # checkpoint plumbing end
@@ -572,6 +589,8 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#macos
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-macos
+          source-runs: ${{ inputs.source_runs }}
+          artifact: gl-qualification-macos-arm64-shard-${{ matrix.shard }}
           paths: |
             glq
       # checkpoint plumbing end
@@ -700,6 +719,8 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#macos
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-macos
+          source-runs: ${{ inputs.source_runs }}
+          artifact: gl-qualification-macos-arm64-shard-${{ matrix.shard }}
           paths: |
             glq
       # checkpoint plumbing end

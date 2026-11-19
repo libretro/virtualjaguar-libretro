@@ -85,3 +85,46 @@ test('production dependency profiles separate signing tooling from compilation',
   assert(!mac.includes('app/packaging/windows/package.sh'));
   assert(selected('release-build').includes('jni/Android.mk'));
 });
+test('cross-ref GL recovery verifies the source run, input key, archive digests and restored evidence', async t => {
+  const { importCheckpoint, digest } = require('../checkpoint.cjs');
+  const dir = fixture(t), oldCwd = process.cwd(), oldFetch = global.fetch;
+  const savedEnv = { ...process.env };
+  process.chdir(dir);
+  t.after(() => {
+    process.chdir(oldCwd); global.fetch = oldFetch;
+    for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+    Object.assign(process.env, savedEnv);
+  });
+  fs.mkdirSync('glq'); fs.writeFileSync('glq/results.json', '{"passed":"original evidence"}');
+  const receipt = { schema: 1, complete: true, key: 'same-inputs', repository: 'owner/repo', files: inventory(['glq']) };
+  fs.writeFileSync('origin.json', JSON.stringify(receipt));
+  const python = process.platform === 'win32' ? 'python' : 'python3';
+  execFileSync(python, ['-c', 'import zipfile; z=zipfile.ZipFile("origin.zip","w"); z.write("origin.json"); z.close(); z=zipfile.ZipFile("evidence.zip","w"); z.write("glq/results.json","results.json"); z.close()']);
+  const origin = fs.readFileSync('origin.zip'), evidence = fs.readFileSync('evidence.zip');
+  fs.rmSync('glq', { recursive: true });
+  Object.assign(process.env, { GITHUB_REPOSITORY: 'owner/repo', GITHUB_API_URL: 'https://fixture.invalid',
+    CHECKPOINT_SOURCE_RUNS: '[123]', CHECKPOINT_PATHS: 'glq', CHECKPOINT_KEY: 'same-inputs',
+    CHECKPOINT_LANE: 'gl-test', CHECKPOINT_ARTIFACT: 'gl-evidence', CHECKPOINT_RECEIPT: '.ci-checkpoints/gl-test.json',
+    GITHUB_OUTPUT: path.join(dir, 'output'), GH_TOKEN: 'fixture-token' });
+  const artifacts = [{ id: 1, name: 'checkpoint-origin-gl-test-save', size_in_bytes: origin.length, digest: 'sha256:' + digest(origin) },
+    { id: 2, name: 'gl-evidence', size_in_bytes: evidence.length, digest: 'sha256:' + digest(evidence) }];
+  let repository = 'foreign/repo';
+  global.fetch = async url => {
+    if (url.endsWith('/123')) return new Response(JSON.stringify({ path: '.github/workflows/release.yml', event: 'push', head_repository: { full_name: repository } }));
+    if (url.includes('?per_page')) return new Response(JSON.stringify({ artifacts }));
+    return new Response(url.endsWith('/1/zip') ? origin : evidence);
+  };
+  await importCheckpoint();
+  assert(!fs.existsSync('glq'));
+  repository = 'owner/repo';
+  process.env.CHECKPOINT_KEY = 'changed-inputs';
+  await importCheckpoint();
+  assert(!fs.existsSync('glq'));
+  process.env.CHECKPOINT_KEY = 'same-inputs';
+  artifacts[1].digest = 'sha256:wrong';
+  await assert.rejects(importCheckpoint(), /digest mismatch/);
+  artifacts[1].digest = 'sha256:' + digest(evidence);
+  await importCheckpoint();
+  assert.equal(fs.readFileSync('glq/results.json', 'utf8'), '{"passed":"original evidence"}');
+  assert.deepEqual(JSON.parse(fs.readFileSync('.ci-checkpoints/gl-test.json')).files, receipt.files);
+});

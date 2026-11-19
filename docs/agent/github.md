@@ -251,6 +251,12 @@ passing preset results under the same input key. Its next attempt rechecks the p
 retries failed or missing presets. Timed-out macOS launches also get one serial retry after the
 parallel workers finish, with the original log retained. Changed GL inputs invalidate those results.
 
+For GL qualification, Release also discovers the previous runs on the same release branch. A
+later tag can import matching GL evidence from that branch's artifacts across GitHub cache ref
+boundaries. The source run must belong to this repository's Release workflow, its checkpoint key
+must match, and both archive digests and the individual restored file hashes must verify. This
+also allows a failed overall workflow to retain its independently passing shader checkpoints.
+
 Caches remain subject to GitHub branch scoping and eviction. A missing cache runs the checks.
 Set or change the repository variable `CI_CHECKPOINT_EPOCH` to require a fresh baseline, including
 when deliberately refreshing external toolchains or test resources. Lightweight source validation,

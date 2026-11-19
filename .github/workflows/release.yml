@@ -47,6 +47,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # Tag pushes always run to completion — a release build must never be
 # cancelled.  Develop pushes cancel superseded runs, because only the newest
@@ -68,6 +69,8 @@ jobs:
   guard:
     if: ${{ !inputs.verification_run }}
     name: Check dispatch ref
+    outputs:
+      previous_runs: ${{ steps.previous.outputs.runs }}
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       # Debounce for the rolling nightly.  A burst of merges to develop would
@@ -85,6 +88,18 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      - name: Locate previous release checkpoint artifacts
+        id: previous
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const branch = context.ref.startsWith('refs/tags/')
+              ? 'release/' + context.ref.slice('refs/tags/'.length) : context.ref.slice('refs/heads/'.length);
+            const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id:'release.yml', branch, event:'push', per_page:20});
+            const runs = data.workflow_runs.filter(r => r.id !== context.runId && r.head_repository?.full_name === `${context.repo.owner}/${context.repo.repo}`)
+              .slice(0,10).map(r => r.id);
+            core.setOutput('runs',JSON.stringify(runs));
+
       - name: Release preflight before the platform matrix
         run: |
           node --test .github/scripts/tests/checkpoint.test.cjs .github/scripts/tests/release-cores.test.cjs .github/scripts/tests/release-packages.test.cjs
@@ -822,6 +837,7 @@ jobs:
     uses: ./.github/workflows/gl-qualification.yml
     with:
       preset_set: all
+      source_runs: ${{ needs.guard.outputs.previous_runs }}
 
   # ----------------------------------------------------------------
   # Stage (#1151): flatten every artifact into release/, write

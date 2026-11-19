@@ -22,6 +22,12 @@ inputs:
   configuration:
     description: Non-secret build options, release label and cache epoch
     default: ''
+  source-runs:
+    description: Trusted prior workflow run IDs whose artifacts may supply the same checkpoint across refs
+    default: ''
+  artifact:
+    description: Artifact holding the checkpoint output directory for cross-run restoration
+    default: ''
   partial:
     description: Preserve passing individual GL results from a failed shard
     default: 'false'
@@ -53,6 +59,18 @@ runs:
         path: ${{ steps.key.outputs.paths }}
         key: ${{ steps.key.outputs.key }}
         restore-keys: ${{ inputs.partial == 'true' && format('{0}-partial-', steps.key.outputs.key) || '' }}
+    - id: import
+      if: ${{ inputs.mode == 'restore' && steps.restore.outputs.cache-matched-key == '' && inputs.source-runs != '' && inputs.artifact != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CHECKPOINT_SOURCE_RUNS: ${{ inputs.source-runs }}
+        CHECKPOINT_ARTIFACT: ${{ inputs.artifact }}
+        CHECKPOINT_LANE: ${{ inputs.lane }}
+        CHECKPOINT_KEY: ${{ steps.key.outputs.key }}
+        CHECKPOINT_PATHS: ${{ inputs.paths }}
+        CHECKPOINT_RECEIPT: ${{ steps.key.outputs.receipt }}
+      run: node .github/scripts/checkpoint.cjs import
     - id: receipt
       if: ${{ !cancelled() }}
       shell: bash
@@ -61,7 +79,7 @@ runs:
         CHECKPOINT_KEY: ${{ steps.key.outputs.key }}
         CHECKPOINT_PATHS: ${{ inputs.paths }}
         CHECKPOINT_RECEIPT: ${{ steps.key.outputs.receipt }}
-        CHECKPOINT_RESTORED: ${{ steps.restore.outputs.cache-matched-key != '' }}
+        CHECKPOINT_RESTORED: ${{ steps.restore.outputs.cache-matched-key != '' || steps.import.outputs.imported == 'true' }}
         CHECKPOINT_PARTIAL: ${{ inputs.partial }}
         CHECKPOINT_SUCCESS: ${{ job.status == 'success' }}
       run: node .github/scripts/checkpoint.cjs receipt
@@ -71,7 +89,7 @@ runs:
         path: ${{ steps.key.outputs.paths }}
         key: ${{ inputs.partial == 'true' && job.status != 'success' && format('{0}-partial-{1}-{2}', steps.key.outputs.key, github.run_id, github.run_attempt) || steps.key.outputs.key }}
     - name: Retain the checkpoint provenance
-      if: ${{ !cancelled() && (inputs.mode == 'save' || steps.restore.outputs.cache-matched-key != '') }}
+      if: ${{ !cancelled() && (inputs.mode == 'save' || steps.restore.outputs.cache-matched-key != '' || steps.import.outputs.imported == 'true') }}
       uses: actions/upload-artifact@v7
       with:
         name: checkpoint-origin-${{ inputs.lane }}-${{ inputs.mode }}
