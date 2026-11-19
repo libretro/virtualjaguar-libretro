@@ -36,6 +36,10 @@ on:
     branches: [develop, 'release/**']
   workflow_dispatch:
     inputs:
+      verification_run:
+        description: 'Recheck signatures of an existing Release run with the current verifier, without building or publishing'
+        type: string
+        default: ''
       dry_run:
         description: "Dry run: build, stage, sign, attest and verify on this branch; publish nothing"
         type: boolean
@@ -62,6 +66,7 @@ jobs:
   # ref one of the two publishing jobs accepts.
   # ----------------------------------------------------------------
   guard:
+    if: ${{ !inputs.verification_run }}
     name: Check dispatch ref
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
@@ -1488,3 +1493,52 @@ jobs:
             echo "::warning::could not pin issue #${NUM} (already pinned, 3-pin cap, or permission)"
 
           echo "==> Tracking issue: ${GITHUB_SERVER_URL}/${REPO}/issues/${NUM}"
+
+  recover-signatures:
+    name: Recheck an existing staged release
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verification_run != '' }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate the source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.verification_run }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || exit 1
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN")
+          [ "$(jq -r .path <<< "$run")" = .github/workflows/release.yml ]
+          [ "$(jq -r .event <<< "$run")" = push ]
+          [ "$(jq -r .head_repository.full_name <<< "$run")" = "$GITHUB_REPOSITORY" ]
+          echo "Verifying existing artifacts from run $SOURCE_RUN, commit $(jq -r .head_sha <<< "$run")" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.verification_run }}
+          name: release-staged
+          path: release
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.verification_run }}
+          name: release-signing-status
+          path: signing-status
+      - name: Verification tools
+        run: brew install minisign osslsigncode
+      - name: Verify signatures and original attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOWS_APP_EXPECT: signed
+          WINDOWS_EXPECT: signed
+        run: bash scripts/release/verify.sh release signing-status strict signing-table.md
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: recovery-signing-table
+          path: signing-table.md

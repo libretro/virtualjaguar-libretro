@@ -195,7 +195,7 @@ jobs:
         mode: restore
         lane: core-tests-${{ matrix.config.displayTargetName }}
         workflow-job: .github/workflows/c-cpp.yml#build
-        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.VJ_ROM_GH_REPO != '' || secrets.VJ_ROM_ENDPOINT != '' }}
         dependencies: |
           src
           libretro.c
@@ -511,7 +511,7 @@ jobs:
         mode: save
         lane: core-tests-${{ matrix.config.displayTargetName }}
         workflow-job: .github/workflows/c-cpp.yml#build
-        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
+        configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.VJ_ROM_GH_REPO != '' || secrets.VJ_ROM_ENDPOINT != '' }}
         dependencies: |
           src
           libretro.c
