@@ -1,3 +1,12 @@
+Virtual Jaguar v3.13.1 libretro
+=============================
+
+Fix x64 Mesa startup under Windows ARM emulation and long Authenticode reports.
+Reuse verified CI build/test checkpoints and recover release phases independently.
+Includes the v3.13.0 app debugger, IPS patches, server libraries and signed downloads.
+
+Full notes: docs/RELEASE_NOTES_v3.13.1.md
+
 Virtual Jaguar v3.13.0 libretro
 ------------------------------
 
