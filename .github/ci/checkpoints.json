@@ -346,7 +346,6 @@
     "test",
     ":(exclude)test/release",
     ":(exclude)test/roms/private",
-    ".github/ci",
     ".github/scripts/checkpoint.cjs",
     ".github/actions/reuse-checkpoint",
     "jni",
