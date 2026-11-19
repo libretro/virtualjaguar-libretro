@@ -165,7 +165,7 @@ jobs:
   librashader:
     name: librashader runtime
     needs: [meta]
-    if: needs.meta.outputs.run == 'true'
+    if: needs.meta.outputs.run == 'true' && inputs.platform != 'flatpak'
     uses: ./.github/workflows/librashader.yml
     with:
       targets: >-
