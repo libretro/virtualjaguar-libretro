@@ -62,6 +62,10 @@ on:
     - cron: '45 5 * * *'   # nightly, after the develop nightly's own matrix has settled
   workflow_dispatch:
     inputs:
+      diagnostic_run:
+        description: 'Existing Release run to diagnose the x64 installer on Windows ARM without rebuilding'
+        type: string
+        default: ''
       preset_set:
         description: "Presets to render"
         type: choice
@@ -96,6 +100,7 @@ jobs:
   # target, seconds on a hit).  Its own artifact names: release.yml runs this workflow beside
   # app-package.yml, which calls librashader.yml too, and two uploads of one name fail the run.
   librashader:
+    if: ${{ !inputs.diagnostic_run }}
     name: librashader runtime
     uses: ./.github/workflows/librashader.yml
     with:
@@ -104,6 +109,7 @@ jobs:
 
   # ------------------------------------------------------------------------------------------
   linux:
+    if: ${{ !inputs.diagnostic_run }}
     name: Linux x86_64 (Xvfb, llvmpipe)
     needs: [librashader]
     runs-on: ubuntu-24.04
@@ -186,6 +192,7 @@ jobs:
 
   # ------------------------------------------------------------------------------------------
   windows:
+    if: ${{ !inputs.diagnostic_run }}
     name: Windows ${{ matrix.arch }} (bundled Mesa fallback)
     needs: [librashader]
     runs-on: ${{ matrix.os }}
@@ -462,6 +469,7 @@ jobs:
   # A preset that alone takes over SLOW_LIMIT seconds here is a `macos-arm64 slow` line in
   # known-failures.txt (its measured time and run): stopped at the limit and reported, not rendered.
   macos:
+    if: ${{ !inputs.diagnostic_run }}
     name: macOS arm64 (Apple OpenGL 4.1), shard ${{ matrix.shard }}/3
     needs: [librashader]
     runs-on: macos-latest
@@ -603,7 +611,7 @@ jobs:
   macos-summary:
     name: macOS arm64 (Apple OpenGL 4.1)
     needs: [macos]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.diagnostic_run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -628,3 +636,49 @@ jobs:
           name: gl-qualification-macos-arm64
           path: glq
           if-no-files-found: error
+
+  diagnose-windows-arm:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.diagnostic_run != '' }}
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Validate and download the existing candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.diagnostic_run }}
+        run: |
+          if ($env:SOURCE_RUN -notmatch '^[0-9]+$') { throw 'Expected a numeric run ID' }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $run.path -ne '.github/workflows/release.yml' -or $run.event -ne 'push' -or $run.head_repository.full_name -ne $env:GITHUB_REPOSITORY) { throw 'Expected a trusted Release push run' }
+          gh run download $env:SOURCE_RUN --repo $env:GITHUB_REPOSITORY --name release-staged --dir release
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download staged artifacts' }
+          "CANDIDATE_TAG=$($run.head_branch)" >> $env:GITHUB_ENV
+      - name: Compare default and SSE2 Mesa code generation
+        shell: pwsh
+        run: |
+          $env:GALLIUM_DUMP_CPU = '1'
+          foreach ($mode in @('default', 'sse2')) {
+            if ($mode -eq 'sse2') { $env:GALLIUM_OVERRIDE_CPU_CAPS = 'sse2' }
+            else { Remove-Item Env:GALLIUM_OVERRIDE_CPU_CAPS -ErrorAction SilentlyContinue }
+            try {
+              ./scripts/release/qualify-windows-installer.ps1 -ReleaseDirectory release -Tag $env:CANDIDATE_TAG -Architecture x64 -Content test/roms/yarc.j64 -OutputDirectory "diagnostic/$mode"
+              "PASS $mode" >> $env:GITHUB_STEP_SUMMARY
+            } catch {
+              "FAIL $mode $_" >> $env:GITHUB_STEP_SUMMARY
+            }
+          }
+          Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-15)} -ErrorAction SilentlyContinue |
+            Where-Object { $_.Id -in @(1000, 1001) } | Format-List TimeCreated,Message | Out-File diagnostic/crash-events.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-arm-diagnostic
+          path: diagnostic/

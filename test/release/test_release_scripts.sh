@@ -156,6 +156,25 @@ gate strict $NOPUB WINDOWS_EXPECT=signed
 check_rc "flipping the Windows core/tool expectation makes the unsigned core DLL fail" "$RC" 1 "$OUT"
 check_has "names the unsigned core DLL" "$OUT" "::error title=release signing gate::virtualjaguar_libretro-windows-x86_64.dll:"
 check_lacks "the app packages keep their own expectation" "$OUT" "::error title=release signing gate::VirtualJaguar-dev-windows-x64"
+# A long successful osslsigncode report must be consumed completely under pipefail.
+mkdir -p "$T/signature-tools"
+cat > "$T/signature-tools/osslsigncode" <<'SH'
+#!/usr/bin/env bash
+printf 'Signer\x27s certificate\nSubject: /CN=Fixture Signer\nTimestamp Server Signature verification: ok\n'
+head -c 1048576 /dev/zero | tr '\0' x
+printf '\n'
+exit "${VJ_FAKE_SIGNATURE_EXIT:-0}"
+SH
+chmod +x "$T/signature-tools/osslsigncode"
+# shellcheck disable=SC2086
+gate warn $NOPUB "PATH=$T/signature-tools:$PATH" WINDOWS_APP_EXPECT=signed WINDOWS_EXPECT=signed
+check_lacks "long valid signature report never trips pipefail" "$OUT" 'Broken pipe'
+check_has "long valid signature report accepted" "$OUT" 'Authenticode (Fixture Signer)'
+check_lacks "long valid signature is never labelled invalid" "$OUT" 'invalid (Fixture Signer)'
+# shellcheck disable=SC2086
+gate warn $NOPUB "PATH=$T/signature-tools:$PATH" VJ_FAKE_SIGNATURE_EXIT=1 WINDOWS_APP_EXPECT=signed
+check_has "a failed verification stays invalid even with a timestamp line" "$OUT" 'invalid (Fixture Signer)'
+
 if [ "$OS" = Darwin ]; then
   # shellcheck disable=SC2086
   gate strict $NOPUB

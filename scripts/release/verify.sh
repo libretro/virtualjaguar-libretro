@@ -95,11 +95,11 @@ pe_signature() { # <file> -> "Authenticode (CN)" | "none" | "invalid (...)" | "u
   if out=$(osslsigncode verify -CAfile "$root" -TSA-CAfile "$root" -in "$1" 2>&1); then
     verified=true
   fi
-  if printf '%s\n' "$out" | grep -qi 'No signature found'; then echo "none"; return; fi
-  cn=$(printf '%s\n' "$out" | sed -n '/Signer.s certificate/,/Subject/{s/.*Subject: .*CN=\([^/,]*\).*/\1/p;}' | head -1)
-  if [ "$verified" = true ] && printf '%s\n' "$out" | grep -q 'Timestamp Server Signature verification: ok'; then
+  if grep -i 'No signature found' <<< "$out" >/dev/null; then echo "none"; return; fi
+  cn=$(sed -n '/Signer.s certificate/,/Subject/{s/.*Subject: .*CN=\([^/,]*\).*/\1/p;}' <<< "$out" | sed -n '1p')
+  if [ "$verified" = true ] && grep 'Timestamp Server Signature verification: ok' <<< "$out" >/dev/null; then
     echo "Authenticode (${cn:-?})"
-  elif printf '%s\n' "$out" | grep -qi 'Subject:'; then
+  elif grep -i 'Subject:' <<< "$out" >/dev/null; then
     echo "invalid (${cn:-?})"
   else
     echo "none"
