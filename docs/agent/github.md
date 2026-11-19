@@ -246,7 +246,8 @@ Windows install trees, macOS/Linux/Flatpak packages and graphics qualification. 
 output is checked against its saved SHA-256 inventory. The original commit/run/attempt appears in
 the job summary and `checkpoint-origin-*` artifacts. Compiled core metadata includes
 `built_from_sha` alongside the commit whose unchanged inputs were validated for this run.
-Failed checks do not produce complete checkpoints. A failed GL shard can preserve individual
+Failed checks do not produce complete checkpoints. GL progress is written atomically after each
+completed preset, and cancellation cleanup can preserve an incomplete checkpoint. A failed GL shard can preserve individual
 passing preset results under the same input key. Its next attempt rechecks the plain launch and
 retries failed or missing presets. Timed-out macOS launches also get one serial retry after the
 parallel workers finish, with the original log retained. Changed GL inputs invalidate those results.

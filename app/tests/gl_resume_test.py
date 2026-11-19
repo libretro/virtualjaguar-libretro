@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("gl_qualify", Path(__file__).resolve().parents[1] / "test/gl-qualification/gl_qualify.py")
 gl = importlib.util.module_from_spec(spec)
@@ -61,6 +63,17 @@ class ResumeTests(unittest.TestCase):
             return {'preset': preset, 'errors': ['timeout again'], 'verdict': 'failed', 'notes': []}
         retried = gl.retry_timeouts(results, failing_one)
         self.assertEqual(retried[2]['errors'], ['timeout again'])
+
+    def test_progress_is_atomic_and_retains_only_completed_results(self):
+        with tempfile.TemporaryDirectory() as folder:
+            args = SimpleNamespace(out=Path(folder), os='macos', shard='0/1')
+            with patch.dict('os.environ', {'VJ_CHECKPOINT_KEY': 'inputs'}):
+                gl.write_progress(args, ['done', 'pending'], 2, [{'preset': 'done', 'errors': []}])
+            report = json.loads((args.out / 'results.json').read_text())
+            self.assertEqual(report['selected'], ['done', 'pending'])
+            self.assertEqual(report['results'], [{'preset': 'done', 'errors': []}])
+            self.assertEqual(report['checkpoint_key'], 'inputs')
+            self.assertFalse((args.out / 'results.json.tmp').exists())
 
     def test_no_report_starts_fresh(self):
         self.assertEqual(gl.resume_results(Path('/no-such-report.json'), None, 'macos', '0/1', []), {})

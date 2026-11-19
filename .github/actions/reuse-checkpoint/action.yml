@@ -19,6 +19,9 @@ inputs:
   workflow-job:
     description: Workflow file and job ID, separated by a hash
     required: true
+  matrix:
+    description: The selected matrix row, independently of the other rows
+    default: '{}'
   configuration:
     description: Non-secret build options, release label and cache epoch
     default: ''
@@ -42,7 +45,7 @@ runs:
   using: composite
   steps:
     - id: key
-      if: ${{ !cancelled() }}
+      if: ${{ always() }}
       shell: bash
       env:
         CHECKPOINT_LANE: ${{ inputs.lane }}
@@ -50,6 +53,7 @@ runs:
         CHECKPOINT_DEPENDENCIES: ${{ inputs.dependencies }}
         CHECKPOINT_PATHS: ${{ inputs.paths }}
         CHECKPOINT_JOB: ${{ inputs.workflow-job }}
+        CHECKPOINT_MATRIX: ${{ inputs.matrix }}
         CHECKPOINT_CONFIGURATION: ${{ inputs.configuration }}
       run: node .github/scripts/checkpoint.cjs key
     - id: restore
@@ -72,7 +76,7 @@ runs:
         CHECKPOINT_RECEIPT: ${{ steps.key.outputs.receipt }}
       run: node .github/scripts/checkpoint.cjs import
     - id: receipt
-      if: ${{ !cancelled() }}
+      if: ${{ always() && steps.key.outcome == 'success' }}
       shell: bash
       env:
         CHECKPOINT_MODE: ${{ inputs.mode }}
@@ -83,13 +87,13 @@ runs:
         CHECKPOINT_PARTIAL: ${{ inputs.partial }}
         CHECKPOINT_SUCCESS: ${{ job.status == 'success' }}
       run: node .github/scripts/checkpoint.cjs receipt
-    - if: ${{ !cancelled() && inputs.mode == 'save' }}
+    - if: ${{ always() && inputs.mode == 'save' && steps.receipt.outcome == 'success' }}
       uses: actions/cache/save@v5
       with:
         path: ${{ steps.key.outputs.paths }}
         key: ${{ inputs.partial == 'true' && job.status != 'success' && format('{0}-partial-{1}-{2}', steps.key.outputs.key, github.run_id, github.run_attempt) || steps.key.outputs.key }}
     - name: Retain the checkpoint provenance
-      if: ${{ !cancelled() && (inputs.mode == 'save' || steps.restore.outputs.cache-matched-key != '' || steps.import.outputs.imported == 'true') }}
+      if: ${{ always() && steps.receipt.outcome == 'success' && (inputs.mode == 'save' || steps.restore.outputs.cache-matched-key != '' || steps.import.outputs.imported == 'true') }}
       uses: actions/upload-artifact@v7
       with:
         name: checkpoint-origin-${{ inputs.lane }}-${{ inputs.mode }}

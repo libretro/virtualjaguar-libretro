@@ -142,6 +142,7 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#linux
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-linux
+          matrix: ${{ toJSON(matrix) }}
           source-runs: ${{ inputs.source_runs }}
           artifact: gl-qualification-linux-x86_64
           paths: |
@@ -220,7 +221,7 @@ jobs:
 
       # checkpoint plumbing begin
       - name: Save successful checkpoint
-        if: ${{ !cancelled() && steps.checkpoint.outputs.hit != 'true' && hashFiles('glq/results.json') != '' }}
+        if: ${{ always() && steps.checkpoint.outputs.hit != 'true' && hashFiles('glq/results.json') != '' }}
         uses: ./.github/actions/reuse-checkpoint
         with:
           mode: save
@@ -229,6 +230,7 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#linux
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-linux
+          matrix: ${{ toJSON(matrix) }}
           source-runs: ${{ inputs.source_runs }}
           artifact: gl-qualification-linux-x86_64
           paths: |
@@ -298,6 +300,7 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#windows
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-windows
+          matrix: ${{ toJSON(matrix) }}
           source-runs: ${{ inputs.source_runs }}
           artifact: gl-qualification-windows-${{ matrix.arch }}
           paths: |
@@ -529,7 +532,7 @@ jobs:
 
       # checkpoint plumbing begin
       - name: Save successful checkpoint
-        if: ${{ !cancelled() && steps.checkpoint.outputs.hit != 'true' && hashFiles('glq/results.json') != '' }}
+        if: ${{ always() && steps.checkpoint.outputs.hit != 'true' && hashFiles('glq/results.json') != '' }}
         uses: ./.github/actions/reuse-checkpoint
         with:
           mode: save
@@ -538,6 +541,7 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#windows
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-windows
+          matrix: ${{ toJSON(matrix) }}
           source-runs: ${{ inputs.source_runs }}
           artifact: gl-qualification-windows-${{ matrix.arch }}
           paths: |
@@ -589,6 +593,7 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#macos
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-macos
+          matrix: ${{ toJSON(matrix) }}
           source-runs: ${{ inputs.source_runs }}
           artifact: gl-qualification-macos-arm64-shard-${{ matrix.shard }}
           paths: |
@@ -710,7 +715,7 @@ jobs:
 
       # checkpoint plumbing begin
       - name: Save successful checkpoint
-        if: ${{ !cancelled() && steps.checkpoint.outputs.hit != 'true' && hashFiles('glq/results.json') != '' }}
+        if: ${{ always() && steps.checkpoint.outputs.hit != 'true' && hashFiles('glq/results.json') != '' }}
         uses: ./.github/actions/reuse-checkpoint
         with:
           mode: save
@@ -719,6 +724,7 @@ jobs:
           workflow-job: .github/workflows/gl-qualification.yml#macos
           configuration: ${{ inputs.preset_set }}-${{ inputs.refresh_goldens && github.run_id || 'no-refresh' }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: gl-qualification-macos
+          matrix: ${{ toJSON(matrix) }}
           source-runs: ${{ inputs.source_runs }}
           artifact: gl-qualification-macos-arm64-shard-${{ matrix.shard }}
           paths: |

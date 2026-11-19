@@ -233,6 +233,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#macos
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-macos
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             out
             signing-status
@@ -390,6 +391,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#macos
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-macos
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             out
             signing-status
@@ -476,6 +478,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#windows
           configuration: ${{ inputs.release_tag }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-windows
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             stage
             stage-tests
@@ -618,6 +621,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#windows
           configuration: ${{ inputs.release_tag }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-windows
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             stage
             stage-tests
@@ -984,6 +988,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#flatpak
           configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-flatpak
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
       # checkpoint plumbing end
@@ -1099,6 +1104,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#flatpak
           configuration: ${{ inputs.release_tag }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-flatpak
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             VirtualJaguar-${{ needs.meta.outputs.label }}-linux-${{ matrix.arch }}.flatpak
       # checkpoint plumbing end
@@ -1149,6 +1155,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#linux
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-linux
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             out
             signing-status
@@ -1297,6 +1304,7 @@ jobs:
           workflow-job: .github/workflows/app-package.yml#linux
           configuration: ${{ inputs.release_tag }}-${{ inputs.sign }}-${{ vars.DISCORD_APP_ID }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: app-package-linux
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             out
             signing-status

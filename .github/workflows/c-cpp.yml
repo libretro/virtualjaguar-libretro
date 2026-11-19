@@ -197,6 +197,7 @@ jobs:
         workflow-job: .github/workflows/c-cpp.yml#build
         configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.VJ_ROM_GH_REPO != '' || secrets.VJ_ROM_ENDPOINT != '' }}
         profile: c-cpp-build
+        matrix: ${{ toJSON(matrix) }}
         paths: |
           .ci-native-artifact
     # checkpoint plumbing end
@@ -494,6 +495,7 @@ jobs:
         workflow-job: .github/workflows/c-cpp.yml#build
         configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}-${{ secrets.VJ_ROM_GH_REPO != '' || secrets.VJ_ROM_ENDPOINT != '' }}
         profile: c-cpp-build
+        matrix: ${{ toJSON(matrix) }}
         paths: |
           .ci-native-artifact
     # checkpoint plumbing end

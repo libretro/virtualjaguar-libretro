@@ -681,6 +681,7 @@ def merge_main(args):
                     if i != 0:
                         r["preset"] = "off (shard %d)" % i
                     results.append(r)
+                write_progress(args, presets, presets_total, results)
                 continue
             if r["preset"] != "(aborted)":
                 if r["preset"] in seen:
@@ -705,12 +706,23 @@ def merge_main(args):
                                                      meta["leg"], meta["slow_threshold"])
     (out / "results.json").write_text(json.dumps({"os": args.os, "shards": want, "presets_total": total,
                                                   "results": results}, indent=1), encoding="utf-8")
+    os.replace(args.out / "results.json.tmp", args.out / "results.json")
     return 1 if write_report(out, meta, results, args.summary) else 0
 
 
 # ---------------------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------------------
+def write_progress(args, presets, presets_total, results):
+    """Keep completed preset judgements available if the runner stops this process."""
+    report = {"checkpoint_key": os.environ.get("VJ_CHECKPOINT_KEY"), "os": args.os,
+              "shard": args.shard, "selected": presets, "presets_total": presets_total,
+              "results": results}
+    temporary = args.out / "results.json.tmp"
+    temporary.write_text(json.dumps(report, indent=1), encoding="utf-8")
+    os.replace(temporary, args.out / "results.json")
+
+
 def retry_timeouts(results, run_one, reset=None):
     """Retry timed-out launches serially after every parallel worker has stopped."""
     retried = list(results)
@@ -866,6 +878,7 @@ def main():
           ("  ERRORS: " + "; ".join(off["errors"])) if off["errors"] else ""), flush=True)
 
     results = [off]
+    write_progress(args, presets, presets_total, results)
     if not off["errors"]:
         def one(rel):
             if rel in resumed:
@@ -934,7 +947,7 @@ def main():
             "known_exit_hang": args.known_exit_hang, "slow_threshold": args.slow_threshold,
             "leg": args.leg or args.os, "settings": settings,
             "slow_statement": slow_list_statement(args.slow_listed, args.leg, args.slow_threshold) if args.slow_threshold else ""}
-    (args.out / "results.json").write_text(json.dumps({
+    (args.out / "results.json.tmp").write_text(json.dumps({
         "checkpoint_key": os.environ.get("VJ_CHECKPOINT_KEY"),
         "os": args.os, "exe": str(args.exe), "frame": args.frame, "presets": len(presets),
         "presets_total": presets_total, "shard": args.shard, "selected": presets, "preset_set": meta["set"],

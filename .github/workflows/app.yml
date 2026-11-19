@@ -125,6 +125,7 @@ jobs:
         workflow-job: .github/workflows/app.yml#app
         configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
         profile: app-app
+        matrix: ${{ toJSON(matrix) }}
         paths: |
           .ci-app-artifact
     # checkpoint plumbing end
@@ -248,6 +249,7 @@ jobs:
         workflow-job: .github/workflows/app.yml#app
         configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
         profile: app-app
+        matrix: ${{ toJSON(matrix) }}
         paths: |
           .ci-app-artifact
     # checkpoint plumbing end

@@ -15,11 +15,12 @@ function jobDefinition(text, id) {
   const next = rest.slice(1).search(/\n  [\w-]+:\n/);
   const job = next < 0 ? rest : rest.slice(0, next + 1);
   // These two marker lines surround checkpoint plumbing only. Everything the job actually executes remains hashed.
-  return job.replace(/    +# checkpoint plumbing begin[\s\S]*?    +# checkpoint plumbing end\n/g, '')
+  return job.replace(/^    strategy:\n[\s\S]*?(?=^    [a-zA-Z_-]+:)/m, '')
+    .replace(/    +# checkpoint plumbing begin[\s\S]*?    +# checkpoint plumbing end\n/g, '')
     .replace(/steps\.checkpoint\.outputs\.hit != 'true' && /g, '')
     .replace(/        if: \$\{\{ steps\.checkpoint\.outputs\.hit != 'true' \}\}\n/g, '');
 }
-function sourceKey({ dependencies, job, configuration, runner, outputs }) {
+function sourceKey({ dependencies, job, configuration, runner, outputs, matrix }) {
   const specs = lines(dependencies);
   if (!specs.length) throw new Error('Checkpoint dependencies must be explicit');
   const files = execFileSync('git', ['ls-files', '-z', '--', ...specs]).toString().split('\0').filter(Boolean).sort();
@@ -30,7 +31,7 @@ function sourceKey({ dependencies, job, configuration, runner, outputs }) {
   const inputs = files.map(file => [file, digest(fs.readFileSync(file)), fs.statSync(file).mode & 0o777]);
   // Global env and inputs also affect builds. Hash the header independently of other jobs' commands.
   return digest(JSON.stringify({ schema: 1, inputs, header: workflowText.split('\njobs:\n')[0],
-    job: jobDefinition(workflowText, id), configuration, runner, outputs }));
+    job: jobDefinition(workflowText, id), configuration, runner, outputs, matrix }));
 }
 function inventory(roots) {
   const files = {};
@@ -142,7 +143,7 @@ async function main(command) {
   if (command === 'import') return importCheckpoint();
   if (command === 'key') {
     const key = sourceKey({ dependencies: env.CHECKPOINT_PROFILE ? JSON.parse(fs.readFileSync('.github/ci/checkpoints.json', 'utf8'))[env.CHECKPOINT_PROFILE]?.join('\n') : env.CHECKPOINT_DEPENDENCIES, job: env.CHECKPOINT_JOB,
-      configuration: { requested: env.CHECKPOINT_CONFIGURATION,
+      matrix: env.CHECKPOINT_MATRIX, configuration: { requested: env.CHECKPOINT_CONFIGURATION,
         effective: Object.fromEntries(['LABEL', 'SHORT_VERSION', 'DEB_VERSION', 'CHANNEL', 'TV_DEFAULT', 'DISCORD_APP_ID',
           'MIN_MACOS', 'SMOKE_HASH', 'SMOKE_ROM', 'ARCH', 'PRESET_SET', 'REFRESH_GOLDENS', 'CONTENT_ROM', 'SHOT_FRAME',
           'SHOT_EMU_FRAMES', 'QUALIFY', 'LISTS', 'SLOW_LIMIT', 'SHARDS'].map(name => [name, env[name]])) }, outputs: lines(env.CHECKPOINT_PATHS), runner: [env.RUNNER_OS, env.RUNNER_ARCH, env.ImageOS, env.ImageVersion] });

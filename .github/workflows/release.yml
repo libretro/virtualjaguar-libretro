@@ -405,6 +405,7 @@ jobs:
           workflow-job: .github/workflows/release.yml#build
           configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: release-build
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             ${{ matrix.config.artifact }}
       # checkpoint plumbing end
@@ -456,6 +457,7 @@ jobs:
           workflow-job: .github/workflows/release.yml#build
           configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
           profile: release-build
+          matrix: ${{ toJSON(matrix) }}
           paths: |
             ${{ matrix.config.artifact }}
       # checkpoint plumbing end

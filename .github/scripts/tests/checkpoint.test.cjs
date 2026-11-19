@@ -29,6 +29,16 @@ test('changing signing commands preserves the build key, changing source or comp
   fs.writeFileSync('workflow.yml', fs.readFileSync('workflow.yml', 'utf8').replace('compile-and-test', 'new-compiler-and-test'));
   assert.notEqual(sourceKey(opts), first);
 });
+test('a sibling matrix-row change preserves this row while a selected-row change invalidates it', t => {
+  const dir = fixture(t), old = process.cwd(); process.chdir(dir); t.after(() => process.chdir(old));
+  const workflow = 'name: Test\njobs:\n  build:\n    strategy:\n      matrix:\n        config: [x64, arm64]\n    steps:\n      - run: compile-and-test\n';
+  fs.writeFileSync('workflow.yml', workflow);
+  const opts = { dependencies: 'source.c', job: 'workflow.yml#build', matrix: '{"arch":"x64"}' };
+  const first = sourceKey(opts);
+  fs.writeFileSync('workflow.yml', workflow.replace('x64, arm64', 'x64, a-different-arm-compiler'));
+  assert.equal(sourceKey(opts), first);
+  assert.notEqual(sourceKey({ ...opts, matrix: '{"arch":"arm64"}' }), first);
+});
 test('configuration, runner image and shared env are inputs', t => {
   const dir = fixture(t), old = process.cwd(); process.chdir(dir); t.after(() => process.chdir(old));
   const opts = { dependencies: 'source.c', job: 'workflow.yml#build', configuration: 'x64', runner: ['Windows', 'image-v1'] };
@@ -57,6 +67,21 @@ test('only successful saves create receipts, restored bytes must match, and orig
   fs.writeFileSync(path.join(dir, 'out/binary'), 'tampered');
   assert.notEqual(run('restore', { CHECKPOINT_RESTORED: 'true' }).status, 0);
   assert.notEqual(run('save', { CHECKPOINT_PATHS: 'missing' }).status, 0);
+});
+test('partial checkpoints retain files without approving the whole lane', t => {
+  const dir = fixture(t);
+  fs.mkdirSync(path.join(dir, 'glq')); fs.writeFileSync(path.join(dir, 'glq/results.json'), '{}');
+  const env = { ...process.env, GITHUB_OUTPUT: path.join(dir, 'outputs'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary'),
+    CHECKPOINT_KEY: 'partial-key', CHECKPOINT_PATHS: 'glq', CHECKPOINT_RECEIPT: '.ci-checkpoints/gl.json',
+    GITHUB_SHA: 'original-sha', GITHUB_RUN_ID: '123', GITHUB_REPOSITORY: 'owner/repo',
+    CHECKPOINT_PARTIAL: 'true', CHECKPOINT_SUCCESS: 'false' };
+  for (const mode of ['save', 'restore']) {
+    const result = spawnSync(process.execPath, [script, 'receipt'], { cwd: dir,
+      env: { ...env, CHECKPOINT_MODE: mode, CHECKPOINT_RESTORED: 'true' }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, env.CHECKPOINT_RECEIPT))).complete, false);
+  assert.match(fs.readFileSync(env.GITHUB_OUTPUT, 'utf8'), /hit<<CHECKPOINT_END\nfalse/);
 });
 test('job extraction does not accidentally include later jobs', () => {
   const s = '\njobs:\n  build:\n    steps:\n      - run: build\n  sign:\n    steps:\n      - run: sign\n';
