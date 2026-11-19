@@ -832,6 +832,9 @@ jobs:
   gl-qualification:
     name: GL qualification
     needs: [guard]
+    permissions:
+      contents: read
+      actions: read
     if: ${{ github.ref_type == 'tag' || startsWith(github.ref, 'refs/heads/release/') }}
     uses: ./.github/workflows/gl-qualification.yml
     with:
