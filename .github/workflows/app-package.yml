@@ -971,6 +971,11 @@ jobs:
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
+      # SDK updates rename preinstalled deployments, which image-layer overlayfs
+      # can reject with EXDEV. Docker copies the existing SDK into this volume.
+      # https://docs.docker.com/engine/storage/volumes/#mounting-a-volume-over-existing-data
+      volumes:
+        - /var/lib/flatpak
     env:
       LABEL: ${{ needs.meta.outputs.label }}
       ARCH: ${{ matrix.arch }}
