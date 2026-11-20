@@ -3,7 +3,7 @@ description: Pinned x64-hosted cross toolchain, including Windows ARM64 and COFF
 runs:
   using: composite
   steps:
-    - uses: actions/cache@v5
+    - uses: actions/cache/restore@v5
       id: cache
       with:
         path: ${{ runner.temp }}/llvm-mingw-20261117-ucrt-x86_64
@@ -20,3 +20,8 @@ runs:
           Expand-Archive $zip $env:RUNNER_TEMP
         }
         "$root/bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+    - uses: actions/cache/save@v5
+      if: steps.cache.outputs.cache-hit != 'true'
+      with:
+        path: ${{ runner.temp }}/llvm-mingw-20261117-ucrt-x86_64
+        key: llvm-mingw-20261117-ucrt-x86_64-4d002e330a0f7036

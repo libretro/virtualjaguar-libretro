@@ -61,19 +61,19 @@ jobs:
           cd source
           make -j4 platform=win ARCH=aarch64 BLITTER_SIMD=neon SHARED='-shared -Wl,--no-undefined -Wl,--exclude-all-symbols' RELEASE_DEBUG_INFO=1 TEST_EXPORTS=0 CC=aarch64-w64-mingw32-clang CXX=aarch64-w64-mingw32-clang++
           cd ..
-          mkdir dist
+          mkdir -p arm-dist
           out=virtualjaguar_libretro-windows-arm64.dll
-          cp source/virtualjaguar_libretro.dll "dist/$out"
-          llvm-objcopy --only-keep-debug "dist/$out" "dist/$out.debug"
-          llvm-objcopy --strip-debug --strip-unneeded "dist/$out"
-          (cd dist && llvm-objcopy --add-gnu-debuglink="$out.debug" "$out")
-          tar -C dist -czf dist/virtualjaguar_libretro-windows-arm64-debug.tar.gz "$out.debug"
-          command rm -f "dist/$out.debug"
-          python3 scripts/windows-arm64/check-core.py "dist/$out"
+          cp source/virtualjaguar_libretro.dll "arm-dist/$out"
+          llvm-objcopy --only-keep-debug "arm-dist/$out" "arm-dist/$out.debug"
+          llvm-objcopy --strip-debug --strip-unneeded "arm-dist/$out"
+          (cd arm-dist && llvm-objcopy --add-gnu-debuglink="$out.debug" "$out")
+          tar -C arm-dist -czf arm-dist/virtualjaguar_libretro-windows-arm64-debug.tar.gz "$out.debug"
+          command rm -f "arm-dist/$out.debug"
+          python3 scripts/windows-arm64/check-core.py "arm-dist/$out"
       - uses: ./.github/actions/windows-sign
         with:
           enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.sign }}
-          files-folder: ${{ github.workspace }}\dist
+          files-folder: ${{ github.workspace }}\arm-dist
           description: Virtual Jaguar libretro Windows ARM64 core (${{ inputs.release_tag || 'v3.13.1' }})
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -84,7 +84,10 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-arm-core-addendum
-          path: dist/
+          overwrite: true
+          path: |
+            arm-dist/virtualjaguar_libretro-windows-arm64.dll
+            arm-dist/virtualjaguar_libretro-windows-arm64-debug.tar.gz
           if-no-files-found: error
   native-smoke:
     needs: build
@@ -182,6 +185,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: release-staged-arm-addendum
+          overwrite: true
           path: |
             release/
             signing-table.md
