@@ -377,14 +377,15 @@ jobs:
     - name: Run SIMD blitter tests
       if: ${{ steps.checkpoint.outputs.hit != 'true' && (!matrix.config.emscripten && !matrix.config.android && !matrix.config.cross) }}
       run: |
-        ARCH=$(uname -m)
         CC="${{ matrix.config.cc }}"
+        # MSYS2 can report an x64 shell while clang targets native Windows ARM64.
+        SIMD_TARGET=$($CC -dumpmachine)
         # -DBLITTER_SIMD_<ARCH> is not optional: blitter_simd.h inlines
         # the matching arch header, so an arch .c compiled without its
         # define pulls in the scalar ops and then redefines every one.
-        case "$ARCH" in
-          x86_64|i686|i386)  SIMD_SRC=src/tom/blitter_simd_sse2.c; EXTRA="-msse2 -DBLITTER_SIMD_SSE2" ;;
-          aarch64|arm64)     SIMD_SRC=src/tom/blitter_simd_neon.c;  EXTRA="-DBLITTER_SIMD_NEON" ;;
+        case "$SIMD_TARGET" in
+          x86_64*|i686*|i386*)  SIMD_SRC=src/tom/blitter_simd_sse2.c; EXTRA="-msse2 -DBLITTER_SIMD_SSE2" ;;
+          aarch64*|arm64*)     SIMD_SRC=src/tom/blitter_simd_neon.c;  EXTRA="-DBLITTER_SIMD_NEON" ;;
           *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="-DBLITTER_SIMD_SCALAR" ;;
         esac
 

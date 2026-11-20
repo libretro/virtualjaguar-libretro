@@ -195,3 +195,33 @@ test('Windows ARM64 has native CI, signed cross release and a native release smo
   assert.match(release, /needs\.windows-arm-core-smoke\.result == 'success'/);
   assert.match(release, /name: Windows ARM64 core native smoke/);
 });
+
+test('SIMD tests follow the compiler target even when MSYS2 reports an emulated host', () => {
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/c-cpp.yml'), 'utf8');
+  const section = workflow.split('    - name: Run SIMD blitter tests\n')[1]
+    .split('    - name: Run memory map test\n')[0];
+  const setup = section.split('      run: |\n')[1].split('        echo "==> Testing')[0]
+    .replace('${{ matrix.config.cc }}', 'fake-cc');
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vj-simd-target-'));
+  try {
+    fs.writeFileSync(path.join(temp, 'fake-cc'), '#!/bin/sh\nprintf "%s\\n" "$SIMD_TEST_TRIPLE"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(temp, 'uname'), '#!/bin/sh\nprintf "%s\\n" "$SIMD_TEST_HOST"\n', { mode: 0o755 });
+    for (const [target, host, backend] of [
+      ['aarch64-w64-windows-gnu', 'x86_64', 'neon'],
+      ['arm64-apple-darwin25', 'arm64', 'neon'],
+      ['x86_64-linux-gnu', 'aarch64', 'sse2'],
+      ['i686-w64-mingw32', 'x86_64', 'sse2'],
+      ['riscv64-linux-gnu', 'riscv64', 'scalar'],
+    ]) {
+      const out = execFileSync('bash', ['-c', setup + '\nprintf "%s|%s\\n" "$SIMD_SRC" "$EXTRA"'], {
+        cwd: root, encoding: 'utf8',
+        env: { ...process.env, PATH: temp + path.delimiter + process.env.PATH,
+          SIMD_TEST_TRIPLE: target, SIMD_TEST_HOST: host },
+      });
+      assert.match(out, new RegExp(`blitter_simd_${backend}\\.c`), target);
+      if (backend === 'neon') assert(!out.includes('-msse2'), target);
+    }
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});

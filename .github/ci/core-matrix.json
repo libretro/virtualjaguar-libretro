@@ -74,7 +74,7 @@
     "shell": "msys2 {0}",
     "msystem": "CLANGARM64",
     "msys2_packages": "mingw-w64-clang-aarch64-clang make",
-    "make_extra": "platform=win ARCH=aarch64 BLITTER_SIMD=neon"
+    "make_extra": "platform=win ARCH=aarch64 BLITTER_SIMD=neon SHARED='-shared -Wl,--no-undefined -Wl,--exclude-all-symbols'"
   },
   {
     "displayTargetName": "Emscripten (WASM)",

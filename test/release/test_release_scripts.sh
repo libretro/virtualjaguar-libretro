@@ -230,6 +230,9 @@ check_has "Windows ARM64 core is linked" "$OUT" "$download_url/virtualjaguar_lib
 check_has "Pi app uses ARM64 Debian package" "$OUT" "$download_url/virtualjaguar_3.11.0_arm64.deb"
 check_has "Pi graphics limitations are explicit" "$OUT" "GPU compatibility unverified"
 check_has "Pi shader setup is linked" "$OUT" "docs/raspberry-pi-app.md"
+OUT=$(GITHUB_SHA=immutable-build-sha bash "$S/body-downloads.sh" "$T/notes" "$download_url" v3.11.0 2>&1)
+check_has "Pi setup link follows the publishing commit, including nightlies" "$OUT" "blob/immutable-build-sha/docs/raspberry-pi-app.md"
+
 
 OUT=$(bash "$S/body-signing.sh" "$T/rel" "$T/table.md" "$repo" master "$download_url" 2>&1); RC=$?
 check_rc "linked signing table renders" "$RC" 0 "$OUT"

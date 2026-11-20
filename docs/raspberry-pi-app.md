@@ -19,9 +19,10 @@ recommended display/audio libraries too.
 
 ```sh
 sudo apt update
-sudo apt install ./virtualjaguar_3.13.1_arm64.deb
 sudo apt install mesa-utils
 glxinfo -B
+# Continue only if the desktop OpenGL core profile meets the 3.3 requirement.
+sudo apt install ./virtualjaguar_3.13.1_arm64.deb
 virtualjaguar
 ```
 

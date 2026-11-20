@@ -5,7 +5,7 @@ set -euo pipefail
 rel=${1:?release dir}
 download_url=${2:?download URL}
 tag=${3:?release tag}
-docs_ref=${RELEASE_DOCS_REF:-master}
+docs_ref=${RELEASE_DOCS_REF:-${GITHUB_SHA:-master}}
 # Match the asset label in app-package.yml (e.g. v3.11.0 -> 3.11.0).
 asset_label=${tag#v}
 app=VirtualJaguar-$asset_label
