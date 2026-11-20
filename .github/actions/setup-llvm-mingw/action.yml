@@ -1,0 +1,22 @@
+name: Set up LLVM MinGW
+description: Pinned x64-hosted cross toolchain, including Windows ARM64 and COFF debug tools.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v5
+      id: cache
+      with:
+        path: ${{ runner.temp }}/llvm-mingw-20261117-ucrt-x86_64
+        key: llvm-mingw-20261117-ucrt-x86_64-4d002e330a0f7036
+    - shell: pwsh
+      env:
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        $root = Join-Path $env:RUNNER_TEMP 'llvm-mingw-20261117-ucrt-x86_64'
+        if ($env:CACHE_HIT -ne 'true') {
+          $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
+          Invoke-WebRequest 'https://github.com/mstorsjo/llvm-mingw/releases/download/20261117/llvm-mingw-20261117-ucrt-x86_64.zip' -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '4d002e330a0f703625aa5ccbc37e96f8f824413e163bfc7336774aabd2c3a412') { throw 'LLVM MinGW archive checksum mismatch' }
+          Expand-Archive $zip $env:RUNNER_TEMP
+        }
+        "$root/bin" | Out-File -FilePath $env:GITHUB_PATH -Append

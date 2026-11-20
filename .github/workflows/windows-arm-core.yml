@@ -1,0 +1,204 @@
+name: Windows ARM64 core addendum
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-arm-core.yml'
+      - '.github/actions/setup-llvm-mingw/**'
+      - 'scripts/windows-arm64/**'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing published tag whose unchanged core sources will be built
+        type: string
+        default: v3.13.1
+      sign:
+        description: Authenticode sign the core
+        type: boolean
+        default: true
+      publish:
+        description: Add the tested core and symbols, re-sign checksums and update release links
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: windows-arm-core-addendum-${{ inputs.release_tag || 'v3.13.1' }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate published source tag
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.release_tag || 'v3.13.1' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Expected a stable version tag' }
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,isPrerelease | Out-File release.json
+          if ($LASTEXITCODE -ne 0) { throw 'Published release not found' }
+          $release = Get-Content release.json | ConvertFrom-Json
+          if ($release.isDraft -or $release.isPrerelease) { throw 'Expected a published stable release' }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || 'v3.13.1' }}
+          path: source
+      - uses: msys2/setup-msys2@v2
+        with:
+          path-type: inherit
+          msystem: MINGW64
+          install: make
+      - uses: ./.github/actions/setup-llvm-mingw
+      - name: Build and package unchanged tagged sources
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cd source
+          make -j4 platform=win ARCH=aarch64 BLITTER_SIMD=neon RELEASE_DEBUG_INFO=1 TEST_EXPORTS=0 CC=aarch64-w64-mingw32-clang CXX=aarch64-w64-mingw32-clang++
+          cd ..
+          mkdir dist
+          out=virtualjaguar_libretro-windows-arm64.dll
+          cp source/virtualjaguar_libretro.dll "dist/$out"
+          llvm-objcopy --only-keep-debug "dist/$out" "dist/$out.debug"
+          llvm-objcopy --strip-debug --strip-unneeded "dist/$out"
+          (cd dist && llvm-objcopy --add-gnu-debuglink="$out.debug" "$out")
+          tar -C dist -czf dist/virtualjaguar_libretro-windows-arm64-debug.tar.gz "$out.debug"
+          command rm -f "dist/$out.debug"
+          python3 scripts/windows-arm64/check-core.py "dist/$out"
+      - uses: ./.github/actions/windows-sign
+        with:
+          enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.sign }}
+          files-folder: ${{ github.workspace }}\dist
+          description: Virtual Jaguar libretro Windows ARM64 core (${{ inputs.release_tag || 'v3.13.1' }})
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm-core-addendum
+          path: dist/
+          if-no-files-found: error
+  native-smoke:
+    needs: build
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-arm-core-addendum
+          path: dist
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          install: mingw-w64-clang-aarch64-clang
+      - shell: msys2 {0}
+        run: |
+          clang -std=gnu89 -Werror=declaration-after-statement -O2 -Ilibretro-common/include scripts/windows-arm64/smoke.c -o arm-smoke.exe
+          ./arm-smoke.exe "$PWD/dist/virtualjaguar_libretro-windows-arm64.dll" test/roms/yarc.j64
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.sign
+    needs: [build, native-smoke]
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+      attestations: write
+      id-token: write
+    env:
+      TAG: ${{ inputs.release_tag || 'v3.13.1' }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      WINDOWS_EXPECT: signed
+      WINDOWS_APP_EXPECT: signed
+      LANE: release
+      RELEASE_DOCS_REF: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || 'v3.13.1' }}
+          path: source
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-arm-core-addendum
+          path: addition
+      - run: brew install minisign osslsigncode
+      - name: Download and validate the original release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --dir release
+          minisign -Vm release/SHA256SUMS.txt -p docs/release-signing.pub
+          (cd release && shasum -a 256 --check SHA256SUMS.txt)
+          # Preserve the original payloads; an idempotent retry may find the same addition already uploaded.
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in Path('addition').iterdir():
+              old = Path('release') / p.name
+              if old.exists():
+                  assert old.read_bytes() == p.read_bytes(), f'Refusing to replace existing payload {p.name}'
+              old.write_bytes(p.read_bytes())
+          PY
+          python3 scripts/windows-arm64/check-core.py release/virtualjaguar_libretro-windows-arm64.dll
+          # The original Mac notarization sidecars remain necessary for the strict gate.
+          run=$(gh run list --repo "$REPO" --workflow release.yml --branch "$TAG" --status success --json databaseId --jq '.[0].databaseId')
+          test -n "$run" && test "$run" != null
+          gh run download "$run" --repo "$REPO" --name release-signing-status --dir signing-status
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          root = Path('release')
+          files = sorted(p for p in root.iterdir() if p.name not in ('SHA256SUMS.txt', 'SHA256SUMS.txt.minisig'))
+          (root/'SHA256SUMS.txt').write_text(''.join(f'{hashlib.file_digest(p.open("rb"), "sha256").hexdigest()}  {p.name}\n' for p in files))
+          PY
+      - name: Sign the complete updated checksum list
+        id: sums
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          GITHUB_SHA="$(git -C source rev-parse HEAD)" bash scripts/release/sign-sums.sh release
+          minisign -Vm release/SHA256SUMS.txt -p docs/release-signing.pub
+      - name: Select new attestation subjects
+        run: |
+          mkdir attest
+          cp release/virtualjaguar_libretro-windows-arm64* release/SHA256SUMS.txt* attest/
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: attest/*
+      - name: Strictly verify all original and added assets
+        run: bash scripts/release/verify.sh release signing-status strict signing-table.md
+      - name: Retain verified assets before publication
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-staged-arm-addendum
+          path: |
+            release/
+            signing-table.md
+      - name: Update assets and download links
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/$REPO/releases/download/$TAG"
+          notes="source/docs/RELEASE_NOTES_$TAG.md"
+          test -f "$notes"
+          {
+            head -n 1 "$notes"
+            echo
+            bash scripts/release/body-downloads.sh release "$url" "$TAG"
+            tail -n +2 "$notes"
+            printf '\n\n---\n\n'
+            bash scripts/release/body-signing.sh release signing-table.md "$REPO" master "$url"
+          } > body.md
+          gh release upload "$TAG" --repo "$REPO" release/virtualjaguar_libretro-windows-arm64.dll release/virtualjaguar_libretro-windows-arm64-debug.tar.gz release/SHA256SUMS.txt release/SHA256SUMS.txt.minisig --clobber
+          gh release edit "$TAG" --repo "$REPO" --notes-file body.md

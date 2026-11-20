@@ -66,6 +66,17 @@
     "msys2_packages": "mingw-w64-i686-gcc make"
   },
   {
+    "displayTargetName": "Windows ARM64 (Clang)",
+    "artifact": "virtualjaguar_libretro.dll",
+    "os": "windows-11-arm",
+    "cc": "clang",
+    "cxx": "clang++",
+    "shell": "msys2 {0}",
+    "msystem": "CLANGARM64",
+    "msys2_packages": "mingw-w64-clang-aarch64-clang make",
+    "make_extra": "platform=win ARCH=aarch64 BLITTER_SIMD=neon"
+  },
+  {
     "displayTargetName": "Emscripten (WASM)",
     "artifact": "virtualjaguar_libretro_emscripten.bc",
     "os": "ubuntu-latest",

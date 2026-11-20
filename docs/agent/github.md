@@ -211,7 +211,7 @@ manual runs and integration-branch pushes keep the full compiler matrix. The con
 live in `.github/ci/core-matrix.json`; a Ruby workflow-contract check rejects mismatched
 compiler/SDK/architecture settings before any rows are omitted.
 
-The seven native C/C++ matrix rows, GCC/Clang differences, MSVC checks, coverage,
+The eight native C/C++ matrix rows, GCC/Clang differences, MSVC checks, coverage,
 ASan/UBSan, clang-tidy and production -> `TEST_EXPORTS=1` -> production mode-switch
 coverage stay independent. Compile-only fallback builds use the same `RELEASE_DEBUG_INFO=1`
 configuration as Release (adds debug information to the optimized production build).
@@ -280,3 +280,20 @@ platforms. `verification_run` performs a strict check of an existing trusted Rel
 and uploads the new signing table. It creates no release and performs no compilation.
 The GL workflow's diagnostic dispatch uses an existing candidate for focused Windows ARM
 emulation or macOS preset checks.
+
+## Windows ARM64 core
+
+Release/nightly cross-compiles `windows-arm64` with the SHA-256-pinned LLVM MinGW
+UCRT toolchain on x64 Windows, which also supports the existing Azure signing action.
+The DLL must be PE32+ ARM64 with the complete production libretro export surface and
+no separate MinGW runtime DLL dependencies. A native `windows-11-arm` job loads the
+signed DLL and renders the committed YARC ROM before staging. Native Clang/NEON
+compilation is also retained in C/C++ CI. Split debug symbols ship alongside the core.
+
+`Windows ARM64 core addendum` (`windows-arm-core.yml`) can build unchanged sources
+from a published stable tag, sign on x64 and smoke-test on native ARM64. Its default
+dispatch does not publish. With `sign=true,publish=true`, it verifies the original
+release, preserves all existing payloads, adds the DLL/debug archive, re-signs the
+complete checksums, attests the additions and updated checksum files, strictly checks
+all assets, then updates downloads and release notes. Use this for missing-target
+backfills instead of restarting all platforms.
