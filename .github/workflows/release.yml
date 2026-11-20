@@ -285,6 +285,19 @@ jobs:
             msystem: 'MINGW64'
             msys2_packages: 'mingw-w64-x86_64-gcc make'
 
+          # Cross-compile on x64 so the existing Azure signing action can sign it.
+          - platform: windows-arm64
+            artifact: virtualjaguar_libretro.dll
+            os: windows-latest
+            cc: aarch64-w64-mingw32-clang
+            cxx: aarch64-w64-mingw32-clang++
+            shell: 'msys2 {0}'
+            msystem: MINGW64
+            msys2_packages: make
+            llvm_mingw: true
+            make_extra: 'platform=win ARCH=aarch64 BLITTER_SIMD=neon'
+            objcopy: llvm-objcopy
+
           - platform: windows-i686
             artifact: virtualjaguar_libretro.dll
             os: windows-latest
@@ -380,6 +393,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
+          path-type: ${{ matrix.config.llvm_mingw && 'inherit' || 'minimal' }}
           msystem: ${{ matrix.config.msystem || 'MINGW64' }}
           update: false
           install: ${{ matrix.config.msys2_packages || 'mingw-w64-x86_64-gcc make' }}
@@ -387,6 +401,10 @@ jobs:
       - name: Set up Emscripten
         if: matrix.config.emscripten
         uses: mymindstorm/setup-emsdk@v16
+
+      - name: Set up Windows ARM64 cross toolchain
+        if: matrix.config.llvm_mingw
+        uses: ./.github/actions/setup-llvm-mingw
 
       - name: Set up Android NDK
         if: matrix.config.android
@@ -404,7 +422,7 @@ jobs:
           lane: release-core-${{ matrix.config.platform }}
           workflow-job: .github/workflows/release.yml#build
           configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          profile: release-build
+          profile: ${{ matrix.config.llvm_mingw && 'release-windows-arm64' || 'release-build' }}
           matrix: ${{ toJSON(matrix) }}
           paths: |
             ${{ matrix.config.artifact }}
@@ -463,7 +481,7 @@ jobs:
           lane: release-core-${{ matrix.config.platform }}
           workflow-job: .github/workflows/release.yml#build
           configuration: ${{ toJSON(matrix.config) }}-${{ vars.CI_CHECKPOINT_EPOCH }}
-          profile: release-build
+          profile: ${{ matrix.config.llvm_mingw && 'release-windows-arm64' || 'release-build' }}
           matrix: ${{ toJSON(matrix) }}
           paths: |
             ${{ matrix.config.artifact }}
@@ -577,9 +595,10 @@ jobs:
           OUT="virtualjaguar_libretro-${{ matrix.config.platform }}.dll"
           DBG="${OUT}.debug"
           cp "$SRC" "dist/${OUT}"
-          objcopy --only-keep-debug "dist/${OUT}" "dist/${DBG}"
-          objcopy --strip-debug --strip-unneeded "dist/${OUT}"
-          ( cd dist && objcopy --add-gnu-debuglink="${DBG}" "${OUT}" )
+          OBJCOPY="${{ matrix.config.objcopy || 'objcopy' }}"
+          "$OBJCOPY" --only-keep-debug "dist/${OUT}" "dist/${DBG}"
+          "$OBJCOPY" --strip-debug --strip-unneeded "dist/${OUT}"
+          ( cd dist && "$OBJCOPY" --add-gnu-debuglink="${DBG}" "${OUT}" )
           tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${DBG}"
           rm "dist/${DBG}"
 
@@ -650,6 +669,10 @@ jobs:
       # Without the three AZURE_* secrets and three AZURE_SIGNING_*
       # variables the action prints a notice and the files stay unsigned.
       # ----------------------------------------------------------------
+      - name: Verify ARM64 architecture and production exports
+        if: matrix.config.llvm_mingw
+        run: python3 scripts/windows-arm64/check-core.py dist/virtualjaguar_libretro-windows-arm64.dll
+
       - name: Authenticode sign (Windows core${{ matrix.config.platform == 'windows-x86_64' && ' + cue2cdi' || '' }})
         id: winsign
         if: ${{ runner.os == 'Windows' }}
@@ -863,6 +886,27 @@ jobs:
       preset_set: all
       source_runs: ${{ needs.guard.outputs.previous_runs }}
 
+  windows-arm-core-smoke:
+    name: Windows ARM64 core native smoke
+    needs: [build]
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: virtualjaguar_libretro-windows-arm64
+          path: arm-core
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          install: mingw-w64-clang-aarch64-clang
+      - name: Load the production DLL and run public YARC for 60 frames
+        shell: msys2 {0}
+        run: |
+          clang -std=gnu89 -Werror=declaration-after-statement -O2 -Ilibretro-common/include scripts/windows-arm64/smoke.c -o arm-smoke.exe
+          ./arm-smoke.exe "$PWD/arm-core/virtualjaguar_libretro-windows-arm64.dll" test/roms/yarc.j64
+
   # ----------------------------------------------------------------
   # Stage (#1151): flatten every artifact into release/, write
   # SHA256SUMS.txt, sign it with the project's minisign key and attest build
@@ -876,12 +920,13 @@ jobs:
   # ----------------------------------------------------------------
   stage:
     name: Stage, sign and attest
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, windows-arm-core-smoke]
     if: |
       always()
       && needs.build.result == 'success'
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
+      && needs.windows-arm-core-smoke.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1064,7 +1109,7 @@ jobs:
   # SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures, gl-qualification, windows-installer-qualification]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures, windows-arm-core-smoke, gl-qualification, windows-installer-qualification]
     # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
     # tag (release-notes lookup, release title, `gh release create <TAG>`), so
     # this guard is what keeps a develop push from creating a release literally
@@ -1082,6 +1127,7 @@ jobs:
       && needs.build.result == 'success'
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
+      && needs.windows-arm-core-smoke.result == 'success'
       && needs.jagcd-tools.result == 'success'
       && (needs.app-packages.result == 'success' || needs.app-packages.result == 'skipped')
       && needs.stage.result == 'success'
@@ -1166,7 +1212,7 @@ jobs:
   # ----------------------------------------------------------------
   nightly:
     name: Update rolling prerelease
-    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures, gl-qualification]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages, stage, verify-signatures, windows-arm-core-smoke, gl-qualification]
     # The app packages (app-packages) are waited for and not required either:
     # a macOS notarization outage must not withhold the core nightly.
     # Wait for the tools build, but do not REQUIRE it.  chdman is an
@@ -1190,6 +1236,7 @@ jobs:
       && needs.build.result == 'success'
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
+      && needs.windows-arm-core-smoke.result == 'success'
       && needs.stage.result == 'success'
       && (github.ref == 'refs/heads/develop' || needs.verify-signatures.result == 'success')
       && (needs.gl-qualification.result == 'success' || needs.gl-qualification.result == 'skipped')

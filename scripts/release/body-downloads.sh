@@ -5,6 +5,7 @@ set -euo pipefail
 rel=${1:?release dir}
 download_url=${2:?download URL}
 tag=${3:?release tag}
+docs_ref=${RELEASE_DOCS_REF:-master}
 # Match the asset label in app-package.yml (e.g. v3.11.0 -> 3.11.0).
 asset_label=${tag#v}
 app=VirtualJaguar-$asset_label
@@ -46,7 +47,7 @@ row 'macOS' "$(links 'Universal app (.zip)' "$app-macos-universal.zip")" \
   "$(links 'Apple Silicon' "$core-macos-arm64.dylib" 'Intel' "$core-macos-x86_64.dylib")"
 row 'Windows x64 / x86' "$(links 'x64 installer (.exe)' "$app-windows-x64-setup.exe" 'x64 portable (.zip)' "$app-windows-x64.zip")" \
   "$(links '64-bit' "$core-windows-x86_64.dll" '32-bit' "$core-windows-i686.dll")"
-row 'Windows ARM64' "$(links 'Installer (.exe)' "$app-windows-arm64-setup.exe" 'Portable (.zip)' "$app-windows-arm64.zip")" ''
+row 'Windows ARM64' "$(links 'Installer (.exe)' "$app-windows-arm64-setup.exe" 'Portable (.zip)' "$app-windows-arm64.zip")" "$(links 'ARM64' "$core-windows-arm64.dll")"
 row 'Linux x86-64 / x86' "$(links 'AppImage (64-bit)' "$app-linux-x86_64.AppImage" '.deb (64-bit)' "virtualjaguar_${asset_label}_amd64.deb" 'Flatpak (64-bit)' "$app-linux-x86_64.flatpak")" \
   "$(links '64-bit' "$core-linux-x86_64.so" '32-bit' "$core-linux-i686.so")"
 row 'Linux ARM64' "$(links 'AppImage' "$app-linux-aarch64.AppImage" '.deb' "virtualjaguar_${asset_label}_arm64.deb" 'Flatpak' "$app-linux-aarch64.flatpak")" \
@@ -54,7 +55,7 @@ row 'Linux ARM64' "$(links 'AppImage' "$app-linux-aarch64.AppImage" '.deb' "virt
 row 'Android' '' "$(links 'ARM64' "$core-android-arm64-v8a.so" 'ARMv7' "$core-android-armeabi-v7a.so" \
   'x86-64' "$core-android-x86_64.so" 'x86' "$core-android-x86.so")"
 row 'iOS / tvOS' '' "$(links 'iOS' "$core-ios-arm64.dylib" 'tvOS' "$core-tvos-arm64.dylib")"
-row 'Raspberry Pi' '' "$(links 'Pi 1' "$core-linux-rpi1-armv6.so" 'Pi 2' "$core-linux-rpi2-cortex-a7.so" \
+row 'Raspberry Pi (app: 64-bit OS; GPU compatibility unverified)' "$(links '.deb (ARM64)' "virtualjaguar_${asset_label}_arm64.deb" 'AppImage (ARM64)' "$app-linux-aarch64.AppImage" 'Flatpak (ARM64)' "$app-linux-aarch64.flatpak")" "$(links 'Pi 1' "$core-linux-rpi1-armv6.so" 'Pi 2' "$core-linux-rpi2-cortex-a7.so" \
   'Pi 3 (32-bit)' "$core-linux-rpi3-cortex-a53.so" 'Pi 3 (64-bit)' "$core-linux-rpi3_64-cortex-a53.so" \
   'Pi 4 (32-bit)' "$core-linux-rpi4-cortex-a72.so" 'Pi 4 (64-bit)' "$core-linux-rpi4_64-cortex-a72.so" \
   'Pi 5 (32-bit)' "$core-linux-rpi5-cortex-a76.so" 'Pi 5 (64-bit)' "$core-linux-rpi5_64-cortex-a76.so")"
@@ -86,4 +87,8 @@ EOF
         "$(links 'universal macOS ZIP' "$app-macos-universal.zip")"
       ;;
   esac
+fi
+
+if [ -f "$rel/$app-linux-aarch64.AppImage" ] || [ -f "$rel/virtualjaguar_${asset_label}_arm64.deb" ]; then
+  printf 'Raspberry Pi: use a 64-bit OS for the ARM64 app. [Installation, bundled shader runtime and graphics requirements](https://github.com/libretro/virtualjaguar-libretro/blob/%s/docs/raspberry-pi-app.md). Per-SoC core builds are separate downloads; a 64-bit CPU running a 32-bit OS needs a 32-bit core.\n\n' "$docs_ref"
 fi

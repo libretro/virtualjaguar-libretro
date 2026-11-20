@@ -59,6 +59,26 @@ jobs:
             const { planCores } = require('./.github/scripts/release-cores.cjs');
             await planCores({ github, context, core });
 
+  windows-arm-smoke:
+    name: Windows ARM64 native core smoke
+    needs: build
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: Windows ARM64 (Clang)
+          path: native-core
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          install: mingw-w64-clang-aarch64-clang
+      - shell: msys2 {0}
+        run: |
+          clang -std=gnu89 -Werror=declaration-after-statement -O2 -Ilibretro-common/include scripts/windows-arm64/smoke.c -o arm-smoke.exe
+          ./arm-smoke.exe "$PWD/native-core/virtualjaguar_libretro.dll" test/roms/yarc.j64
+
   core-reuse:
     name: Verify and retain shared production cores
     needs: [core-plan]

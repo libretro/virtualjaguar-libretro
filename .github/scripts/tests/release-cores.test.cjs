@@ -21,15 +21,15 @@ async function route(same = true, fork = false) {
     core: { setOutput: (k,v) => { out[k] = v; }, info: () => {} } });
   return { ...out, matrix: JSON.parse(out.matrix) };
 }
-test('matching release PR retains all seven native compiler/test rows and shares only eight matrix rows plus consoles', async () => {
-  const r = await route(); assert.equal(r.reuse, 'true'); assert.equal(r.matrix.length, 7);
-  assert.equal(MATRIX.length, 15); assert.equal(CORES.length, 10);
+test('matching release PR retains all eight native compiler/test rows and shares only eight matrix rows plus consoles', async () => {
+  const r = await route(); assert.equal(r.reuse, 'true'); assert.equal(r.matrix.length, 8);
+  assert.equal(MATRIX.length, 16); assert.equal(CORES.length, 10);
   assert.deepEqual(r.matrix, MATRIX.filter(c => !c.release_platform));
   for (const name of ['Linux x86_64 (GCC)', 'Linux x86_64 (Clang)', 'Linux aarch64', 'Linux i686',
     'macOS arm64 (Clang)', 'Windows x86_64 (MSYS2)', 'Windows i686 (MSYS2)'])
     assert(r.matrix.some(c => c.displayTargetName === name));
 });
-test('different merge trees and forks keep all fifteen original matrix configurations', async () => {
+test('different merge trees and forks keep all sixteen original matrix configurations', async () => {
   for (const r of [await route(false), await route(true, true)]) {
     assert.equal(r.reuse, 'false'); assert.deepEqual(r.matrix, MATRIX);
   }
@@ -182,4 +182,16 @@ test('release staging excludes raw CI cores and runtimes while keeping shipped b
     '-not', '-path', 'artifacts/ci-core-*', '-print'], { cwd: dir, encoding: 'utf8' });
   assert(out.includes('shipped.a')); assert(out.includes('shipped-debug.tar.gz'));
   assert(!out.includes('private-raw')); assert(!out.includes('runtime.so'));
+});
+
+test('Windows ARM64 has native CI, signed cross release and a native release smoke gate', () => {
+  const native = MATRIX.find(c => c.os === 'windows-11-arm');
+  assert.equal(native.msystem, 'CLANGARM64');
+  assert.match(native.make_extra, /BLITTER_SIMD=neon/);
+  const release = fs.readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
+  assert.match(release, /platform: windows-arm64/);
+  assert.match(release, /cc: aarch64-w64-mingw32-clang/);
+  assert.match(release, /objcopy: llvm-objcopy/);
+  assert.match(release, /needs\.windows-arm-core-smoke\.result == 'success'/);
+  assert.match(release, /name: Windows ARM64 core native smoke/);
 });

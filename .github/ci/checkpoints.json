@@ -350,5 +350,25 @@
     ".github/actions/reuse-checkpoint",
     "jni",
     "intl"
+  ],
+  "release-windows-arm64": [
+    "src",
+    "libretro.c",
+    "libretro_core_options.h",
+    "libretro_core_options_intl.h",
+    "libretro-common",
+    "deps",
+    "Makefile",
+    "Makefile.common",
+    "exports.list",
+    "link.T",
+    ":(glob)scripts/*",
+    "scripts/testdata",
+    ".github/actions/reuse-checkpoint",
+    ".github/scripts/checkpoint.cjs",
+    "jni",
+    "intl",
+    ".github/actions/setup-llvm-mingw",
+    "scripts/windows-arm64"
   ]
 }
