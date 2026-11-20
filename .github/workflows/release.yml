@@ -295,7 +295,8 @@ jobs:
             msystem: MINGW64
             msys2_packages: make
             llvm_mingw: true
-            make_extra: 'platform=win ARCH=aarch64 BLITTER_SIMD=neon'
+            # lld/MinGW has no --version-script; libretro.h explicitly dllexports the ABI.
+            make_extra: "platform=win ARCH=aarch64 BLITTER_SIMD=neon SHARED='-shared -Wl,--no-undefined -Wl,--exclude-all-symbols'"
             objcopy: llvm-objcopy
 
           - platform: windows-i686

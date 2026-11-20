@@ -22,8 +22,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: windows-arm-core-addendum-${{ inputs.release_tag || 'v3.13.1' }}
-  cancel-in-progress: false
+  group: windows-arm-core-addendum-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.release_tag }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
     runs-on: windows-latest
@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           cd source
-          make -j4 platform=win ARCH=aarch64 BLITTER_SIMD=neon RELEASE_DEBUG_INFO=1 TEST_EXPORTS=0 CC=aarch64-w64-mingw32-clang CXX=aarch64-w64-mingw32-clang++
+          make -j4 platform=win ARCH=aarch64 BLITTER_SIMD=neon SHARED='-shared -Wl,--no-undefined -Wl,--exclude-all-symbols' RELEASE_DEBUG_INFO=1 TEST_EXPORTS=0 CC=aarch64-w64-mingw32-clang CXX=aarch64-w64-mingw32-clang++
           cd ..
           mkdir dist
           out=virtualjaguar_libretro-windows-arm64.dll
