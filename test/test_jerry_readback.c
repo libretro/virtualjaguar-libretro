@@ -13,6 +13,7 @@ static void (*subtract_time)(double,int);
 static double (*next_time)(int);
 static void (*handle_event)(int);
 static uint8_t (*read_byte)(uint32_t,uint32_t);
+static void (*execute_frame)(void);
 static void reset_timers(void)
 {
     c.JERRYReset(); init_events();
@@ -67,6 +68,37 @@ TEST(pit_stopped)
     ASSERT_EQ(c.JERRYReadWord(0xF10036,0),0);
     ASSERT_EQ(c.JERRYReadWord(0xF10038,0),0);
 }
+/* A restart by the 68K part-way through a slice counts from the write:
+ * the read that follows sees the same count however much code ran in
+ * the slice before the restart.  (Review of #1226.) */
+static void emit(uint32_t *p, uint16_t w)
+{
+    c.JaguarWriteWord(*p, w, 0);
+    *p += 2;
+}
+static unsigned restart_and_read(int nops)
+{
+    uint32_t p = 0x4000;
+    int i;
+    c.JaguarReset();
+    ((struct VJSettings *)c.vjs)->hardwareTypeNTSC=true;
+    for(i=0;i<nops;i++) emit(&p,0x4E71);                    /* nop */
+    emit(&p,0x33FC); emit(&p,0);    emit(&p,0xF1); emit(&p,0x0000); /* move.w #0,$F10000 */
+    emit(&p,0x33FC); emit(&p,1000); emit(&p,0xF1); emit(&p,0x0002); /* move.w #1000,$F10002 */
+    emit(&p,0x3039); emit(&p,0xF1); emit(&p,0x0038);        /* move.w $F10038,d0 */
+    emit(&p,0x33C0); emit(&p,0);    emit(&p,0x2000);        /* move.w d0,$2000 */
+    emit(&p,0x4E72); emit(&p,0x2700);                       /* stop #$2700 */
+    c.m68k_set_reg(17,0x2700); c.m68k_set_reg(16,0x4000);
+    execute_frame();
+    return c.JaguarReadWord(0x2000,0);
+}
+TEST(pit_restart_in_slice)
+{
+    unsigned r0 = restart_and_read(0);
+    ASSERT_TRUE(r0 > 950 && r0 <= 1000);
+    ASSERT_EQ(restart_and_read(40), r0);
+    ASSERT_EQ(restart_and_read(41), r0);
+}
 int main(void)
 {
     TEST_INIT("JERRY PIT readback");
@@ -78,7 +110,9 @@ int main(void)
     RESOLVE(next_time,"GetTimeToNextEvent");
     RESOLVE(handle_event,"HandleNextEvent");
     RESOLVE(read_byte,"JERRYReadByte");
+    RESOLVE(execute_frame,"JaguarExecuteNew");
     RUN_TEST(pit_live); RUN_TEST(pit_reload); RUN_TEST(pit_stopped);
+    RUN_TEST(pit_restart_in_slice);
     vj_core_unload(&c);
     return TEST_REPORT();
 }

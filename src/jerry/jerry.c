@@ -245,7 +245,10 @@ void JERRYResetPIT1(void)
    {
       double usecs = (double)(JERRYPIT1Prescaler + 1) * (double)(JERRYPIT1Divider + 1)
          * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
-      SetCallbackTime(JERRYPIT1Callback, usecs, EVENT_JERRY);
+      /* Event times count from the start of the slice; a write
+       * part-way through it restarts the count from the write. */
+      SetCallbackTime(JERRYPIT1Callback, usecs + JaguarSliceElapsedUs(),
+                      EVENT_JERRY);
    }
 }
 
@@ -258,7 +261,10 @@ void JERRYResetPIT2(void)
    {
       double usecs = (double)(JERRYPIT2Prescaler + 1) * (double)(JERRYPIT2Divider + 1)
          * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
-      SetCallbackTime(JERRYPIT2Callback, usecs, EVENT_JERRY);
+      /* Event times count from the start of the slice; a write
+       * part-way through it restarts the count from the write. */
+      SetCallbackTime(JERRYPIT2Callback, usecs + JaguarSliceElapsedUs(),
+                      EVENT_JERRY);
    }
 }
 
@@ -307,6 +313,8 @@ void JERRYPIT2Callback(void)
  * prescaler wrap, so both follow from the clocks left until the timer
  * callback fires: the time left at slice start, less how far into the
  * slice the reading processor has got (same placement as TOMReadHC).
+ * JERRYResetPIT1/2 schedule from the same origin, so a restart inside a
+ * slice reads back a full period.
  * A stopped timer reads back its programmed values. */
 static uint16_t JERRYReadPIT(uint32_t offset)
 {
