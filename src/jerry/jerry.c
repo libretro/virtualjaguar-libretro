@@ -302,6 +302,38 @@ void JERRYPIT2Callback(void)
 }
 
 
+/* Live JPIT1-4 count for a read of $F10036-$F1003D.  Each timer counts
+ * its prescaler down at the system clock and its divider down on each
+ * prescaler wrap, so both follow from the clocks left until the timer
+ * callback fires: the time left at slice start, less how far into the
+ * slice the reading processor has got (same placement as TOMReadHC).
+ * A stopped timer reads back its programmed values. */
+static uint16_t JERRYReadPIT(uint32_t offset)
+{
+   int timer2       = (offset & 0xFFFFFFFE) >= 0xF1003A;
+   int divider      = !(offset & 0x02);    /* $38, $3C */
+   uint32_t pre     = timer2 ? JERRYPIT2Prescaler : JERRYPIT1Prescaler;
+   uint32_t div     = timer2 ? JERRYPIT2Divider   : JERRYPIT1Divider;
+   double left      = GetCallbackTime(timer2 ? JERRYPIT2Callback
+                                             : JERRYPIT1Callback, EVENT_JERRY);
+   double tick      = vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC
+                                           : RISC_CYCLE_PAL_IN_USEC;
+   uint64_t clocks, period = (uint64_t)(pre + 1) * (div + 1);
+
+   if (left < 0.0)
+      return (uint16_t)(divider ? div : pre);
+
+   left -= JaguarSliceElapsedUs();
+   clocks = left > 0.0 ? (uint64_t)(left / tick + 0.5) : 0;
+   if (clocks < 1)
+      clocks = 1;
+   if (clocks > period)
+      clocks = period;
+   return (uint16_t)(divider ? (clocks - 1) / (pre + 1)
+                             : (clocks - 1) % (pre + 1));
+}
+
+
 /* Restart the I2S interrupt timer chain WITHOUT asserting an interrupt
  * now.  Called on SCLK writes (src/jerry/dac.c).  On real hardware the
  * SSI raises its first word-strobe interrupt only after a complete I2S
@@ -495,16 +527,7 @@ uint8_t JERRYReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    //	F1003C          R     xxxxxxxx xxxxxxxx   JPIT4 - timer 2 divider
    else if ((offset >= 0xF10036) && (offset <= 0xF1003D))
    {
-      uint16_t value;
-
-      switch (offset & 0xFFFFFFFE)
-      {
-         case 0xF10036: value = JERRYPIT1Prescaler; break;
-         case 0xF10038: value = JERRYPIT1Divider;   break;
-         case 0xF1003A: value = JERRYPIT2Prescaler; break;
-         case 0xF1003C: value = JERRYPIT2Divider;   break;
-         default:       value = 0;                  break;
-      }
+      uint16_t value = JERRYReadPIT(offset);
 
       return (offset & 0x01) ? (value & 0xFF) : (value >> 8);
    }
@@ -562,14 +585,7 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    //	F1003C          R     xxxxxxxx xxxxxxxx   JPIT4 - timer 2 divider
    else if ((offset >= 0xF10036) && (offset <= 0xF1003D))
    {
-      switch (offset & 0xFFFFFFFE)
-      {
-         case 0xF10036: return JERRYPIT1Prescaler;
-         case 0xF10038: return JERRYPIT1Divider;
-         case 0xF1003A: return JERRYPIT2Prescaler;
-         case 0xF1003C: return JERRYPIT2Divider;
-         default:       return 0;
-      }
+      return JERRYReadPIT(offset);
    }
    else if (offset == 0xF10020)
    {
