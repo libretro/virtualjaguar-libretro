@@ -101,6 +101,8 @@ TEST(pit_restart_in_slice)
 }
 int main(void)
 {
+    void (*shutdown_m68k)(void);
+
     TEST_INIT("JERRY PIT readback");
     if(!vj_core_load(&c)) return 1;
     vj_core_init(&c);
@@ -111,8 +113,11 @@ int main(void)
     RESOLVE(handle_event,"HandleNextEvent");
     RESOLVE(read_byte,"JERRYReadByte");
     RESOLVE(execute_frame,"JaguarExecuteNew");
+    RESOLVE(shutdown_m68k,"m68k_done");
     RUN_TEST(pit_live); RUN_TEST(pit_reload); RUN_TEST(pit_stopped);
     RUN_TEST(pit_restart_in_slice);
+    /* JaguarReset initializes the 68K without loading a game. */
+    shutdown_m68k();
     vj_core_unload(&c);
     return TEST_REPORT();
 }
