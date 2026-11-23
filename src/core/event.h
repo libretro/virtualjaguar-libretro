@@ -35,6 +35,9 @@ double GetTimeToNextEvent(int type);
 double GetCallbackTime(void (* callback)(void), int type);
 void HandleNextEvent(int type);
 void SubtractEventTimes(double elapsed, int type);
+/* Age one queue by the slice actually executed, then dispatch its earliest
+ * event only if that event is now due. */
+void HandleDueEvent(double elapsed, int type);
 
 #ifdef __cplusplus
 }

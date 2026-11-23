@@ -354,6 +354,44 @@ void HandleNextEvent(int type/*= EVENT_MAIN*/)
 }
 
 
+/* JaguarExecuteNew() sizes a slice from the earliest event of the winning
+ * queue, runs the processors for that long, then dispatches.  Guest code in
+ * the slice may replace that event (a PIT rewrite reschedules it from the
+ * writer's position), so the queue's earliest event afterwards can be later
+ * than the slice.  HandleNextEvent() would age the queue by that later
+ * deadline -- more time than the processors ran, putting this queue ahead
+ * of the other one.  Age by the slice instead, and dispatch only an event
+ * that is due; otherwise the next slice reaches it. */
+void HandleDueEvent(double elapsed, int type)
+{
+   struct Event *list = type == EVENT_MAIN ? eventList : eventListJERRY;
+   unsigned *count = type == EVENT_MAIN ? &eventCount : &eventCountJERRY;
+   void (* event)(void);
+   unsigned i, due, last;
+
+   for (i = 0; i < *count; i++)
+      list[i].eventTime -= elapsed;
+   if (*count == 0)
+      return;
+
+   due = 0;
+   for (i = 1; i < *count; i++)
+      if (list[i].eventTime < list[due].eventTime)
+         due = i;
+   if (list[due].eventTime > 0.0)
+      return;                    /* rescheduled past the slice: not yet */
+
+   event = list[due].timerCallback;
+   last = *count - 1;
+   if (due != last)
+      list[due] = list[last];
+   list[last].valid = false;
+   *count = last;
+
+   (*event)();
+}
+
+
 void SubtractEventTimes(double elapsed, int type)
 {
    unsigned i;
