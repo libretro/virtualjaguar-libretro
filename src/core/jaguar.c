@@ -1879,7 +1879,7 @@ void JaguarExecuteNew(void)
          DSPExec(DSPSliceRemaining());
          sliceDoneUs = 0.0;
          SubtractEventTimes(timeDelta, EVENT_MAIN);
-         HandleNextEvent(EVENT_JERRY);
+         HandleDueEvent(timeDelta, EVENT_JERRY);
       }
       else
       {
@@ -1901,7 +1901,7 @@ void JaguarExecuteNew(void)
          DSPExec(DSPSliceRemaining());
          sliceDoneUs = 0.0;
          SubtractEventTimes(timeDelta, EVENT_JERRY);
-         HandleNextEvent(EVENT_MAIN);
+         HandleDueEvent(timeDelta, EVENT_MAIN);
       }
       PERF_ADD(timing_m68k_cycles, (unsigned long long)SCALE_M68K_CYCLES(USEC_TO_M68K_CYCLES(timeDelta)));
       PERF_ADD(timing_risc_cycles, (unsigned long long)SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta)));

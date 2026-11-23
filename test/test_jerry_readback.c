@@ -14,6 +14,7 @@ static double (*next_time)(int);
 static void (*handle_event)(int);
 static uint8_t (*read_byte)(uint32_t,uint32_t);
 static void (*execute_frame)(void);
+static void (*schedule)(void (*)(void),double,int);
 static void reset_timers(void)
 {
     c.JERRYReset(); init_events();
@@ -99,6 +100,43 @@ TEST(pit_restart_in_slice)
     ASSERT_EQ(restart_and_read(40), r0);
     ASSERT_EQ(restart_and_read(41), r0);
 }
+/* The 68K rewrites the PIT that is the next JERRY event, with its own
+ * period: the slice it ends was sized from the old deadline, and both event
+ * queues must still advance by the time the processors actually ran.  At a
+ * JERRY callback due at 12 us, a MAIN marker due at 20 us has 8 us left,
+ * rewrite or not.  (Second review of #1226.) */
+static double main_left;
+static void main_mark(void) {}
+static void jerry_mark(void) {}
+static void sample(void) { main_left = next_time(0); }
+static double main_left_at_sample(int rewrite)
+{
+    uint32_t p = 0x4000;
+    int i;
+    c.JaguarReset();
+    ((struct VJSettings *)c.vjs)->hardwareTypeNTSC=true;
+    c.JERRYWriteWord(0xF10000, 0, 0);     /* timer 1: 100 clocks, first */
+    c.JERRYWriteWord(0xF10002, 99, 0);
+    for(i=0;i<5;i++) emit(&p,0x4E71);                       /* nop */
+    if (rewrite) {                                          /* move.w #99,$F10002 */
+        emit(&p,0x33FC); emit(&p,99); emit(&p,0xF1); emit(&p,0x0002);
+    } else
+        for(i=0;i<4;i++) emit(&p,0x4E71);
+    emit(&p,0x4E72); emit(&p,0x2700);                       /* stop #$2700 */
+    c.m68k_set_reg(17,0x2700); c.m68k_set_reg(16,0x4000);
+    schedule(main_mark, 20.0, 0);
+    schedule(jerry_mark, 12.01, EVENT_JERRY);
+    schedule(sample, 12.0, EVENT_JERRY);
+    main_left = -1.0;
+    execute_frame();
+    return main_left;
+}
+TEST(pit_rewrite_next_event)
+{
+    double plain = main_left_at_sample(0), rewritten = main_left_at_sample(1);
+    ASSERT_TRUE(plain > 7.999999 && plain < 8.000001);
+    ASSERT_TRUE(rewritten > 7.999999 && rewritten < 8.000001);
+}
 int main(void)
 {
     void (*shutdown_m68k)(void);
@@ -114,8 +152,9 @@ int main(void)
     RESOLVE(read_byte,"JERRYReadByte");
     RESOLVE(execute_frame,"JaguarExecuteNew");
     RESOLVE(shutdown_m68k,"m68k_done");
+    RESOLVE(schedule,"SetCallbackTime");
     RUN_TEST(pit_live); RUN_TEST(pit_reload); RUN_TEST(pit_stopped);
-    RUN_TEST(pit_restart_in_slice);
+    RUN_TEST(pit_restart_in_slice); RUN_TEST(pit_rewrite_next_event);
     /* JaguarReset initializes the 68K without loading a game. */
     shutdown_m68k();
     vj_core_unload(&c);
