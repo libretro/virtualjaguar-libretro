@@ -96,6 +96,8 @@ FAMILY = [
      "GameCube & Wii emulator for iOS and tvOS"),
     ("iFly", "https://ifly-emu.com/",
      "Dreamcast emulator for iOS and tvOS"),
+    ("Emulation Server", "https://provenance-emu.com/emulator-content-server/",
+     "Self-hosted game library for compatible emulators"),
     ("Provenance Wiki", "https://wiki.provenance-emu.com/",
      "Guides, ROM ripping, BIOS help"),
 ]
