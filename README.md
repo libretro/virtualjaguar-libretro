@@ -83,6 +83,10 @@ brew install --cask Provenance-Emu/virtualjaguar/virtualjaguar
 For nightly builds, use the [nightly macOS ZIP](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly)
 or the [installer script](https://jaguar.provenance-emu.com/#get) with `--what app --channel nightly`.
 
+## Jaguar homebrew development
+
+[JagStudio](https://reboot-games.com/jagstudio/) is an Atari Jaguar development suite for assembly, BASIC and C. Its [quickstart](https://reboot-games.com/jagstudio/QuickstartGuide.html) uses the original Virtual Jaguar to run example projects. See [Homebrew workflow](docs/app-debug-tools.md#homebrew-workflow) for the current desktop app's symbol loading, breakpoints and reload on rebuild.
+
 ## Features
 
 - **Jaguar CD:** boots through a high-level CD BIOS (default) or the real CD BIOS on emulated BUTCH hardware; audio CDs and the Virtual Light Machine work. Memory Track saves are emulated. Load-time tuning: [`docs/cd-read-speed.md`](docs/cd-read-speed.md).
