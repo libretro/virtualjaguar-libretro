@@ -13,6 +13,9 @@ already handles its own on-demand clone.
 
 ## Usage
 
+`native-c/` has a [C build-and-launch sample](native-c/README.md) for macOS and
+Linux with an editable bitmap and embedded debugger symbols.
+
 ```bash
 make jaguar-toolchain-build   # fetch + build everything
 eval "$(tools/jaguar-toolchain/setup.sh env)"   # add to PATH, set BJL_ROOT
