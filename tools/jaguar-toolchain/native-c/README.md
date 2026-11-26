@@ -32,3 +32,17 @@ From this directory, `make smoke` verifies the named breakpoint and the stock
 badge's framebuffer hash. Add `CROSS=m68k-linux-gnu-` on Debian or Ubuntu, or
 pass `VJ=/absolute/path/to/virtualjaguar` to select the app. The smoke run
 writes `smoke.log` and `badge-frame.0.png` beside the executable.
+
+## Orbital QA review cartridge
+
+Run `make review` with the same cross-toolchain to produce
+`build/jaguar-native-c/orbital-qa.j64`. Open it with **File > Open** in
+Virtual Jaguar with the default cartridge boot mode. It uses the emulator's
+high-level cartridge boot and comes up directly on an original animated
+flight deck. The cartridge includes its own code and artwork.
+
+Use the directional pad to move, **A** to boost, **B** to cycle the accent
+color, and **C** to return to center. **Pause** freezes or resumes the scene,
+and **Option** switches starfield speeds. The control tiles light up while
+their inputs are active. **F3** shows the active controller and keyboard
+mappings. To check save states, save the scene, move the ship, and reload.
