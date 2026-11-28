@@ -831,6 +831,11 @@ static uint8_t  gpu_ds_irq_dispatched;
  * see the G_FLAGS case in GPUWriteLong for the citations. */
 #define GPU_FLAGS_RETIRE_DELAY 2
 static uint32_t gpuFlagsRetireDelay = 0;
+/* hardware hazard checks (virtualjaguar_hw_hazards): the delay slot being
+ * run, and the places already logged */
+static uint32_t gpu_slot_pc;
+static uint32_t gpuHazardSeen[64];   /* pc << 1 | kind */
+static unsigned gpuHazardSeenCount;
 /* A GPU-issued G_FLAGS store cleared IMASK and interrupt recognition has
  * not re-opened yet.  The GPU's analog of the DSP's IMASKCleared: the
  * G_FLAGS store used to call GPUHandleIRQs itself, and now the retire
@@ -1680,6 +1685,78 @@ static void GPUFlagsRetire(void)
    }
 }
 
+/* ---- hardware hazard checks (virtualjaguar_hw_hazards) ----
+ * The GPU side of src/jerry/dsp.c's dsp_slot_check / dsp_flags_redirect:
+ * each place logged once (warn, strict); strict also fails the way the
+ * console can. */
+/* kind: 0 an indexed load/store in a delay slot, 1 a bank-switching flags
+ * store there; each (place, kind) logged once, and once the table is full
+ * one note that the rest are not */
+static void gpu_hazard(uint32_t pc, unsigned kind, const char *what)
+{
+   unsigned i;
+   uint32_t key = (pc << 1) | (kind & 1);
+   for (i = 0; i < gpuHazardSeenCount && i < 64; i++)
+      if (gpuHazardSeen[i] == key)
+         return;
+   if (gpuHazardSeenCount > 64)
+      return;
+   if (gpuHazardSeenCount == 64)
+   {
+      gpuHazardSeenCount++;
+      LOG_WRN("[hazard] GPU: 64 places logged; further ones are not\n");
+      return;
+   }
+   gpuHazardSeen[gpuHazardSeenCount++] = key;
+   LOG_WRN("[hazard] GPU $%06X: %s\n", (unsigned)pc, what);
+}
+
+/* A taken branch's delay slot is about to run.  JTRM v8 p.140: "A jump
+ * then an indexed store/load causes a crash when interrupts are enabled"
+ * -- warned only, the failure is not described. */
+static void gpu_slot_check(uint32_t index)
+{
+   gpu_slot_pc = gpu_pc;
+   if (hwHazards == HAZARDS_OFF || (gpu_flags & IMASK))
+      return;
+   if (index == 43 || index == 44 || index == 49 || index == 50
+       || (index >= 58 && index <= 61))
+      gpu_hazard(gpu_slot_pc, 0, "indexed load/store in a jump's delay slot "
+                 "with interrupts enabled (JTRM v8 p.140)");
+}
+
+/* After a taken branch: retire a G_FLAGS store the delay slot made (the
+ * target then sees the new bank).  JTRM v8 p.140: with the IMASK clear in
+ * the return jump's delay slot "the instruction that was interrupted may
+ * not get the correct register bank" (TWI).  Strict: the target runs once
+ * in the old bank, still masked, as it can on a console. */
+static void gpu_flags_redirect(void)
+{
+   int now, after;
+
+   if (!(gpuFlagsRetireDelay || gpuFlagsIRQPending))
+      return;
+   if (gpuFlagsRetireDelay && hwHazards != HAZARDS_OFF)
+   {
+      now = (gpu_reg == gpu_reg_bank_1);
+      after = (gpu_flags & IMASK) ? 0 : ((gpu_flags & REGPAGE) ? 1 : 0);
+      if (now != after)
+      {
+         gpu_hazard(gpu_slot_pc, 1, "G_FLAGS store in a taken jump's delay slot "
+                    "switches the register bank: the target can run in the old "
+                    "bank (JTRM v8 p.140)");
+         if (hwHazards == HAZARDS_STRICT)
+         {
+            /* the branch itself is counted down after it returns: the
+             * target is then the one instruction left in the window */
+            gpuFlagsRetireDelay = 2;
+            return;
+         }
+      }
+   }
+   GPUFlagsRetire();
+}
+
 void GPUSetIRQLine(int irqline, int state)
 {
    uint32_t mask = 0x0040 << irqline;
@@ -1741,6 +1818,8 @@ void GPUClockScaleReset(void)
 void GPUReset(void)
 {
    unsigned i;
+
+   gpuHazardSeenCount = 0;
 
    GPUPipeTimingReset();
    /* Machine reset is the diagnostics' epoch (see their declaration). */
@@ -3221,6 +3300,7 @@ INLINE static void gpu_opcode_jump(void)
       else
          ds_opcode = GPUReadWord(gpu_pc, GPU);
       ds_index = ds_opcode >> 10;
+      gpu_slot_check(ds_index);
       gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = ds_opcode & 0x1F;
       gpu_pc += 2;
@@ -3252,8 +3332,7 @@ INLINE static void gpu_opcode_jump(void)
        * -- or the one a store just ahead of this jump still owes -- now
        * pushes the target as the return address.  Dispatching before the
        * gpu_pc assignment would have it overwrite the vector. */
-      if (gpuFlagsRetireDelay || gpuFlagsIRQPending)
-         GPUFlagsRetire();
+      gpu_flags_redirect();
    }
 }
 
@@ -3285,6 +3364,7 @@ INLINE static void gpu_opcode_jr(void)
       else
          ds_opcode = GPUReadWord(gpu_pc, GPU);
       ds_index = ds_opcode >> 10;
+      gpu_slot_check(ds_index);
       gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = ds_opcode & 0x1F;
       gpu_pc += 2;
@@ -3307,8 +3387,7 @@ INLINE static void gpu_opcode_jr(void)
       if (!gpu_ds_irq_dispatched)
          gpu_pc = delayed_pc;
       /* Same post-redirect retire as gpu_opcode_jump. */
-      if (gpuFlagsRetireDelay || gpuFlagsIRQPending)
-         GPUFlagsRetire();
+      gpu_flags_redirect();
    }
 }
 

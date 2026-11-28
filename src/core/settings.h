@@ -66,6 +66,7 @@ struct VJSettings
 enum { BT_K_SERIES, BT_M_SERIES, BT_STUBULATOR_1, BT_STUBULATOR_2, BT_CUSTOM };
 enum { CDBIOS_RETAIL, CDBIOS_DEV };
 enum { CDBOOT_AUTO, CDBOOT_HLE, CDBOOT_BIOS };
+enum { HAZARDS_OFF, HAZARDS_WARN, HAZARDS_STRICT };
 enum { CDSPEED_INSTANT = 0, CDSPEED_1X = 1, CDSPEED_2X = 2,
        CDSPEED_4X = 4, CDSPEED_8X = 8 };
 
@@ -86,6 +87,11 @@ extern struct BootConfig bootConfig;
 // Exported variables
 
 extern struct VJSettings vjs;
+/* virtualjaguar_hw_hazards: HAZARDS_OFF / _WARN / _STRICT.  Code shapes the
+ * hardware documents as unreliable that the core otherwise runs cleanly (see
+ * src/jerry/dsp.c, dsp_flags_redirect).  Kept out of VJSettings so the
+ * harnesses that redeclare its leading fields can set it by name. */
+extern uint32_t hwHazards;
 
 #ifdef __cplusplus
 }

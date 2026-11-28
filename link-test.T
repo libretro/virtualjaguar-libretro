@@ -61,6 +61,7 @@
       SetSSIWordsXmittedFromButch;
       lowerField;
       vjs;
+      hwHazards;
       videoBuffer;
       game_width;
       game_height;
