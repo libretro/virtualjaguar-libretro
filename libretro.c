@@ -3665,6 +3665,17 @@ static void check_variables(void)
    else
       vjs.riscIdleSkip = false;
 
+   var.key = "virtualjaguar_hw_hazards";
+   var.value = NULL;
+   hwHazards = HAZARDS_OFF;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "warn") == 0)
+         hwHazards = HAZARDS_WARN;
+      else if (strcmp(var.value, "strict") == 0)
+         hwHazards = HAZARDS_STRICT;
+   }
+
    /* DRAM timing: enabled/disabled only, covering BOTH halves of the
     * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
     * in jaguar.c).  The calibration scale is deliberately NOT a core

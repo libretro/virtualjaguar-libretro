@@ -230,6 +230,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled"
    },
+   {
+      "virtualjaguar_hw_hazards",
+      "Hardware Hazard Checks (Developers)",
+      NULL,
+      "For homebrew developers: watch for code the Atari documentation says is unreliable on a real console, which this core otherwise runs cleanly. 'Warn' logs each place once and changes nothing. 'Strict' also makes it fail the way the console can, so a hazard shows up here instead of only on hardware. Checked now: a GPU/DSP flags store in the delay slot of a taken jump that switches the register bank (the branch target can run in the old bank; JTRM v8 p.140), and an indexed load/store in a jump's delay slot with interrupts enabled (warned only). Leave Off for playing games.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", "Off" },
+         { "warn",     "Warn" },
+         { "strict",   "Strict" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
    /* Speed category, ordered by what a user should try first: the two
     * free fast-forwards (identical output, less work), then the two
     * overclocks, which change what the game computes and can break it.

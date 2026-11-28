@@ -1091,6 +1091,64 @@ static void test_jump_with_flags_store_in_slot(void)
    p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
 }
 
+/* virtualjaguar_hw_hazards (src/core/settings.h): 0 off, 1 warn, 2 strict */
+static uint32_t *p_hwHazards;
+
+/* Test 20b: the same Doom-shaped return under the hazard checks.  JTRM v8
+ * p.140: with the IMASK clear in the return jump's delay slot "the
+ * instruction that was interrupted may not get the correct register bank".
+ * Off and warn keep the shape Doom needs (target in the new bank); strict
+ * runs the target once in the old bank, as a console can. */
+static int flags_slot_run(uint32_t mode)
+{
+   *p_hwHazards = mode;
+   flags_bank_setup();
+   p_dsp_reg_bank_0[15] = DSP_RAM_BASE + 0x200;
+   write_dsp_ram16(0x100, OP_JUMP(0, 15));
+   write_dsp_ram16(0x102, OP_STORE(1, 0));
+   write_movei(0x200, 0x33333333, 6);
+   write_movei(0x206, 0x44444444, 7);
+   write_idle(0x20C);
+   p_DSPWriteLong(DSP_PC_ADDR, DSP_RAM_BASE + 0x100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPExec(16);
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+   *p_hwHazards = 0;
+   if (p_dsp_reg_bank_1[7] != 0x44444444 || p_dsp_reg_bank_0[7] != 0)
+      return -1;                      /* the one after: new bank always */
+   if (p_dsp_reg_bank_0[6] == 0x33333333 && p_dsp_reg_bank_1[6] == 0)
+      return 0;
+   if (p_dsp_reg_bank_1[6] == 0x33333333 && p_dsp_reg_bank_0[6] == 0)
+      return 1;
+   return -1;
+}
+
+static void test_jump_flags_slot_hazards(void)
+{
+   int r;
+
+   printf("\n=== Test 20b: Delay-Slot D_FLAGS Store Under The Hazard Checks (JTRM v8 p.140) ===\n");
+   if (!p_hwHazards) {
+      printf("  SKIP: hwHazards not exported\n");
+      return;
+   }
+   r = flags_slot_run(1);
+   if (r == 1)
+      PASS("warn: the branch target still lands in the new bank");
+   else
+      FAIL("warn: target bank %d (expected 1, the new bank)", r);
+   r = flags_slot_run(2);
+   if (r == 0)
+      PASS("strict: the branch target runs once in the old bank, the next in the new");
+   else
+      FAIL("strict: target bank %d (expected 0, the old bank)", r);
+   r = flags_slot_run(0);
+   if (r == 1)
+      PASS("off: unchanged (new bank)");
+   else
+      FAIL("off: target bank %d (expected 1)", r);
+}
+
 static void test_flags_window_savestate(void)
 {
    static uint8_t state[65536];
@@ -1454,6 +1512,7 @@ int main(int argc, char *argv[])
    LOAD_OPT(DSPPipeTimingReset);
    LOAD_OPT(DSPClockScaleReset);
    p_vjs = (struct vjs_head *)dlsym(handle, "vjs");
+   p_hwHazards = (uint32_t *)dlsym(handle, "hwHazards");
    p_riscClockScalePct = (uint32_t *)dlsym(handle, "riscClockScalePct");
    p_busArbiter = (uint8_t *)dlsym(handle, "busArbiter");
 
@@ -1521,6 +1580,7 @@ int main(int argc, char *argv[])
    test_flags_store_bank_move();
    test_flags_store_then_jump();
    test_jump_with_flags_store_in_slot();
+   test_jump_flags_slot_hazards();
    test_flags_window_savestate();
    test_dsp_pipe_model();
 

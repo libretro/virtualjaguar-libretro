@@ -344,7 +344,7 @@ level 0 with no legend entry. HBW (26 Apr 1995) is a separate, partly overlappin
 | HBW Misc #1 | UART double-shifts a start bit at a certain phase | no (`src/jerry/uart.c`). Matters only for JagLink/ComLynx/modem |
 | HBW Misc #2 | 68K `clr.l <ea>` and `move.l <ea>,-(An)` write halves in the wrong order to GPU/DSP regs and RAM (`$F02000-$F07FFF`, `$F1A000-$F1F000`) | **yes** via the commit-on-partner latch, `jaguar.c` ~733-770 |
 | SWR | Programming restrictions around jumps, MAC and MMULT (no MOVEI after a jump, no back-to-back jumps, no MOVE PC after a jump, MAC chains only followed by MAC/RESMAC, no LOAD/STORE before MMULT) | no (undefined-behaviour rules, unmodeled by design) |
-| v8 p.140 "Lies and Damned Lies" | Unconfirmed allegations: jump + indexed load/store crash, MMULT spacing, IMASK clear in the interrupt-return jump's delay slot | no |
+| v8 p.140 "Lies and Damned Lies" | Unconfirmed allegations: jump + indexed load/store crash, MMULT spacing, IMASK clear in the interrupt-return jump's delay slot | partly: under `virtualjaguar_hw_hazards` (default off), a flags store in a taken jump's delay slot that switches the bank is logged (warn) and runs the target once in the old bank (strict) -- seen failing on a console with a bank-1 DSP main loop, intermittently, while Doom's epilogue (bank switch to the same main bank) runs; jump + indexed load/store is logged only |
 
 **Unmodeled bugs that could plausibly affect real games, ranked:** TOM #24 (BUSHI/DMAEN timing and OP stripes),
 TOM #16 (HIDATA clobber), TOM #2/#25 (scoreboard, divide; only matter if code relies on or trips them), HBW
