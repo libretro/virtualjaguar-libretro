@@ -41,6 +41,7 @@
 #include "jaguar.h"
 #include "vjag_memory.h"
 #include "m68kinterface.h"
+#include "settings.h"
 
 /* ------------------------------------------------------------------ */
 /* State                                                              */
@@ -48,6 +49,10 @@
 
 uint8_t  jgdActive = 0;
 uint8_t  jgdWriteEnabled = 0;
+/* hardware hazard checks (virtualjaguar_hw_hazards, see JGDHazard) */
+static uint8_t jgdHung;
+static uint8_t jgdHazardSeen;     /* one bit per kind, logged once */
+static unsigned jgdDebugStrings;
 uint8_t  jgdPage[6] = { 0, 1, 2, 3, 4, 5 };
 uint8_t *jgdROM = NULL;
 
@@ -254,6 +259,9 @@ void JGDReset(void)
    for (i = 0; i < 6; i++)
       jgdPage[i] = (uint8_t)i;
    jgdWriteEnabled = 0;
+   jgdHung = 0;
+   jgdHazardSeen = 0;
+   jgdDebugStrings = 0;
    JGDSpiReset();
    /* The program that opened them is gone. */
    JGDFSCloseAll();
@@ -552,6 +560,37 @@ static int32_t JGDHostWrite(uint32_t handle, uint32_t addr, uint32_t len)
    return 0;
 }
 
+/* ---- hardware hazard checks (virtualjaguar_hw_hazards) ----
+ *
+ * Calls a real GameDrive hangs on -- no error back, no crash to catch, and no
+ * uploads taken until the console is power-cycled -- that the folder-backed
+ * stand-in otherwise answers.  Found on a console (NTSC, GameDrive with
+ * GDBIOS 1.x): each is logged once (warn); strict also hangs the 68K in
+ * the stub, rewinding it onto its own backdoor write. */
+
+static int JGDHazard(unsigned kind, const char *what)
+{
+   if (hwHazards == HAZARDS_OFF)
+      return 0;
+   if (!(jgdHazardSeen & (1u << kind)))
+   {
+      jgdHazardSeen |= (uint8_t)(1u << kind);
+      LOG_WRN("[hazard] JGD: %s%s\n", what,
+              hwHazards == HAZARDS_STRICT ? " -- halted here, as the GameDrive hangs" : "");
+   }
+   if (hwHazards != HAZARDS_STRICT)
+      return 0;
+   jgdHung = 1;
+   return 1;
+}
+
+/* The 68K back onto the stub's move.w #imm,abs.l (8 bytes): the write is
+ * done once the instruction is, and the PC is past it. */
+static void JGDStall(void)
+{
+   m68k_set_reg(M68K_REG_PC, m68k_get_reg(NULL, M68K_REG_PC) - 8);
+}
+
 static void JGDHostCall(unsigned fn)
 {
    uint32_t d0 = m68k_get_reg(NULL, M68K_REG_D0);
@@ -564,6 +603,42 @@ static void JGDHostCall(unsigned fn)
    uint8_t info[JGDFS_INFO_LONG_SIZE];
    int32_t res = -1;
    int lng;
+   uint32_t at, size;
+
+   if (jgdHung)
+   {
+      JGDStall();
+      return;
+   }
+   if (fn == 10 && JGDFSOpenCount() >= 5
+       && JGDHazard(0, "GD_FileOpen with five files open (the GameDrive hangs on a sixth)"))
+   {
+      JGDStall();
+      return;
+   }
+   if (fn == 13)
+   {
+      at = JGDFSTell(h);
+      size = JGDFSSize(h);
+      if ((a0 & 3)
+          && JGDHazard(1, "GD_FileRead into a buffer not on a 4-byte boundary"))
+      {
+         JGDStall();
+         return;
+      }
+      if (at != 0xFFFFFFFFu && size != 0xFFFFFFFFu && d1 > size - at
+          && JGDHazard(2, "GD_FileRead past the end of the file (seen hanging with a 32 KB read)"))
+      {
+         JGDStall();
+         return;
+      }
+   }
+   if (fn == 26 && ++jgdDebugStrings == 2
+       && JGDHazard(3, "a second GD_DebugString with nothing reading the GameDrive's USB port"))
+   {
+      JGDStall();
+      return;
+   }
 
    switch (fn)
    {

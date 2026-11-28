@@ -719,6 +719,15 @@ int32_t JGDFSDirClose(uint32_t handle)
 /* Lifecycle                                                          */
 /* ------------------------------------------------------------------ */
 
+int JGDFSOpenCount(void)
+{
+   int i, n = 0;
+   for (i = 0; i < JGDFS_MAX_FILES; i++)
+      if (fs_files[i].in_use)
+         n++;
+   return n;
+}
+
 void JGDFSCloseAll(void)
 {
    int i;
