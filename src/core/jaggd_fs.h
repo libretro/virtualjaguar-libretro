@@ -88,6 +88,8 @@ int32_t  JGDFSDirClose(uint32_t handle);
 
 /* Close every handle (reset / unload / older savestate). */
 void     JGDFSCloseAll(void);
+/* Files open now (not directories). */
+int      JGDFSOpenCount(void);
 /* Power-on: close all, forget root and access (iOS no-dlclose rule). */
 void     JGDFSDone(void);
 

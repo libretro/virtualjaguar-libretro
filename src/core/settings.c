@@ -17,6 +17,7 @@
 #include "log.h"
 
 struct VJSettings vjs;
+uint32_t hwHazards = 0;    /* HAZARDS_OFF */
 struct BootConfig bootConfig;
 
 void ResolveBootConfig(struct BootConfig *cfg,

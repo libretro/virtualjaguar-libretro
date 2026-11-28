@@ -1000,6 +1000,60 @@ static void test_jump_with_flags_store_in_slot(void)
            REG(6), REG1(6));
 }
 
+/* virtualjaguar_hw_hazards (src/core/settings.h): 0 off, 1 warn, 2 strict */
+static uint32_t *p_hwHazards;
+
+/* The Doom-shaped return under the hazard checks (JTRM v8 p.140): off and
+ * warn keep the target in the new bank; strict runs it once in the old
+ * bank, the instruction after it in the new.  Returns the target's bank,
+ * or -1. */
+static int flags_slot_run(uint32_t mode)
+{
+   *p_hwHazards = mode;
+   flags_bank_setup();
+   REG(15) = GPU_RAM_BASE + 0x200;
+   gw16(0x100, OP_JUMP(0, 15));
+   gw16(0x102, OP_STORE(1, 0));
+   gwmovei(0x200, 0x33333333, 6);
+   gwmovei(0x206, 0x44444444, 7);
+   gw_idle(0x20C);
+   run(16);
+   *p_hwHazards = 0;
+   if (REG1(7) != 0x44444444 || REG(7) != 0)
+      return -1;
+   if (REG(6) == 0x33333333 && REG1(6) == 0)
+      return 0;
+   if (REG1(6) == 0x33333333 && REG(6) == 0)
+      return 1;
+   return -1;
+}
+
+static void test_jump_flags_slot_hazards(void)
+{
+   int r;
+
+   printf("\n--- G_FLAGS store in the delay slot under the hazard checks (JTRM v8 p.140) ---\n");
+   if (!p_hwHazards) {
+      printf("  SKIP: hwHazards not exported\n");
+      return;
+   }
+   r = flags_slot_run(1);
+   if (r == 1)
+      PASS("warn: the branch target still lands in the new bank");
+   else
+      FAIL("warn: target bank %d (expected 1, the new bank)", r);
+   r = flags_slot_run(2);
+   if (r == 0)
+      PASS("strict: the branch target runs once in the old bank, the next in the new");
+   else
+      FAIL("strict: target bank %d (expected 0, the old bank)", r);
+   r = flags_slot_run(0);
+   if (r == 1)
+      PASS("off: unchanged (new bank)");
+   else
+      FAIL("off: target bank %d (expected 1)", r);
+}
+
 static void test_flags_window_savestate(void)
 {
    static uint8_t state[65536];
@@ -1161,6 +1215,7 @@ int main(int argc, char *argv[])
    p_GPUUpdateRegisterBanks = (void (*)(void))dlsym(handle, "GPUUpdateRegisterBanks");
    p_GPUSetIRQLine = (void (*)(int, int))dlsym(handle, "GPUSetIRQLine");
 
+   p_hwHazards      = (uint32_t *)dlsym(handle, "hwHazards");
    p_gpu_pc         = dlsym(handle, "gpu_pc");
    p_gpu_reg_bank_0 = dlsym(handle, "gpu_reg_bank_0");
    p_gpu_reg_bank_1 = dlsym(handle, "gpu_reg_bank_1");
@@ -1258,6 +1313,7 @@ int main(int argc, char *argv[])
    test_flags_store_bank_move();
    test_flags_store_then_jump();
    test_jump_with_flags_store_in_slot();
+   test_jump_flags_slot_hazards();
    test_flags_window_savestate();
    test_flags_store_imask_holdoff();
    test_isr_epilogue_jump_store();

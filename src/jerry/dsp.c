@@ -455,6 +455,11 @@ uint32_t dsp_exec_opcode_count = 0;
  * DSPWriteLong for the hardware citation (issues #853, d220aa2). */
 #define DSP_FLAGS_RETIRE_DELAY 2
 static uint32_t dspFlagsRetireDelay = 0;
+/* hardware hazard checks (virtualjaguar_hw_hazards): the delay slot being
+ * run, and the places already logged */
+static uint32_t dsp_slot_pc;
+static uint32_t dspHazardSeen[64];   /* pc << 1 | kind */
+static unsigned dspHazardSeenCount;
 
 /* ------------------------------------------------------------------ *
  * DSP pipeline / external-gateway timing model (issue #313 remainder,
@@ -1653,6 +1658,7 @@ void DSPReset(void)
 {
    unsigned i;
 
+	dspHazardSeenCount = 0;
 	dsp_pc				  = 0x00F1B000;
 	dspgo_poll_count	  = 0;
 	dsp_load_wb_fixups	  = 0;
@@ -2937,6 +2943,87 @@ INLINE static void dsp_executeOpcode(uint32_t index)
 #endif
 }
 
+/* ---- hardware hazard checks (virtualjaguar_hw_hazards) ----
+ *
+ * Code shapes the Atari documentation calls unreliable on a real console
+ * that this core otherwise runs cleanly.  Each place is logged once (warn,
+ * strict); strict also fails the way the console can. */
+
+/* kind: 0 an indexed load/store in a delay slot, 1 a bank-switching flags
+ * store there; each (place, kind) logged once, and once the table is full
+ * one note that the rest are not */
+static void dsp_hazard(uint32_t pc, unsigned kind, const char *what)
+{
+	unsigned i;
+	uint32_t key = (pc << 1) | (kind & 1);
+	for (i = 0; i < dspHazardSeenCount && i < 64; i++)
+		if (dspHazardSeen[i] == key)
+			return;
+	if (dspHazardSeenCount > 64)
+		return;
+	if (dspHazardSeenCount == 64)
+	{
+		dspHazardSeenCount++;
+		LOG_WRN("[hazard] DSP: 64 places logged; further ones are not\n");
+		return;
+	}
+	dspHazardSeen[dspHazardSeenCount++] = key;
+	LOG_WRN("[hazard] DSP $%06X: %s\n", (unsigned)pc, what);
+}
+
+/* A taken branch's delay slot is about to run (index: its opcode).
+ * JTRM v8 p.140 ("Lies and Damned Lies"): "A jump then an indexed
+ * store/load causes a crash when interrupts are enabled" -- warned only,
+ * the failure is not described. */
+static void dsp_slot_check(uint32_t index)
+{
+	dsp_slot_pc = dsp_pc;
+	if (hwHazards == HAZARDS_OFF || (dsp_flags & IMASK))
+		return;
+	if (index == 43 || index == 44 || index == 49 || index == 50
+	    || (index >= 58 && index <= 61))
+		dsp_hazard(dsp_slot_pc, 0, "indexed load/store in a jump's delay slot "
+		           "with interrupts enabled (JTRM v8 p.140)");
+}
+
+/* After a taken branch: a D_FLAGS store its delay slot made retires before
+ * the target reads registers (see DSPWriteLong), so the target sees the new
+ * bank -- the shape Doom's epilogue relies on.  JTRM v8 p.140: "you can't
+ * put the IMASK clear in the delay slot of the jump out of the interrupt,
+ * because the instruction that was interrupted may not get the correct
+ * register bank" (TWI).  Reported in #1232 from an NTSC console: a bank-1
+ * main loop returned to that way died now and then, depending on what was
+ * interrupted, and ran once the store was moved before the jump.  Strict:
+ * the target runs once in the old bank (and still masked), as the JTRM says
+ * it may. */
+static void dsp_flags_redirect(void)
+{
+	int now, after;
+
+	if (!dspFlagsRetireDelay)
+		return;
+	if (hwHazards != HAZARDS_OFF)
+	{
+		now = (dsp_reg == dsp_reg_bank_1);
+		after = (dsp_flags & IMASK) ? 0 : ((dsp_flags & REGPAGE) ? 1 : 0);
+		if (now != after)
+		{
+			dsp_hazard(dsp_slot_pc, 1, "D_FLAGS store in a taken jump's delay slot "
+			           "switches the register bank: the target can run in the old "
+			           "bank (JTRM v8 p.140)");
+			if (hwHazards == HAZARDS_STRICT)
+			{
+				/* the branch itself is counted down after it returns: the
+				 * target is then the one instruction left in the window */
+				dspFlagsRetireDelay = 2;
+				return;
+			}
+		}
+	}
+	dspFlagsRetireDelay = 0;
+	DSPUpdateRegisterBanks();
+}
+
 // DSP opcode handlers
 
 /* There is a problem here with interrupt handlers the JUMP and JR instructions that
@@ -2976,6 +3063,7 @@ INLINE static void dsp_opcode_jump(void)
 		else
 			ds_opcode = DSPReadWord(dsp_pc, DSP);
 		ds_index = ds_opcode >> 10;
+		dsp_slot_check(ds_index);
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
@@ -2986,11 +3074,7 @@ INLINE static void dsp_opcode_jump(void)
 		 * cycles that a D_FLAGS store the delay slot just issued reaches
 		 * Write-back first, so the target instruction sees the new bank.
 		 * See DSPWriteLong. */
-		if (dspFlagsRetireDelay)
-		{
-			dspFlagsRetireDelay = 0;
-			DSPUpdateRegisterBanks();
-		}
+		dsp_flags_redirect();
 	}
 }
 
@@ -3024,6 +3108,7 @@ INLINE static void dsp_opcode_jr(void)
 		else
 			ds_opcode = DSPReadWord(dsp_pc, DSP);
 		ds_index = ds_opcode >> 10;
+		dsp_slot_check(ds_index);
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
@@ -3031,11 +3116,7 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 		/* Same branch-target pipeline refill as dsp_opcode_jump. */
-		if (dspFlagsRetireDelay)
-		{
-			dspFlagsRetireDelay = 0;
-			DSPUpdateRegisterBanks();
-		}
+		dsp_flags_redirect();
 	}
 }
 
@@ -4859,6 +4940,7 @@ static void dsp_opcode_jump_t(void)
 		else
 			ds_opcode = DSPReadWord(dsp_pc, DSP);
 		ds_index = ds_opcode >> 10;
+		dsp_slot_check(ds_index);
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
@@ -4872,11 +4954,7 @@ static void dsp_opcode_jump_t(void)
 			dsp_pipe_stall_total += 1u + 2u;
 		}
 		dsp_pc = delayed_pc;
-		if (dspFlagsRetireDelay)
-		{
-			dspFlagsRetireDelay = 0;
-			DSPUpdateRegisterBanks();
-		}
+		dsp_flags_redirect();
 	}
 }
 
@@ -4908,6 +4986,7 @@ static void dsp_opcode_jr_t(void)
 		else
 			ds_opcode = DSPReadWord(dsp_pc, DSP);
 		ds_index = ds_opcode >> 10;
+		dsp_slot_check(ds_index);
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
@@ -4921,11 +5000,7 @@ static void dsp_opcode_jr_t(void)
 			dsp_pipe_stall_total += 1u + 3u;
 		}
 		dsp_pc = delayed_pc;
-		if (dspFlagsRetireDelay)
-		{
-			dspFlagsRetireDelay = 0;
-			DSPUpdateRegisterBanks();
-		}
+		dsp_flags_redirect();
 	}
 }
 

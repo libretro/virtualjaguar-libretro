@@ -280,6 +280,12 @@ static void e_dbra_to(int dn, uint32_t target)
  * and bank 0 additionally carries the cart header, the code, and
  *   +$FFFFC u32 0xAA55A0A0                           [straddle high half]
  */
+/* virtualjaguar_hw_hazards cases: 0 the normal probe; else, after
+ * GD_CardIn, the one call a real GameDrive hangs on, then MAGIC_DONE. */
+enum { HZ_NONE, HZ_UNALIGNED, HZ_PAST_EOF, HZ_SIXTH_OPEN, HZ_DEBUG_TWICE, HZ_COUNT };
+static int g_hazard_case;
+static const char *g_hazard_mode;   /* option value for run_phase, or NULL */
+
 static void build_probe_rom(uint8_t *rom, uint32_t size)
 {
     uint32_t banks = size >> 20;
@@ -474,6 +480,41 @@ static void build_probe_rom(uint8_t *rom, uint32_t size)
      * the blob base (callee-saved).  The handle round-trips through RAM. */
     e_jsr_a6(9 * 4);                                   /* GD_CardIn */
     e_movel_dn_abs(0, R_SD_CARDIN);
+    if (g_hazard_case != HZ_NONE)
+    {
+        int k;
+        switch (g_hazard_case)
+        {
+            case HZ_UNALIGNED:          /* 7 bytes into R_SD_BUF + 1 */
+            case HZ_PAST_EOF:           /* 64 bytes of the 7-byte file */
+                e_movea_imm(0, 0x800000 + ROM_SD_HELLO);
+                e_moveq(0, 1);
+                e_jsr_a6(10 * 4);
+                e_movel_dn_abs(0, R_SD_OPEN);
+                e_movel_abs_dn(R_SD_OPEN, 0);
+                e_movea_imm(0, R_SD_BUF + (g_hazard_case == HZ_UNALIGNED ? 1 : 0));
+                e_movel_imm_dn(1, g_hazard_case == HZ_UNALIGNED ? 7 : 64);
+                e_jsr_a6(13 * 4);
+                break;
+            case HZ_SIXTH_OPEN:         /* the same file six times */
+                for (k = 0; k < 6; k++)
+                {
+                    e_movea_imm(0, 0x800000 + ROM_SD_HELLO);
+                    e_moveq(0, 1);
+                    e_jsr_a6(10 * 4);
+                }
+                break;
+            case HZ_DEBUG_TWICE:
+                for (k = 0; k < 2; k++)
+                {
+                    e_movea_imm(0, 0x800000 + ROM_SD_HELLO);
+                    e_jsr_a6(26 * 4);
+                }
+                break;
+        }
+        e_movel_imm_abs(MAGIC_DONE, R_FLAG);
+        e_bra_self();
+    }
     e_movea_imm(0, 0x800000 + ROM_SD_HELLO);
     e_moveq(0, 1);                                     /* READ */
     e_jsr_a6(10 * 4);                                  /* GD_FileOpen */
@@ -564,6 +605,8 @@ static int run_phase(harness_config *cfg, int argc, char **argv,
         return 0;
     cfg->rom_path = rom_path;
     harness_set_option(cfg, "virtualjaguar_jgd", jgd_value);
+    if (g_hazard_mode)
+        harness_set_option(cfg, "virtualjaguar_hw_hazards", g_hazard_mode);
     if (!harness_load_rom(cfg))
         return 0;
     set_root = (void (*)(const char *))harness_dlsym(cfg, "JGDFSSetRoot");
@@ -911,6 +954,51 @@ int main(int argc, char **argv)
     check(ram32(ram, R_WREN) == 0x1234u, "forced_write_enable",
           "write-enabled write into a missing bank reads back $%04X",
           ram32(ram, R_WREN));
+
+    /* ============================================================
+     * Phase H: virtualjaguar_hw_hazards.  Each call a real GameDrive
+     * hangs on: warn logs it and the probe completes; strict halts the
+     * 68K in the stub, so the probe never completes.
+     * ============================================================ */
+    {
+        /* check() keeps the name: one string per case and mode */
+        static const char *names[HZ_COUNT][2] = { { "", "" },
+            { "hazard_unaligned_read_warn_runs", "hazard_unaligned_read_strict_hangs" },
+            { "hazard_read_past_eof_warn_runs", "hazard_read_past_eof_strict_hangs" },
+            { "hazard_sixth_open_warn_runs", "hazard_sixth_open_strict_hangs" },
+            { "hazard_debug_twice_warn_runs", "hazard_debug_twice_strict_hangs" } };
+        int hz, strict;
+        for (hz = HZ_UNALIGNED; hz < HZ_COUNT; hz++)
+            for (strict = 0; strict < 2; strict++)
+            {
+                const char *name;
+                uint8_t **rp;
+                harness_shutdown(&cfg);
+                g_hazard_case = hz;
+                g_hazard_mode = strict ? "strict" : "warn";
+                build_probe_rom(rom2, 2u << 20);
+                g_hazard_case = HZ_NONE;
+                if (!write_rom_file(rom2_path, rom2, 2u << 20)
+                    || !run_phase(&cfg, argc, argv, rom2_path, "enabled", 30))
+                {
+                    fprintf(stderr, "Phase H: harness init/load failed\n");
+                    g_hazard_mode = NULL;
+                    rc = 2;
+                    goto cleanup_files;
+                }
+                g_hazard_mode = NULL;
+                rp = (uint8_t **)harness_dlsym(&cfg, "jaguarMainRAM");
+                name = names[hz][strict];
+                if (strict)
+                    check(rp && ram32(*rp, R_FLAG) != MAGIC_DONE, name,
+                          "flag=$%08X (expect the probe halted)",
+                          rp ? ram32(*rp, R_FLAG) : 0);
+                else
+                    check(rp && ram32(*rp, R_FLAG) == MAGIC_DONE, name,
+                          "flag=$%08X (expect $%08X)",
+                          rp ? ram32(*rp, R_FLAG) : 0, MAGIC_DONE);
+            }
+    }
 
     harness_report(&cfg, results, num_results);
     if (!cfg.json_output)
