@@ -458,7 +458,7 @@ static uint32_t dspFlagsRetireDelay = 0;
 /* hardware hazard checks (virtualjaguar_hw_hazards): the delay slot being
  * run, and the places already logged */
 static uint32_t dsp_slot_pc;
-static uint32_t dspHazardSeen[64];
+static uint32_t dspHazardSeen[64];   /* pc << 1 | kind */
 static unsigned dspHazardSeenCount;
 
 /* ------------------------------------------------------------------ *
@@ -2949,14 +2949,25 @@ INLINE static void dsp_executeOpcode(uint32_t index)
  * that this core otherwise runs cleanly.  Each place is logged once (warn,
  * strict); strict also fails the way the console can. */
 
-static void dsp_hazard(uint32_t pc, const char *what)
+/* kind: 0 an indexed load/store in a delay slot, 1 a bank-switching flags
+ * store there; each (place, kind) logged once, and once the table is full
+ * one note that the rest are not */
+static void dsp_hazard(uint32_t pc, unsigned kind, const char *what)
 {
 	unsigned i;
-	for (i = 0; i < dspHazardSeenCount; i++)
-		if (dspHazardSeen[i] == pc)
+	uint32_t key = (pc << 1) | (kind & 1);
+	for (i = 0; i < dspHazardSeenCount && i < 64; i++)
+		if (dspHazardSeen[i] == key)
 			return;
-	if (dspHazardSeenCount < 64)
-		dspHazardSeen[dspHazardSeenCount++] = pc;
+	if (dspHazardSeenCount > 64)
+		return;
+	if (dspHazardSeenCount == 64)
+	{
+		dspHazardSeenCount++;
+		LOG_WRN("[hazard] DSP: 64 places logged; further ones are not\n");
+		return;
+	}
+	dspHazardSeen[dspHazardSeenCount++] = key;
 	LOG_WRN("[hazard] DSP $%06X: %s\n", (unsigned)pc, what);
 }
 
@@ -2971,7 +2982,7 @@ static void dsp_slot_check(uint32_t index)
 		return;
 	if (index == 43 || index == 44 || index == 49 || index == 50
 	    || (index >= 58 && index <= 61))
-		dsp_hazard(dsp_slot_pc, "indexed load/store in a jump's delay slot "
+		dsp_hazard(dsp_slot_pc, 0, "indexed load/store in a jump's delay slot "
 		           "with interrupts enabled (JTRM v8 p.140)");
 }
 
@@ -2980,9 +2991,11 @@ static void dsp_slot_check(uint32_t index)
  * bank -- the shape Doom's epilogue relies on.  JTRM v8 p.140: "you can't
  * put the IMASK clear in the delay slot of the jump out of the interrupt,
  * because the instruction that was interrupted may not get the correct
- * register bank" (TWI).  A main loop in bank 1 returned to that way dies on
- * a console now and then, depending on what was interrupted.  Strict: the
- * target runs once in the old bank (and still masked), as it can there. */
+ * register bank" (TWI).  Reported in #1232 from an NTSC console: a bank-1
+ * main loop returned to that way died now and then, depending on what was
+ * interrupted, and ran once the store was moved before the jump.  Strict:
+ * the target runs once in the old bank (and still masked), as the JTRM says
+ * it may. */
 static void dsp_flags_redirect(void)
 {
 	int now, after;
@@ -2995,7 +3008,7 @@ static void dsp_flags_redirect(void)
 		after = (dsp_flags & IMASK) ? 0 : ((dsp_flags & REGPAGE) ? 1 : 0);
 		if (now != after)
 		{
-			dsp_hazard(dsp_slot_pc, "D_FLAGS store in a taken jump's delay slot "
+			dsp_hazard(dsp_slot_pc, 1, "D_FLAGS store in a taken jump's delay slot "
 			           "switches the register bank: the target can run in the old "
 			           "bank (JTRM v8 p.140)");
 			if (hwHazards == HAZARDS_STRICT)

@@ -834,7 +834,7 @@ static uint32_t gpuFlagsRetireDelay = 0;
 /* hardware hazard checks (virtualjaguar_hw_hazards): the delay slot being
  * run, and the places already logged */
 static uint32_t gpu_slot_pc;
-static uint32_t gpuHazardSeen[64];
+static uint32_t gpuHazardSeen[64];   /* pc << 1 | kind */
 static unsigned gpuHazardSeenCount;
 /* A GPU-issued G_FLAGS store cleared IMASK and interrupt recognition has
  * not re-opened yet.  The GPU's analog of the DSP's IMASKCleared: the
@@ -1689,14 +1689,25 @@ static void GPUFlagsRetire(void)
  * The GPU side of src/jerry/dsp.c's dsp_slot_check / dsp_flags_redirect:
  * each place logged once (warn, strict); strict also fails the way the
  * console can. */
-static void gpu_hazard(uint32_t pc, const char *what)
+/* kind: 0 an indexed load/store in a delay slot, 1 a bank-switching flags
+ * store there; each (place, kind) logged once, and once the table is full
+ * one note that the rest are not */
+static void gpu_hazard(uint32_t pc, unsigned kind, const char *what)
 {
    unsigned i;
-   for (i = 0; i < gpuHazardSeenCount; i++)
-      if (gpuHazardSeen[i] == pc)
+   uint32_t key = (pc << 1) | (kind & 1);
+   for (i = 0; i < gpuHazardSeenCount && i < 64; i++)
+      if (gpuHazardSeen[i] == key)
          return;
-   if (gpuHazardSeenCount < 64)
-      gpuHazardSeen[gpuHazardSeenCount++] = pc;
+   if (gpuHazardSeenCount > 64)
+      return;
+   if (gpuHazardSeenCount == 64)
+   {
+      gpuHazardSeenCount++;
+      LOG_WRN("[hazard] GPU: 64 places logged; further ones are not\n");
+      return;
+   }
+   gpuHazardSeen[gpuHazardSeenCount++] = key;
    LOG_WRN("[hazard] GPU $%06X: %s\n", (unsigned)pc, what);
 }
 
@@ -1710,7 +1721,7 @@ static void gpu_slot_check(uint32_t index)
       return;
    if (index == 43 || index == 44 || index == 49 || index == 50
        || (index >= 58 && index <= 61))
-      gpu_hazard(gpu_slot_pc, "indexed load/store in a jump's delay slot "
+      gpu_hazard(gpu_slot_pc, 0, "indexed load/store in a jump's delay slot "
                  "with interrupts enabled (JTRM v8 p.140)");
 }
 
@@ -1731,7 +1742,7 @@ static void gpu_flags_redirect(void)
       after = (gpu_flags & IMASK) ? 0 : ((gpu_flags & REGPAGE) ? 1 : 0);
       if (now != after)
       {
-         gpu_hazard(gpu_slot_pc, "G_FLAGS store in a taken jump's delay slot "
+         gpu_hazard(gpu_slot_pc, 1, "G_FLAGS store in a taken jump's delay slot "
                     "switches the register bank: the target can run in the old "
                     "bank (JTRM v8 p.140)");
          if (hwHazards == HAZARDS_STRICT)
